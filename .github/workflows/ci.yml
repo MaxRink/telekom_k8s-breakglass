@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -179,7 +179,7 @@ jobs:
           push-to-registry: true
       - name: Upload SBOM artifact
         if: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sbom
           path: sbom.json
