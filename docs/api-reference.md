@@ -77,11 +77,11 @@ Paginated responses include a continuation field alongside the items. When there
 # First page (50 items)
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/debugSessions?limit=50"
-# Response: { "sessions": [...], "total": 320, "continue": "MTAwMA==" }
+# Response: { "sessions": [...], "total": 320, "continue": "NTA=" }
 
 # Next page using continue token
 curl -H "Authorization: Bearer <token>" \
-  "https://breakglass.example.com/api/debugSessions?limit=50&continue=MTAwMA=="
+  "https://breakglass.example.com/api/debugSessions?limit=50&continue=NTA="
 ```
 
 ## Identity Provider Configuration
@@ -239,7 +239,7 @@ Authorization: Bearer <token>
     }
   ],
   "metadata": {
-    "continue": "MTAwMA==",
+    "continue": "MTAw",
     "total": 320
   }
 }
