@@ -9,6 +9,7 @@ import {
   sanitizeReason,
   validateDuration,
 } from "@/utils/breakglassSession";
+import { extractScaleValue } from "@/utils/scale-helpers";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import type { Breakglass } from "@/model/breakglass";
 
@@ -377,18 +378,6 @@ function toggleScheduleOptions() {
     scheduledStartTime.value = null;
     scheduleDateTimeLocal.value = "";
   }
-}
-
-function extractScaleValue(ev: Event): string {
-  const target = ev.target as HTMLInputElement | HTMLTextAreaElement | null;
-  if (target && typeof target.value === "string") {
-    return target.value;
-  }
-  const detail = (ev as CustomEvent<{ value?: string }>).detail;
-  if (detail && typeof detail.value === "string") {
-    return detail.value;
-  }
-  return "";
 }
 
 function handleDurationChange(ev: Event) {

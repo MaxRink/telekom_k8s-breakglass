@@ -8,6 +8,7 @@ import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import useCurrentTime from "@/utils/currentTime";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
+import { extractScaleValue } from "@/utils/scale-helpers";
 import type { Breakglass, SessionCR } from "@/model/breakglass";
 
 const auth = inject(AuthKey);
@@ -70,19 +71,7 @@ async function refresh() {
 }
 
 function updateSearch(ev: Event) {
-  state.search = valueFromScaleEvent(ev);
-}
-
-function valueFromScaleEvent(ev: Event): string {
-  const target = ev.target as HTMLInputElement | HTMLTextAreaElement | null;
-  if (target && typeof target.value === "string") {
-    return target.value;
-  }
-  const detail = (ev as CustomEvent<{ value?: string }>).detail;
-  if (detail && typeof detail.value === "string") {
-    return detail.value;
-  }
-  return "";
+  state.search = extractScaleValue(ev);
 }
 
 const dedupedBreakglasses = computed(() => {

@@ -207,11 +207,10 @@ const profileMenuServiceDescription = computed(() => {
 });
 
 const profileMenuServiceLinks = computed(() => {
-  const links: Array<{ name: string; href: string; icon: string }> = [];
+  const links: Array<{ name: string; href?: string; icon: string }> = [];
   if (currentIDPName.value) {
     links.push({
       name: `Identity Provider: ${currentIDPName.value}`,
-      href: "javascript:void(0);",
       icon: "service-settings",
     });
   }
@@ -219,7 +218,6 @@ const profileMenuServiceLinks = computed(() => {
   if (!groupsRef.value.length) {
     links.push({
       name: "No groups assigned",
-      href: "javascript:void(0);",
       icon: "alert-information",
     });
     return links;
@@ -228,7 +226,6 @@ const profileMenuServiceLinks = computed(() => {
   return links.concat(
     groupsRef.value.map((group) => ({
       name: group,
-      href: "javascript:void(0);",
       icon: "content-folder",
     })),
   );
@@ -368,15 +365,21 @@ function logout() {
   auth?.logout();
 }
 
+interface ScaleProfileMenuElement extends HTMLElement {
+  logoutHandler?: (event?: Event) => void;
+  logoutUrl?: string;
+}
+
 watch(
   () => profileMenuRef.value,
   (element) => {
     if (!element) return;
-    (element as unknown as Record<string, unknown>).logoutHandler = (event?: Event) => {
+    const menuElement = element as ScaleProfileMenuElement;
+    menuElement.logoutHandler = (event?: Event) => {
       event?.preventDefault();
       logout();
     };
-    (element as unknown as Record<string, unknown>).logoutUrl = "javascript:void(0);";
+    menuElement.logoutUrl = "#";
   },
   { immediate: true },
 );
@@ -439,7 +442,7 @@ watch(
               :logged-in="authenticated"
               hide-login-settings
               logout-label="Logout"
-              logout-url="javascript:void(0);"
+              logout-url="#"
               :user-info="profileMenuUserInfoJson"
               :service-links="profileMenuServiceLinksJson"
             ></scale-telekom-profile-menu>
