@@ -381,9 +381,15 @@ func (s *Service) Close() error {
 
 	var closeErr error
 	if s.manager != nil {
+		// Manager.Close drains workers and closes m.sink (IsolatedMultiSink),
+		// which in turn closes each QueuedSink and its underlying raw sink.
+		// Skip closeSinksLocked to avoid closing the same raw sinks a second time.
 		closeErr = s.manager.Close()
+		s.manager = nil
+		s.sinks = nil
+	} else {
+		s.closeSinksLocked()
 	}
-	s.closeSinksLocked()
 	s.enabled = false
 
 	s.logger.Info("audit service closed")

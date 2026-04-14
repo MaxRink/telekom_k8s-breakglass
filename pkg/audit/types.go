@@ -452,8 +452,11 @@ func IsHighVolumeEvent(eventType EventType) bool {
 	}
 }
 
-// IsSensitiveEvent returns true if this event type should always be captured
-// (never sampled, never dropped)
+// IsSensitiveEvent returns true if this event type is sensitive and should
+// never be sampled. When the manager's async queue is full, sensitive events
+// fall back to a direct synchronous write path to avoid manager-queue overflow
+// drops. Note: per-sink queue drops (QueuedSink queue_full / circuit_open) are
+// not intercepted by the manager; delivery at the sink layer is best-effort.
 func IsSensitiveEvent(eventType EventType) bool {
 	switch eventType {
 	case EventSessionRequested, EventSessionApproved, EventSessionDenied,
