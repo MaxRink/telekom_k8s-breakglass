@@ -8,7 +8,7 @@ import AxeBuilder from "@axe-core/playwright";
 /**
  * Accessibility E2E tests using axe-core.
  *
- * Runs automated WCAG 2.1 AA + AAA checks against key pages in four theme modes:
+ * Runs automated WCAG 2.2 AA + AAA checks against key pages in four theme modes:
  * - Light mode (default)
  * - Dark mode (prefers-color-scheme: dark)
  * - High Contrast mode (data-high-contrast="true")
@@ -325,7 +325,7 @@ async function assertNoA11yViolations(page: Page, context: string, mode: string)
   }
 }
 
-test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
+test.describe("Accessibility (axe-core WCAG 2.2 AA + AAA)", () => {
   for (const mode of THEME_MODES) {
     test.describe(`${mode.name} mode`, () => {
       // ── Primary authenticated pages ──────────────────────────────
