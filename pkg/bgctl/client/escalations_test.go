@@ -47,6 +47,7 @@ func TestEscalationsList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassEscalations", r.URL.Path)
 		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "100", r.URL.Query().Get("limit"), "client must send an explicit limit parameter")
 
 		w.Header().Set("Content-Type", "application/json")
 		envelope := map[string]interface{}{"items": escalations}

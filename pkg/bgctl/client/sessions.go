@@ -76,6 +76,7 @@ func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]b
 		for k, v := range baseParams {
 			params[k] = v
 		}
+		params.Set("limit", "100")
 		if continueToken != "" {
 			params.Set("continue", continueToken)
 		}

@@ -21,10 +21,12 @@ func (e *EscalationService) List(ctx context.Context) ([]breakglassv1alpha1.Brea
 	var all []breakglassv1alpha1.BreakglassEscalation
 	continueToken := ""
 	for {
-		endpoint := "api/breakglassEscalations"
+		params := url.Values{}
+		params.Set("limit", "100")
 		if continueToken != "" {
-			endpoint = fmt.Sprintf("%s?continue=%s", endpoint, url.QueryEscape(continueToken))
+			params.Set("continue", continueToken)
 		}
+		endpoint := fmt.Sprintf("api/breakglassEscalations?%s", params.Encode())
 		var envelope struct {
 			Items    []breakglassv1alpha1.BreakglassEscalation `json:"items"`
 			Metadata struct {

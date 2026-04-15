@@ -24,8 +24,8 @@ func TestSessionsList(t *testing.T) {
 		require.Equal(t, "/api/breakglassSessions", r.URL.Path)
 		require.Equal(t, http.MethodGet, r.Method)
 
-		// Check query params
 		query := r.URL.Query()
+		require.Equal(t, "100", query.Get("limit"), "client must send an explicit limit parameter")
 		if cluster := query.Get("cluster"); cluster != "" {
 			require.Equal(t, "test-cluster", cluster)
 		}
