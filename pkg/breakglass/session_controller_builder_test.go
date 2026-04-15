@@ -672,4 +672,92 @@ func TestEmitSessionAuditEvent_WithAuditService(t *testing.T) {
 	assert.Equal(t, "test-ns", events[0].Target.Namespace)
 	assert.Equal(t, "production", events[0].Target.Cluster)
 	assert.Equal(t, "approver@example.com", events[0].Actor.User)
+	require.NotNil(t, events[0].RequestContext)
+	assert.Equal(t, "breakglass-admin", events[0].RequestContext.EscalationName)
+	require.Contains(t, events[0].Details, "grantedGroup")
+	assert.Equal(t, "breakglass-admin", events[0].Details["grantedGroup"])
+}
+
+func TestEmitSessionAuditEvent_UnredactedGroupName(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger := zaptest.NewLogger(t)
+	mockAudit := NewMockAuditEmitter(true)
+
+	ctrl := NewBreakglassSessionController(
+		logger.Sugar(),
+		config.Config{},
+		&sesmanager, &escmanager,
+		nil, "/config/config.yaml", nil, cli,
+	).WithAuditService(mockAudit)
+
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "redact-test-session",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:         "user@example.com",
+			GrantedGroup: "cluster-admins",
+			Cluster:      "production",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+
+	ctx := t.Context()
+	ctrl.emitSessionAuditEvent(ctx, audit.EventSessionApproved, session, "approver@example.com", "Session approved")
+
+	events := mockAudit.GetEvents()
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].RequestContext)
+	assert.Equal(t, "cluster-admins", events[0].RequestContext.EscalationName,
+		"EscalationName must be unredacted for audit completeness")
+	require.Contains(t, events[0].Details, "grantedGroup")
+	assert.Equal(t, "cluster-admins", events[0].Details["grantedGroup"],
+		"Details[grantedGroup] must be unredacted for audit completeness")
+}
+
+// TestEmitSessionExpiredAuditEvent_UnredactedGroupName checks that expired audit events use the raw group name.
+func TestEmitSessionExpiredAuditEvent_UnredactedGroupName(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+
+	logger := zaptest.NewLogger(t)
+	mockAudit := NewMockAuditEmitter(true)
+
+	ctrl := NewBreakglassSessionController(
+		logger.Sugar(),
+		config.Config{},
+		&sesmanager, &escmanager,
+		nil, "/config/config.yaml", nil, cli,
+	).WithAuditService(mockAudit)
+
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "expired-session",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:         "user@example.com",
+			GrantedGroup: "cluster-admins",
+			Cluster:      "production",
+		},
+	}
+
+	ctx := t.Context()
+	ctrl.emitSessionExpiredAuditEvent(ctx, session, "timeExpired")
+
+	events := mockAudit.GetEvents()
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].RequestContext)
+	assert.Equal(t, "cluster-admins", events[0].RequestContext.EscalationName,
+		"EscalationName must be unredacted for audit completeness")
+	require.Contains(t, events[0].Details, "grantedGroup")
+	assert.Equal(t, "cluster-admins", events[0].Details["grantedGroup"],
+		"Details[grantedGroup] must be unredacted for audit completeness")
 }
