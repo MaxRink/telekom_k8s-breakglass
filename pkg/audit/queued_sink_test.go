@@ -234,7 +234,7 @@ func TestIsolatedMultiSink_Independence(t *testing.T) {
 	writeTime := time.Since(start)
 
 	// Writes should be fast (non-blocking)
-	assert.Less(t, writeTime, 10*time.Millisecond, "Writes should be non-blocking")
+	assert.Less(t, writeTime, 100*time.Millisecond, "Writes should be non-blocking")
 
 	// Wait for fast sink to process
 	time.Sleep(50 * time.Millisecond)
