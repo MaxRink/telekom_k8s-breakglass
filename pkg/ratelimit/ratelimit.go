@@ -106,7 +106,8 @@ type entry struct {
 	lastAccess time.Time
 }
 
-// IPRateLimiter implements per-IP rate limiting with automatic cleanup
+// IPRateLimiter implements per-key rate limiting with automatic cleanup.
+// The key can be any identifier — commonly an IP address or a user identity.
 type IPRateLimiter struct {
 	mu       sync.RWMutex
 	entries  map[string]*entry
@@ -115,7 +116,8 @@ type IPRateLimiter struct {
 	stopOnce sync.Once
 }
 
-// New creates a new per-IP rate limiter with the given configuration
+// New creates a new per-key rate limiter with the given configuration.
+// The key passed to Allow/AllowWithRetryAfter can be any identifier (IP, user identity, etc.).
 func New(cfg Config) *IPRateLimiter {
 	if cfg.CleanupInterval == 0 {
 		cfg.CleanupInterval = time.Minute
