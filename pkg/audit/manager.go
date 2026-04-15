@@ -266,7 +266,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 }
 
 // syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.
-// If no direct sinks are configured, it falls back to the queued sink.
+// If no direct sinks are configured, it falls back to m.sink (the sink chain).
 // Metrics are incremented per-sink on success and failure.
 func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 	if len(m.directSinks) == 0 {

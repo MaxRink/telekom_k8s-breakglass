@@ -249,25 +249,29 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 // Emit sends an audit event asynchronously.
 func (s *Service) Emit(ctx context.Context, event *Event) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	enabled := s.enabled
+	mgr := s.manager
+	s.mu.RUnlock()
 
-	if !s.enabled || s.manager == nil {
+	if !enabled || mgr == nil {
 		return
 	}
 
-	s.manager.Emit(ctx, event)
+	mgr.Emit(ctx, event)
 }
 
 // EmitSync sends an audit event synchronously (use sparingly).
 func (s *Service) EmitSync(ctx context.Context, event *Event) error {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	enabled := s.enabled
+	mgr := s.manager
+	s.mu.RUnlock()
 
-	if !s.enabled || s.manager == nil {
+	if !enabled || mgr == nil {
 		return nil
 	}
 
-	return s.manager.EmitSync(ctx, event)
+	return mgr.EmitSync(ctx, event)
 }
 
 // IsEnabled returns whether auditing is currently enabled.

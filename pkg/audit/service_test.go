@@ -5,6 +5,7 @@ package audit
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -928,11 +929,51 @@ func TestService_GetStats_WithManager(t *testing.T) {
 	err := svc.Reload(context.Background(), config)
 	require.NoError(t, err)
 
-	// Manager should now be initialized
 	stats := svc.GetStats()
 	assert.NotNil(t, stats)
 	assert.GreaterOrEqual(t, stats.ProcessedEvents, int64(0))
 	assert.GreaterOrEqual(t, stats.DroppedEvents, int64(0))
 
+	_ = svc.Close()
+}
+
+func TestService_EmitDoesNotHoldLockDuringManagerCall(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(cl, logger, "test-namespace")
+
+	cfg := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "concurrent-test"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks:   []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+		},
+	}
+	require.NoError(t, svc.Reload(context.Background(), cfg))
+
+	event := &Event{
+		ID:        "race-test",
+		Type:      EventSessionRequested,
+		Timestamp: time.Now(),
+		Actor:     Actor{User: "test@example.com"},
+	}
+
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			svc.Emit(context.Background(), event)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = svc.Reload(context.Background(), cfg)
+		}()
+	}
+	wg.Wait()
 	_ = svc.Close()
 }
