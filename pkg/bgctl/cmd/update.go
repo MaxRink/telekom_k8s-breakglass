@@ -29,6 +29,11 @@ const (
 	// maxBinarySize is the maximum allowed size for extracted binaries (500 MB).
 	maxBinarySize = 500 << 20
 
+	// maxArchiveDownloadSize is the maximum allowed size for downloaded release archives (600 MB).
+	maxArchiveDownloadSize = 600 << 20
+
+	maxHTTPErrorBodySize = 4 << 10
+
 	defaultUpdateAPIHTTPTimeout      = 30 * time.Second
 	defaultUpdateDownloadHTTPTimeout = 5 * time.Minute
 )
@@ -194,8 +199,7 @@ func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to fetch release: %s", string(body))
+		return nil, fmt.Errorf("failed to fetch release: %s", readHTTPErrorBody(resp.Body))
 	}
 	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
@@ -218,8 +222,7 @@ func fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) 
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to fetch release: %s", string(body))
+		return nil, fmt.Errorf("failed to fetch release: %s", readHTTPErrorBody(resp.Body))
 	}
 	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
@@ -247,6 +250,10 @@ func findAssetURL(assets []githubAsset, name string) string {
 }
 
 func downloadFile(ctx context.Context, url, path string) error {
+	return downloadFileWithLimit(ctx, url, path, maxArchiveDownloadSize)
+}
+
+func downloadFileWithLimit(ctx context.Context, url, path string, maxBytes int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -259,31 +266,83 @@ func downloadFile(ctx context.Context, url, path string) error {
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("download failed: %s", string(body))
+		return fmt.Errorf("download failed: %s", readHTTPErrorBody(resp.Body))
 	}
+	if maxBytes > 0 && resp.ContentLength > maxBytes {
+		return fmt.Errorf("download exceeds maximum allowed size of %d bytes", maxBytes)
+	}
+
 	out, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = out.Close()
-	}()
 
-	// Use progress writer if content length is known
+	var reader io.Reader = resp.Body
 	if resp.ContentLength > 0 {
-		_, err = io.Copy(out, &progressReader{
+		reader = &progressReader{
 			reader: resp.Body,
 			total:  resp.ContentLength,
-		})
-	} else {
-		_, err = io.Copy(out, resp.Body)
+		}
 	}
+
+	if maxBytes > 0 {
+		err = limitedDownloadCopy(out, reader, maxBytes)
+	} else {
+		_, err = io.Copy(out, reader)
+	}
+	closeErr := out.Close()
+
 	// Clear the progress line
 	if resp.ContentLength > 0 {
 		_, _ = fmt.Fprint(os.Stderr, "\r                                                  \r")
 	}
-	return err
+	if err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return closeErr
+	}
+	return nil
+}
+
+func readHTTPErrorBody(body io.Reader) string {
+	bodyBytes, err := io.ReadAll(io.LimitReader(body, maxHTTPErrorBodySize+1))
+	if err != nil {
+		return "unable to read response body"
+	}
+
+	truncated := int64(len(bodyBytes)) > maxHTTPErrorBodySize
+	if truncated {
+		bodyBytes = bodyBytes[:maxHTTPErrorBodySize]
+	}
+
+	message := strings.TrimSpace(string(bodyBytes))
+	if message == "" {
+		return "empty response body"
+	}
+	if truncated {
+		return message + "..."
+	}
+	return message
+}
+
+func limitedDownloadCopy(dst io.Writer, src io.Reader, maxBytes int64) error {
+	_, err := io.Copy(dst, io.LimitReader(src, maxBytes))
+	if err != nil {
+		return err
+	}
+
+	var probe [1]byte
+	extra, probeErr := src.Read(probe[:])
+	if probeErr != nil && !errors.Is(probeErr, io.EOF) {
+		return probeErr
+	}
+	if extra > 0 {
+		return fmt.Errorf("download exceeds maximum allowed size of %d bytes", maxBytes)
+	}
+	return nil
 }
 
 // progressReader wraps an io.Reader and prints download progress to stderr.
