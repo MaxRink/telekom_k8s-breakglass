@@ -37,10 +37,7 @@ describe("BreakglassService enrichment boundaries", () => {
       { metadata: { name: "stored" }, spec: { approvalReasonConfig: stored } },
     ];
     client.get.mockResolvedValueOnce({ data });
-    expect(await service.fetchPendingSessionsForApproval()).toEqual([
-      data[0],
-      { ...data[1], approvalReason: stored },
-    ]);
+    expect(await service.fetchPendingSessionsForApproval()).toEqual([data[0], { ...data[1], approvalReason: stored }]);
     expect(data[1]).not.toHaveProperty("approvalReason");
     expect(client.get).toHaveBeenCalledTimes(1);
   });
