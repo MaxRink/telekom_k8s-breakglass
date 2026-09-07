@@ -343,12 +343,7 @@ func TestTrackOIDCSecrets_TracksImplicitKeycloakSecret(t *testing.T) {
 			cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "workloads"}, Spec: breakglassv1alpha1.ClusterConfigSpec{AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC, OIDCFromIdentityProvider: ref}}
 			provider := NewClientProvider(fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp, secret, explicit, refresh, cc).Build(), zaptest.NewLogger(t).Sugar())
 			_, err := provider.GetRESTConfig(context.Background(), "workloads/cluster")
-			wantError := false
-			if wantError {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, err)
 			expected := "inherited-secret"
 			if mode == "explicit override" {
 				expected = "explicit-secret"
@@ -366,10 +361,8 @@ func TestTrackOIDCSecrets_TracksImplicitKeycloakSecret(t *testing.T) {
 				}
 			}
 			require.Equal(t, mode == "inherited" || mode == "refresh fallback" || mode == "refresh warn", provider.IsOIDCSecretTracked("identity", "keycloak-secret"))
-			if !wantError {
-				require.NotNil(t, provider.rest["workloads/cluster"])
-				require.NotNil(t, provider.oidcProvider.tokens["workloads/cluster"])
-			}
+			require.NotNil(t, provider.rest["workloads/cluster"])
+			require.NotNil(t, provider.oidcProvider.tokens["workloads/cluster"])
 			provider.InvalidateOIDCSecrets("identity", "keycloak-secret")
 			if mode == "inherited" || mode == "refresh fallback" || mode == "refresh warn" {
 				require.Nil(t, provider.rest["workloads/cluster"])
