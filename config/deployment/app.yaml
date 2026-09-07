@@ -30,7 +30,6 @@ spec:
           args:
             - --config-path=/config/config.yaml
             - --pod-namespace=$(POD_NAMESPACE)
-            - --breakglass-namespace=$(POD_NAMESPACE)
             - --metrics-bind-address=:8081
             - --health-probe-bind-address=:8082
             - --leader-elect-namespace=$(POD_NAMESPACE)
@@ -49,6 +48,7 @@ spec:
             # Webhook metrics server (optional separate endpoint)
             - --webhooks-metrics-bind-address=:8083
             - --webhooks-metrics-secure=false
+            - --breakglass-namespace=$(POD_NAMESPACE)
           env:
             - name: POD_NAMESPACE
               valueFrom:
