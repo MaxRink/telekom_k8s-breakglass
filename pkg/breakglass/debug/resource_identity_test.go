@@ -217,7 +217,11 @@ func TestTrackedApplyRetainsResponseIdentity(t *testing.T) {
 					require.Equal(t, "breakglass-controller", options.FieldManager)
 					require.NotNil(t, options.Force)
 					require.True(t, *options.Force)
-					return json.Unmarshal([]byte(`{"metadata":{"name":"tracked","namespace":"ns","uid":"applied-original"}}`), cfg)
+					response := obj.DeepCopyObject().(client.Object)
+					response.SetUID(types.UID("applied-original"))
+					body, err := json.Marshal(response)
+					require.NoError(t, err)
+					return json.Unmarshal(body, cfg)
 				},
 				Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
 					t.Fatal("must use apply response, not a replacement lookup")
