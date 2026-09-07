@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
+
+- Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
+
 - Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
 
 - Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
@@ -52,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
+
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
   documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
   Node 24 release line required by the existing dependency graph (including
@@ -60,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 
 - Reject ambiguous normalized IdentityProvider issuers at authentication and
   duplicate effective issuers at admission. An explicit `spec.issuer` now takes
