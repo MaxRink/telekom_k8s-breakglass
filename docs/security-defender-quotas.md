@@ -66,6 +66,8 @@ writer with the same configured controller namespace before reopening traffic.
 Mixed old/new replicas cannot provide atomic quotas because old writers bypass
 the admission protocol. Existing nonterminal sessions remain counted during
 migration; an already over-limit population can temporarily prevent admission.
+Automation that reuses a template with a finite concurrency limit must complete
+or delete each nonterminal session before creating the next fixture session.
 Privileged writers of session spec/status, admission annotations, or ledger
 ConfigMaps remain in the controller's trust boundary.
 

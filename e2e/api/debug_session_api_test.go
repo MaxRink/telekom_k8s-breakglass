@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // debugSessionsBasePath is the base path for debug session API endpoints
@@ -3145,6 +3147,24 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 // RENEWAL PERMUTATION TESTS
 // =============================================================================
 
+// registerDebugSessionSubtestCleanup deletes one exact session before the next
+// sibling creates another session on the shared template.
+func registerDebugSessionSubtestCleanup(t *testing.T, cli ctrlclient.Client, session *breakglassv1alpha1.DebugSession) {
+	t.Helper()
+	t.Cleanup(func() {
+		if os.Getenv("E2E_SKIP_CLEANUP") == "true" || (os.Getenv("E2E_SKIP_CLEANUP_ON_FAILURE") == "true" && t.Failed()) {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), helpers.WaitForConditionTimeout)
+		defer cancel()
+		key := types.NamespacedName{Name: session.Name, Namespace: session.Namespace}
+		uid := session.UID
+		obj := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, UID: uid}}
+		require.NoError(t, ctrlclient.IgnoreNotFound(cli.Delete(cleanupCtx, obj, ctrlclient.Preconditions{UID: &uid})))
+		require.NoError(t, helpers.WaitForResourceDeleted(cleanupCtx, cli, key, &breakglassv1alpha1.DebugSession{}, helpers.WaitForConditionTimeout))
+	})
+}
+
 // TestDebugSessionAPIRenewalPermutations tests various renewal scenarios
 func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
@@ -3242,9 +3262,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3309,9 +3327,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to be pending approval
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3335,9 +3351,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to become active then terminate
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3366,9 +3380,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3390,9 +3402,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
@@ -3412,9 +3422,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
@@ -3950,9 +3958,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3975,9 +3981,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval and approve
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -4007,9 +4011,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval and approve
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -4039,9 +4041,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -4065,9 +4065,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Client with invalid/empty token
 		unauthClient := NewDebugSessionAPIClient("")
@@ -4090,9 +4088,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Approver should be able to view the session
 		viewedSession, err := approverClient.GetDebugSession(ctx, t, session.Name)
