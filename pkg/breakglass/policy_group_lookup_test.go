@@ -6,12 +6,13 @@ package breakglass
 import (
 	"context"
 	"errors"
-	"github.com/telekom/k8s-breakglass/pkg/config"
-	"go.uber.org/zap"
-	"k8s.io/client-go/rest"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/telekom/k8s-breakglass/pkg/config"
+	"go.uber.org/zap"
+	"k8s.io/client-go/rest"
 )
 
 type policyRESTProvider struct{ err error }
