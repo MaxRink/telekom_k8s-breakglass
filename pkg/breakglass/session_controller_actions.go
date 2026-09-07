@@ -658,7 +658,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 
 		// Filter the group members to only include those in filteredApprovers
 		for _, member := range groupMembers {
-			if eligible[member] {
+			if eligible[member] && !slices.Contains(approverToGroups[member], groupName) {
 				// Record this approver -> group mapping in configured group order.
 				approverToGroups[member] = append(approverToGroups[member], groupName)
 			}
@@ -690,6 +690,9 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 		var approversForExplicit []string
 		for _, user := range explicitUsers {
 			if eligible[user] {
+				if _, alreadyMappedToGroup := approverToGroups[user]; alreadyMappedToGroup {
+					continue
+				}
 				approversForExplicit = append(approversForExplicit, user)
 			}
 		}

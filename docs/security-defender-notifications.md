@@ -44,5 +44,9 @@ otherwise all request emails are suppressed. A successful empty lookup from the
 default provider cannot establish that a restricted-provider group is empty.
 Explicitly configured hidden users still require no group lookup.
 
+Each eligible recipient receives at most one request email. Duplicate membership
+records do not duplicate a group badge, and an explicit user entry does not send
+a second email when the same recipient is already mapped to an approver group.
+
 When suppression occurs because privacy membership is unresolved, the controller
 records that reason separately from the normal "no eligible recipients" outcome.

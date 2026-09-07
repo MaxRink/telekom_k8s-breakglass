@@ -7387,6 +7387,27 @@ func TestSendOnRequestEmailsByGroup_DeduplicateApproversInMultipleGroups(t *test
 	}
 }
 
+func TestSendOnRequestEmailsByGroup_DeduplicatesGroupBadgeAndExplicitOverlap(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	controller := &BreakglassSessionController{
+		log:  log,
+		mail: &FakeMailSender{},
+	}
+	session := breakglassv1alpha1.BreakglassSession{}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+		Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}},
+	}}
+	controller.sendOnRequestEmailsByGroup(log, session, "requester@example.com", "requester",
+		[]string{"alice@example.com"}, map[string][]string{
+			"team":            {"alice@example.com", "alice@example.com"},
+			"_explicit_users": {"alice@example.com"},
+		}, escalation)
+
+	sender := controller.mail.(*FakeMailSender)
+	assert.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, 1, strings.Count(sender.LastBody, `<span class="group-badge">team</span>`))
+}
+
 // TestIsSessionPendingApproval tests the IsSessionPendingApproval function with various timeout scenarios
 func TestIsSessionPendingApproval(t *testing.T) {
 	now := time.Now()

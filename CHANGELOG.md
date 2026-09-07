@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Deduplicate notification group badges and avoid a second explicit-user email
+  when that recipient is already covered by an approver group.
+
 - Report unresolved privacy membership as notification suppression separately from
   the normal case where all recipients were filtered by configuration.
 
