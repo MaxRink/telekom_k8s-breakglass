@@ -34,14 +34,14 @@ func effectiveDebugSessionConstraints(
 		templateConstraints = template.Spec.Constraints
 	}
 	if binding == nil {
-		return templateConstraints
+		return templateConstraints.DeepCopy()
 	}
 	return mergeDebugSessionConstraints(templateConstraints, binding.Spec.Constraints)
 }
 
 func mergeDebugSessionConstraints(template, binding *breakglassv1alpha1.DebugSessionConstraints) *breakglassv1alpha1.DebugSessionConstraints {
 	if binding == nil {
-		return template
+		return template.DeepCopy()
 	}
 	merged := &breakglassv1alpha1.DebugSessionConstraints{}
 	if template != nil {
