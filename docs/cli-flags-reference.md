@@ -715,7 +715,7 @@ The Kubernetes namespace containing breakglass resources (IdentityProvider secre
 | Property | Value |
 |----------|-------|
 | **Type** | `string` |
-| **Default** | `` (cluster-wide lookup) |
+| **Default** | `` (manual runs); the packaged Deployment derives it from `POD_NAMESPACE` |
 | **Environment** | `BREAKGLASS_NAMESPACE` |
 | **Example** | `--breakglass-namespace=breakglass-system` |
 
@@ -726,6 +726,9 @@ breakglass-controller --breakglass-namespace=breakglass-system
 Used for:
 - Finding IdentityProvider resources
 - Locating secret references
+- Storing and enforcing durable session quota reservations in the controller namespace
+
+The packaged Kubernetes Deployment passes its pod namespace through this flag so quota admission and Secret references use the same namespace. Set the flag explicitly for a standalone controller process.
 
 #### `--disable-email`
 

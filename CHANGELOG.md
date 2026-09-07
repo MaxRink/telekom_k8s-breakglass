@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership; explicit approver email matching is case-insensitive. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
 
 - Session quota reservations persist across replicas and crashes while preserving provider-bound identity and approval history. Debug lifecycle and workload deployment stop on unresolved binding policy.
+- The packaged controller Deployment passes its pod namespace as the durable quota and breakglass resource namespace, so API admission can create the shared reservation ledger.
 
 ### Added
 
