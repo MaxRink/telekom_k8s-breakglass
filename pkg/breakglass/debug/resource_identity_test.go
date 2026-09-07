@@ -233,3 +233,33 @@ func TestTrackedApplyRetainsResponseIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {
+	template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
+	for _, tc := range []struct {
+		name          string
+		toleration    corev1.Toleration
+		modifiedImage bool
+		want          bool
+	}{
+		{name: "not-ready 60 seconds", toleration: corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: ptr.To[int64](60)}, want: true},
+		{name: "unreachable 600 seconds", toleration: corev1.Toleration{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: ptr.To[int64](600)}, want: true},
+		{name: "unbounded known condition", toleration: corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute}, want: true},
+		{name: "unrelated key", toleration: corev1.Toleration{Key: "dedicated", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: ptr.To[int64](60)}},
+		{name: "different effect", toleration: corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}},
+		{name: "different operator", toleration: corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpEqual, Value: "true", Effect: corev1.TaintEffectNoExecute}},
+		{name: "modified executable", toleration: corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: ptr.To[int64](60)}, modifiedImage: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{Spec: *template.Spec.DeepCopy()}
+			pod.Spec.Tolerations = []corev1.Toleration{tc.toleration}
+			if tc.modifiedImage {
+				pod.Spec.Containers[0].Image = "unrelated:v1"
+			}
+			before := pod.DeepCopy()
+			require.Equal(t, tc.want, podMatchesWorkloadTemplate(pod, template, false))
+			require.Equal(t, before, pod, "normalization must not mutate the live pod")
+			require.Empty(t, template.Spec.Tolerations)
+		})
+	}
+}

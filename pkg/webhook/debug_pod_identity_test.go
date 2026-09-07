@@ -29,6 +29,7 @@ func TestDebugSessionAccessRequiresLiveTargetPodIdentity(t *testing.T) {
 		{"replacement", "original", "replacement", false, false},
 		{"legacy", "", "original", false, false},
 		{"lookup failed", "original", "original", true, false},
+		{"missing pod", "original", "", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{
@@ -36,21 +37,45 @@ func TestDebugSessionAccessRequiresLiveTargetPodIdentity(t *testing.T) {
 				AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "workloads", UID: tc.recorded}},
 				Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://a.example", Role: breakglassv1alpha1.ParticipantRoleOwner}},
 			}}
+			if tc.recorded != "" {
+				session.Status.AllowedPods = append([]breakglassv1alpha1.AllowedPodRef{
+					{Name: "other", Namespace: "workloads", UID: "unrelated"},
+					{Name: "pod", Namespace: "other", UID: "unrelated"},
+					{Name: "pod", Namespace: "workloads", UID: "stale"},
+					{Name: "pod", Namespace: "workloads", UID: "stale"},
+				}, session.Status.AllowedPods...)
+			}
+			fetches := 0
+			live := tc.live
 			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session)
 			for key, fn := range debugSessionIndexFnsWebhook {
 				builder = builder.WithIndex(session, key, fn)
 			}
 			wc := &WebhookController{escalManager: &escalation.EscalationManager{Client: builder.Build()}, podFetchFn: func(_ context.Context, cluster, namespace, name string) (*corev1.Pod, error) {
+				fetches++
 				require.Equal(t, "spoke", cluster)
 				require.Equal(t, "workloads", namespace)
 				require.Equal(t, "pod", name)
 				if tc.fail {
-					return nil, errors.New("unavailable")
+					return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID(live)}}, errors.New("unavailable")
 				}
-				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID(tc.live)}}, nil
+				if live == "" {
+					return nil, nil
+				}
+				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID(live)}}, nil
 			}}
 			allowed, _, _ := wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "spoke", "https://a.example", &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "workloads", Name: "pod"}, zap.NewNop().Sugar())
 			require.Equal(t, tc.want, allowed)
+			wantFetches := 1
+			if tc.recorded == "" {
+				wantFetches = 0
+			}
+			require.Equal(t, wantFetches, fetches)
+			live = "replacement-on-next-request"
+			allowed, _, _ = wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "spoke", "https://a.example", &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "workloads", Name: "pod"}, zap.NewNop().Sugar())
+			require.False(t, allowed)
+			require.Equal(t, 2*wantFetches, fetches)
+
 		})
 	}
 }

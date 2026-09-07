@@ -57,3 +57,5 @@ never silently ignored.
 Deployment records take their UID from the server response to the apply request. The controller uses the supported typed or unstructured Apply API and retains that response directly, avoiding a second name lookup that could observe a replacement.
 
 `TestTrackedApplyRetainsResponseIdentity` covers typed and GVK-bearing unstructured objects, asserting that the original object receives the apply response UID without a fallback GET.
+
+Workload matching tolerates configurable durations for the standard not-ready and unreachable `Exists`/`NoExecute` admission tolerations; unrelated tolerations and executable configuration remain checked. Pod-operation authorization lazily reads one live target Pod snapshot per request and reuses it across recorded references, including failed lookups. Each new request performs a fresh lookup.
