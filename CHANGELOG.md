@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
 - Recognize Kubernetes scheduling defaults on debug workload Pods, validating
   named-class additions against the spoke PriorityClass while retaining explicit
   template fields, controller UID checks, and strict ReplicaSet template matching.
