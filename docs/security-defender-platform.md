@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # Platform security notes
 
 Audit sink configuration is cluster-wide and should be writable only by platform administrators. Sink URLs control where the controller sends audit events, and referenced credentials are read from the controller namespace. Kafka TLS CA, client certificate/private key, and SASL credentials follow the same namespace boundary as webhook credentials.
+The packaged Deployment passes its pod namespace to `--breakglass-namespace`, so the audit service and reconciler enforce the deployed controller namespace. Standalone deployments must set this flag explicitly before configuring TLS, SASL, or webhook Secret references.
 
 Webhook diagnostics redact URL userinfo and query strings before writing logs, errors, or sink health status, including nested HTTP transport errors. Use `authSecretRef` for webhook credentials instead of embedding them in a URL. Audit sink endpoints may be internal service URLs when configured by a trusted administrator.
 
