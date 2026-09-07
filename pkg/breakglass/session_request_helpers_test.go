@@ -79,8 +79,8 @@ func TestCollectApproversFromEscalations_FindsMatch(t *testing.T) {
 	assert.Contains(t, result.possibleGroups, "admin")
 	require.NotNil(t, result.matchedEscalation)
 	assert.Equal(t, "admin", result.matchedEscalation.Spec.EscalatedGroup)
-	assert.Contains(t, result.allApprovers, "bob@example.com")
 	assert.Contains(t, result.allApprovers, "alice@example.com")
+	assert.NotContains(t, result.allApprovers, "bob@example.com")
 	assert.Equal(t, []string{"deny-destructive"}, result.selectedDenyPolicies)
 }
 
@@ -128,7 +128,7 @@ func TestCollectApproversFromEscalations_DeduplicatesApprovers(t *testing.T) {
 
 	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", log)
 
-	// alice appears in both escalations but should only appear once in allApprovers
+	// Only the requested escalation contributes notification recipients.
 	count := 0
 	for _, a := range result.allApprovers {
 		if a == "alice@example.com" {
@@ -137,7 +137,7 @@ func TestCollectApproversFromEscalations_DeduplicatesApprovers(t *testing.T) {
 	}
 	assert.Equal(t, 1, count, "alice should appear exactly once (deduplication)")
 	assert.Contains(t, result.allApprovers, "bob@example.com")
-	assert.Contains(t, result.allApprovers, "charlie@example.com")
+	assert.NotContains(t, result.allApprovers, "charlie@example.com")
 }
 
 // ----- escalationResolutionResult tests -----
@@ -455,4 +455,33 @@ func TestResolveUserGroupsFallbackPropagatesClusterLookupError(t *testing.T) {
 	require.False(t, ok, "resolveUserGroups must fail when the cluster-based fallback lookup errors")
 	require.Nil(t, groups)
 	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestResolveAndAddGroupMembersPreservesResolutionForExclusions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members map[string][]string
+		known   bool
+	}{
+		{name: "unavailable"},
+		{name: "failed", members: map[string][]string{}},
+		{name: "empty", members: map[string][]string{"team": nil}, known: true},
+		{name: "capped", members: map[string][]string{"team": {"first@example.com", "excluded@example.com"}}, known: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := &BreakglassSessionController{}
+			if tc.members != nil {
+				ctrl.escalationManager = &testEscalationLookup{resolver: &MockGroupResolver{members: tc.members}}
+			}
+			result := &escalationResolutionResult{approversByGroup: map[string][]string{}, allApprovers: make([]string, MaxTotalApprovers-1)}
+			esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}},
+			}}
+			ctrl.resolveAndAddGroupMembers(context.Background(), esc, result, zap.NewNop().Sugar())
+			members, known := result.approversByGroup["team"]
+			assert.Equal(t, tc.known, known)
+			assert.Equal(t, tc.members["team"], members)
+			assert.LessOrEqual(t, len(result.allApprovers), MaxTotalApprovers)
+		})
+	}
 }

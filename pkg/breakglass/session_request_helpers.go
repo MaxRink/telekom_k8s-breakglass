@@ -209,9 +209,8 @@ func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context
 	return false
 }
 
-// collectApproversFromEscalations performs a single pass over filtered escalations to
-// collect possible groups, find the matched escalation for the requested group,
-// and gather deduplicated approvers from explicit users and resolved group members.
+// collectApproversFromEscalations selects the requested escalation and gathers
+// deduplicated approvers from its explicit users and resolved group members.
 func (wc *BreakglassSessionController) collectApproversFromEscalations(
 	ctx context.Context, possibleEscals []breakglassv1alpha1.BreakglassEscalation,
 	requestedGroup string, reqLog *zap.SugaredLogger,
@@ -226,47 +225,47 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 		"escalationCount", len(possibleEscals),
 		"requestedGroup", system.RedactGroupName(requestedGroup))
 
+	// Select the escalation first. Notification recipients belong to the
+	// requested escalation only; collecting from every eligible escalation can
+	// disclose unrelated escalation requests.
+	for i := range possibleEscals {
+		p := &possibleEscals[i]
+		if !p.IsReady() {
+			continue
+		}
+		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
+		if result.matchedEscalation == nil && p.Spec.EscalatedGroup == requestedGroup {
+			result.matchedEscalation = p
+			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
+		}
+	}
+
 	for i := range possibleEscals {
 		p := &possibleEscals[i]
 		if !p.IsReady() {
 			reqLog.Debugw("Skipping unready escalation during approver resolution", "escalationName", p.Name)
 			continue
 		}
-
-		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
+		if p != result.matchedEscalation {
+			continue
+		}
 		reqLog.Debugw("Processing escalation for approver resolution",
 			"escalationName", p.Name,
 			"escalatedGroup", system.RedactGroupName(p.Spec.EscalatedGroup),
 			"explicitUserCount", len(p.Spec.Approvers.Users),
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
-		// Always check if this is the matched escalation first (needed for deny policies)
-		// Only consider the escalation if it's in a "Ready" state.
-		isMatchedEscalation := p.Spec.EscalatedGroup == requestedGroup && result.matchedEscalation == nil && p.IsReady()
-		if isMatchedEscalation {
-			result.matchedEscalation = p
-			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
-			reqLog.Debugw("Matched escalation found during approver collection",
-				"escalationName", result.matchedEscalation.Name,
-				"escalatedGroup", system.RedactGroupName(result.matchedEscalation.Spec.EscalatedGroup),
-				"denyPolicyCount", len(result.selectedDenyPolicies))
-		}
+		reqLog.Debugw("Matched escalation selected for approver resolution",
+			"escalationName", result.matchedEscalation.Name,
+			"escalatedGroup", system.RedactGroupName(result.matchedEscalation.Spec.EscalatedGroup),
+			"denyPolicyCount", len(result.selectedDenyPolicies))
 
 		// Check total approvers limit before processing this escalation's approvers
 		if len(result.allApprovers) >= MaxTotalApprovers {
-			// If we've already found the matched escalation, break out entirely
-			// to avoid unnecessary work and log spam
-			if result.matchedEscalation != nil {
-				reqLog.Infow("Total approvers limit reached and matched escalation found, stopping",
-					"limit", MaxTotalApprovers,
-					"matchedEscalation", result.matchedEscalation.Name)
-				break
-			}
-			// Otherwise continue looking for the matched escalation (but skip approver resolution)
-			reqLog.Debugw("Total approvers limit reached, skipping approver resolution for escalation",
+			reqLog.Infow("Total approvers limit reached and matched escalation found, stopping",
 				"limit", MaxTotalApprovers,
-				"skippedEscalation", p.Name)
-			continue
+				"matchedEscalation", result.matchedEscalation.Name)
+			break
 		}
 
 		// Add explicit users (deduplicated) - track them under special key
@@ -292,10 +291,7 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 		// Resolve and add group members (deduplicated)
 		wc.resolveAndAddGroupMembers(ctx, p, result, reqLog)
 
-		// Break outer loop if we've reached the maximum total approvers AND
-		// we've already found the matched escalation. If matchedEsc is nil,
-		// let the loop continue — the top-of-loop check will skip approver
-		// resolution but still identify the matched escalation.
+		// Stop once the matched escalation reaches the notification cap.
 		if len(result.allApprovers) >= MaxTotalApprovers && result.matchedEscalation != nil {
 			reqLog.Infow("Maximum total approvers limit reached, stopping escalation processing",
 				"limit", MaxTotalApprovers,
@@ -361,8 +357,14 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 					// Continue with other groups even if one fails
 					continue
 				}
+			} else {
+				continue // No authoritative membership was resolved.
 			}
 		}
+
+		// Keep complete membership, including known-empty groups, for exclusions.
+		// Recipient caps below must not make overlapping excluded members visible.
+		result.approversByGroup[group] = members
 
 		// Apply per-group member limit to prevent resource exhaustion
 		if len(members) > MaxApproverGroupMembers {
@@ -410,8 +412,6 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		countBefore := len(result.allApprovers)
 		for _, member := range members {
 			result.allApprovers = addIfNotPresent(result.allApprovers, member)
-			// Track member as belonging to this group
-			result.approversByGroup[group] = addIfNotPresent(result.approversByGroup[group], member)
 		}
 		countAdded := len(result.allApprovers) - countBefore
 		reqLog.Debugw("Added group members to approvers",

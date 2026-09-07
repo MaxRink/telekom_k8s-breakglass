@@ -6554,6 +6554,18 @@ func TestFilterExcludedNotificationRecipientsUsesRequestResolvedMembers(t *testi
 	}
 }
 
+func TestFilterExcludedNotificationRecipientsFailsClosedForUnresolvedGroup(t *testing.T) {
+	ctrl := &BreakglassSessionController{escalationManager: &testEscalationLookup{
+		resolver: &MockGroupResolver{members: map[string][]string{}},
+	}}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+		NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{Groups: []string{"unresolved"}},
+	}}
+	got := ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(),
+		[]string{"approver@example.com"}, map[string][]string{"other": {"approver@example.com"}}, escalation)
+	assert.Empty(t, got)
+}
+
 // TestDisableNotificationsFlag tests that disableNotifications prevents emails
 func TestDisableNotificationsFlag(t *testing.T) {
 	log := zap.NewNop().Sugar()
@@ -6637,6 +6649,7 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 						HiddenFromUI: tt.hidden,
+						Users:        tt.approvers,
 					},
 				},
 			}
@@ -6714,6 +6727,18 @@ func TestFilterHiddenFromUIRecipientsUsesRequestResolvedMembers(t *testing.T) {
 			assert.Equal(t, []string{"visible@example.com"}, result)
 		})
 	}
+}
+
+func TestFilterHiddenFromUIRecipientsFailsClosedForUnresolvedGroup(t *testing.T) {
+	ctrl := &BreakglassSessionController{escalationManager: &testEscalationLookup{
+		resolver: &MockGroupResolver{members: map[string][]string{}},
+	}}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+		Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{HiddenFromUI: []string{"unresolved"}},
+	}}
+	got := ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(),
+		[]string{"approver@example.com"}, map[string][]string{"other": {"approver@example.com"}}, escalation)
+	assert.Empty(t, got)
 }
 
 func TestSendSessionNotificationsUsesRequestResolvedGroupMembers(t *testing.T) {
@@ -6795,6 +6820,7 @@ func TestHiddenFromUIAndNotificationExclusionsCombined(t *testing.T) {
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
 				HiddenFromUI: []string{"charlie@example.com"}, // charlie is hidden
+				Users:        []string{"charlie@example.com"},
 			},
 			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{
 				Users: []string{"dave@example.com"}, // dave is excluded from notifications
@@ -7124,6 +7150,26 @@ func TestSendOnRequestEmail_ApproverGroupsToShow(t *testing.T) {
 			t.Logf("Expected groups in email: %v", tt.expectedApproverGroupsInEmail)
 		})
 	}
+}
+
+func TestSendOnRequestEmail_RedactsHiddenGroupNames(t *testing.T) {
+	controller := &BreakglassSessionController{
+		log:    zap.NewNop().Sugar(),
+		config: config.Config{Frontend: config.Frontend{BaseURL: "https://breakglass.example.com"}},
+		mail:   &FakeMailSender{},
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+		Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+			Groups:       []string{"visible-approvers", "hidden-fallback"},
+			HiddenFromUI: []string{"hidden-fallback"},
+		},
+	}}
+	err := controller.sendOnRequestEmail(breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "Requester",
+		[]string{"approver@example.com"}, []string{"visible-approvers", "hidden-fallback"}, escalation)
+	require.NoError(t, err)
+	body := controller.mail.(*FakeMailSender).LastBody
+	assert.Contains(t, body, "visible-approvers")
+	assert.NotContains(t, body, "hidden-fallback")
 }
 
 // TestSendOnRequestEmail_NilEscalation tests that sendOnRequestEmail handles nil escalation gracefully
@@ -11304,5 +11350,44 @@ func TestTokenValidation_StateAndExpiryValidity(t *testing.T) {
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 			assert.Equal(t, tt.wantValid, body.Valid)
 		})
+	}
+}
+
+func TestNotificationGroupResolutionBoundaries(t *testing.T) {
+	const group = "team@example.com"
+	const member = "member@example.com"
+	for _, hidden := range []bool{false, true} {
+		for _, tc := range []struct {
+			name     string
+			known    map[string][]string
+			resolved map[string][]string
+			want     []string
+		}{
+			{name: "unavailable"},
+			{name: "lookup fails", resolved: map[string][]string{}},
+			{name: "known empty unavailable", known: map[string][]string{group: nil}, want: []string{member}},
+			{name: "known empty lookup fails", known: map[string][]string{group: nil}, resolved: map[string][]string{}, want: []string{member}},
+			{name: "resolved empty", resolved: map[string][]string{group: nil}, want: []string{member}},
+			{name: "email named group", resolved: map[string][]string{group: {member}}},
+		} {
+			t.Run(fmt.Sprintf("hidden=%v/%s", hidden, tc.name), func(t *testing.T) {
+				ctrl := &BreakglassSessionController{}
+				if tc.resolved != nil {
+					ctrl.escalationManager = &testEscalationLookup{resolver: &MockGroupResolver{members: tc.resolved}}
+				}
+				esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{group, member}, Groups: []string{group}},
+				}}
+				var got []string
+				if hidden {
+					esc.Spec.Approvers.HiddenFromUI = []string{group}
+					got = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), []string{group, member}, tc.known, esc)
+				} else {
+					esc.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{Users: []string{group}, Groups: []string{group}}
+					got = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), []string{group, member}, tc.known, esc)
+				}
+				assert.ElementsMatch(t, tc.want, got)
+			})
+		}
 	}
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Scope session request emails to the matched escalation, suppress notifications when hidden or excluded group membership is unresolved, and remove hidden group names from email content.
+
 ### Added
 
 - **DebugSession authoring guidance**: Added provider-neutral documentation for
