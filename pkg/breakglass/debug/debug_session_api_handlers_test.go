@@ -155,6 +155,17 @@ func TestRespondKubectlDebugOperationError(t *testing.T) {
 	}
 }
 
+func TestRespondKubectlDebugOperationErrorDoesNotExposeBackendForbidden(t *testing.T) {
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	err := fmt.Errorf("backend secret-marker: %w", apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "debug", errors.New("denied")))
+
+	respondKubectlDebugOperationError(ctx, err, "operation failed")
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.NotContains(t, w.Body.String(), "secret-marker")
+}
+
 func setupAuthenticatedDebugSessionRouterWithObjects(t *testing.T, username string, objects ...client.Object) *gin.Engine {
 	t.Helper()
 	_, ctrl := setupTestRouter(t, objects...)
@@ -656,7 +667,7 @@ func TestHandleInjectEphemeralContainer_ValidationErrorClassification(t *testing
 			namespace:   "prod",
 			wantHTTP:    http.StatusForbidden,
 			wantCode:    "FORBIDDEN",
-			wantMessage: "namespace prod is not allowed",
+			wantMessage: "debug operation is not allowed",
 		},
 		{
 			name: "namespace label lookup failure is internal",

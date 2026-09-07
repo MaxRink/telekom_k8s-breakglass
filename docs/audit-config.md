@@ -273,37 +273,32 @@ spec:
 
 ### Namespace Filtering with Labels
 
-Namespace filters support both string patterns and Kubernetes label selectors:
+Use `includeNamespaces.patterns` and `excludeNamespaces.patterns` for the general
+AuditConfig event stream. For example:
 
 ```yaml
 spec:
   filtering:
-    # Include namespaces matching patterns OR labels
     includeNamespaces:
-      patterns:
-        - "prod-*"
-        - "staging-*"
-      selectorTerms:
-        - matchLabels:
-            audit-enabled: "true"
-    
-    # Exclude system namespaces by pattern
+      patterns: ["prod-*", "staging-*"]
     excludeNamespaces:
-      patterns:
-        - "kube-*"
-      selectorTerms:
-        - matchLabels:
-            audit-exclude: "true"
+      patterns: ["kube-*"]
 ```
 
-This allows dynamic namespace selection based on labels, which is useful when:
-- New namespaces are created frequently
-- Namespace naming conventions vary
-- You want to use Kubernetes-native label selectors
+Label selectors require `target.namespaceLabels`, which general controller event
+emitters do not populate from target clusters. Inclusion selector terms match
+only events carrying labels; they are not a general namespace label lookup.
 
-Label selector terms are evaluated only when the audit event includes
-`target.namespaceLabels`; name patterns continue to match on
-`target.namespace`. Events without namespace labels do not match selector terms.
+**Upgrade compatibility:** enabled AuditConfigs containing
+`excludeNamespaces.selectorTerms` are rejected during reload. The last working
+configuration remains active, and the new configuration is reported with
+`Ready=False` / `ReloadFailed`. Convert selector exclusions to namespace patterns
+before upgrading or applying the configuration. On initial startup there is no
+previous configuration to retain. Adding labels to individual events does not
+make selector exclusions supported by AuditConfig.
+
+Direct users of the filtered-sink library can supply namespace labels and use
+selector exclusions; absent labels fail closed in that lower-level API.
 
 ## Sampling
 

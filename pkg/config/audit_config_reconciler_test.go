@@ -569,6 +569,11 @@ func TestAuditConfigReconciler_Reconcile_ReloadError(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, errorHandlerCalled)
 	assert.Equal(t, 30*time.Second, result.RequeueAfter)
+	stored := &breakglassv1alpha1.AuditConfig{}
+	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, stored))
+	require.Len(t, stored.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionFalse, stored.Status.Conditions[0].Status)
+	assert.Equal(t, "ReloadFailed", stored.Status.Conditions[0].Reason)
 
 	// Check error event was recorded
 	select {
@@ -1372,4 +1377,36 @@ func TestAuditConfigReconciler_UpdateStatus_StatsProviderReturnsNil(t *testing.T
 	assert.Equal(t, int64(0), updatedConfig.Status.EventsProcessed)
 	assert.Equal(t, int64(0), updatedConfig.Status.EventsDropped)
 	assert.Nil(t, updatedConfig.Status.LastEventTime)
+}
+
+func TestAuditKafkaSecretNamespaceValidation(t *testing.T) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: "controller"}}
+	foreign := secret.DeepCopy()
+	foreign.Namespace = "foreign"
+	r, _ := newTestAuditConfigReconciler(t, secret, foreign)
+	r.SetControllerNamespace("controller")
+	for _, namespace := range []string{"", "controller", "foreign"} {
+		for _, kind := range []string{"ca", "client", "sasl"} {
+			t.Run(namespace+"/"+kind, func(t *testing.T) {
+				ref := breakglassv1alpha1.SecretKeySelector{Name: secret.Name, Namespace: namespace}
+				sink := breakglassv1alpha1.AuditSinkConfig{Name: "kafka", Type: breakglassv1alpha1.AuditSinkTypeKafka,
+					Kafka: &breakglassv1alpha1.KafkaSinkSpec{Brokers: []string{"localhost:9092"}, Topic: "audit"}}
+				switch kind {
+				case "ca":
+					sink.Kafka.TLS = &breakglassv1alpha1.KafkaTLSSpec{Enabled: true, CASecretRef: &ref}
+				case "client":
+					sink.Kafka.TLS = &breakglassv1alpha1.KafkaTLSSpec{Enabled: true, ClientCertSecretRef: &ref}
+				case "sasl":
+					sink.Kafka.SASL = &breakglassv1alpha1.KafkaSASLSpec{CredentialsSecretRef: ref}
+				}
+				errs := r.validateSink(context.Background(), sink, 0)
+				if namespace == "foreign" {
+					require.Len(t, errs, 1)
+					assert.Contains(t, errs[0], "namespace must be controller namespace")
+				} else {
+					assert.Empty(t, errs)
+				}
+			})
+		}
+	}
 }

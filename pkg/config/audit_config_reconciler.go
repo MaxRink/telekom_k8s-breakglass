@@ -64,11 +64,17 @@ type AuditConfigReconciler struct {
 	// getStats returns the current audit manager statistics (optional)
 	getStats func() *AuditStats
 	// resyncPeriod defines the full reconciliation interval (default 10m)
-	resyncPeriod time.Duration
+	resyncPeriod        time.Duration
+	controllerNamespace string
 
 	// Cache for all active AuditConfigs
 	configMutex   sync.RWMutex
 	activeConfigs []*breakglassv1alpha1.AuditConfig
+}
+
+// SetControllerNamespace sets the namespace allowed for audit sink Secrets.
+func (r *AuditConfigReconciler) SetControllerNamespace(namespace string) {
+	r.controllerNamespace = namespace
 }
 
 // SinkHealthInfo contains health information for a sink.
@@ -207,11 +213,6 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		}
 	}
 
-	// Cache the active configs
-	r.configMutex.Lock()
-	r.activeConfigs = validConfigs
-	r.configMutex.Unlock()
-
 	// Call reload callback with ALL valid configs. audit.Service.ReloadMultiple
 	// records successful reload metrics; the reconciler records callback failures.
 	if r.onReloadMultiple != nil {
@@ -226,6 +227,13 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 			for i := range allConfigs.Items {
 				cfg := &allConfigs.Items[i]
 				if cfg.Spec.Enabled && r.isConfigInList(cfg.Name, validConfigs) {
+					apimeta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+						Type: "Ready", Status: metav1.ConditionFalse, Reason: "ReloadFailed",
+						Message: err.Error(), ObservedGeneration: cfg.Generation, LastTransitionTime: metav1.Now(),
+					})
+					if statusErr := r.applyStatus(ctx, cfg); statusErr != nil {
+						r.logger.Errorw("Failed to record audit reload failure", "name", cfg.Name, "error", statusErr)
+					}
 					if r.recorder != nil {
 						r.recorder.Eventf(cfg, nil, corev1.EventTypeWarning, "ReloadFailed", "Reload",
 							"Failed to reload audit configuration: %v", err)
@@ -236,6 +244,11 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 			return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
+
+	// Cache the active configs
+	r.configMutex.Lock()
+	r.activeConfigs = validConfigs
+	r.configMutex.Unlock()
 
 	// Log summary
 	var configNames []string
@@ -338,6 +351,12 @@ func (r *AuditConfigReconciler) validateSink(ctx context.Context, sink breakglas
 
 // validateSecretExists checks if a secret exists
 func (r *AuditConfigReconciler) validateSecretExists(ctx context.Context, name, namespace string) error {
+	if namespace == "" {
+		namespace = r.controllerNamespace
+	}
+	if r.controllerNamespace != "" && namespace != r.controllerNamespace {
+		return fmt.Errorf("secret %q namespace must be controller namespace %q", name, r.controllerNamespace)
+	}
 	secret := &corev1.Secret{}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
 		return err

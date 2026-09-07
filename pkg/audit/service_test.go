@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1300,9 +1301,9 @@ func TestService_BuildKafkaSASLConfig(t *testing.T) {
 			},
 		}
 
-		cfg, err := svcOtherNS.buildKafkaSASLConfig(ctx, saslCfg)
-		require.NoError(t, err)
-		assert.Equal(t, "other-user", cfg.Username)
+		_, err := svcOtherNS.buildKafkaSASLConfig(ctx, saslCfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "namespace must be controller namespace")
 	})
 }
 
@@ -1387,4 +1388,42 @@ func TestService_Manager_NonNilAfterSuccessfulReload(t *testing.T) {
 	assert.NotNil(t, svc.Manager())
 
 	_ = svc.Close()
+}
+
+func TestServiceRejectsSelectorExclusionsBeforeReplacingActiveManager(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.New(core), "controller")
+	defer func() { require.NoError(t, svc.Close()) }()
+	cfg := &breakglassv1alpha1.AuditConfig{Spec: breakglassv1alpha1.AuditConfigSpec{
+		Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+	}}
+	require.NoError(t, svc.ReloadMultiple(context.Background(), []*breakglassv1alpha1.AuditConfig{cfg}))
+	active := svc.manager
+	cfg.Spec.Filtering = &breakglassv1alpha1.AuditFilterConfig{ExcludeNamespaces: &breakglassv1alpha1.NamespaceFilter{
+		SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{MatchLabels: map[string]string{"private": "true"}}},
+	}}
+	err := svc.ReloadMultiple(context.Background(), []*breakglassv1alpha1.AuditConfig{cfg})
+	require.ErrorContains(t, err, "unsupported namespace selector exclusions")
+	assert.Same(t, active, svc.manager)
+	assert.True(t, svc.enabled)
+	require.NoError(t, svc.EmitSync(context.Background(), &Event{ID: "still-delivered", Type: EventSessionRequested, Target: Target{Namespace: "unrelated"}}))
+	require.NoError(t, svc.Close())
+	entries := logs.FilterMessage("audit_event").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, "still-delivered", entries[0].ContextMap()["event_id"])
+}
+
+func TestServiceKafkaTLSRejectsForeignSecrets(t *testing.T) {
+	foreign := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: "foreign"}, Data: map[string][]byte{
+		"ca.crt": []byte("CA"), "tls.crt": []byte("cert"), "tls.key": []byte("private key"),
+	}}
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).WithObjects(foreign).Build(), nil, zap.NewNop(), "controller")
+	assert.Equal(t, "controller", svc.ControllerNamespace())
+	ref := &breakglassv1alpha1.SecretKeySelector{Name: foreign.Name, Namespace: foreign.Namespace}
+	for _, cfg := range []*breakglassv1alpha1.KafkaTLSSpec{{CASecretRef: ref}, {ClientCertSecretRef: ref}} {
+		_, err := svc.buildKafkaTLSConfig(context.Background(), cfg)
+		require.ErrorContains(t, err, "namespace must be controller namespace")
+	}
+	_, err := svc.getSecretKey(context.Background(), foreign.Name, foreign.Namespace, "tls.key")
+	require.ErrorContains(t, err, "namespace must be controller namespace")
 }

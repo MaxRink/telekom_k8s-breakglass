@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -47,6 +48,33 @@ type Sink interface {
 // LogSink writes audit events to a structured logger.
 type LogSink struct {
 	logger *zap.Logger
+}
+
+type redactedError struct {
+	message string
+	cause   error
+}
+
+func (e redactedError) Error() string { return e.message }
+func (e redactedError) Unwrap() error { return e.cause }
+
+func redactHTTPError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedError{message: "HTTP request failed", cause: err}
+}
+
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	return u.String()
 }
 
 // NewLogSink creates a new LogSink.
@@ -174,8 +202,8 @@ func NewWebhookSink(cfg WebhookSinkConfig, logger *zap.Logger) *WebhookSink {
 
 	sink.logger.Info("Webhook audit sink created",
 		zap.String("name", cfg.Name),
-		zap.String("url", cfg.URL),
-		zap.String("batchURL", batchURL),
+		zap.String("url", redactURL(cfg.URL)),
+		zap.String("batchURL", redactURL(batchURL)),
 		zap.Duration("timeout", timeout))
 
 	return sink
@@ -191,6 +219,7 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed++
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -202,24 +231,25 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed++
 		s.logger.Debug("webhook request failed",
-			zap.String("url", s.url),
+			zap.String("url", redactURL(s.url)),
 			zap.String("event_id", event.ID),
 			zap.String("event_type", string(event.Type)),
 			zap.String("error", err.Error()))
-		return fmt.Errorf("failed to send audit event to %s: %w", s.url, err)
+		return fmt.Errorf("failed to send audit event to %s: %w", redactURL(s.url), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		s.eventsFailed++
 		s.logger.Debug("webhook returned error",
-			zap.String("url", s.url),
+			zap.String("url", redactURL(s.url)),
 			zap.String("event_id", event.ID),
 			zap.String("event_type", string(event.Type)),
 			zap.Int("status_code", resp.StatusCode))
-		return fmt.Errorf("webhook %s returned error status: %d", s.url, resp.StatusCode)
+		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.url), resp.StatusCode)
 	}
 
 	s.eventsWritten++
@@ -254,6 +284,7 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.batchURL, bytes.NewReader(body))
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed += int64(len(events))
 		return fmt.Errorf("failed to create batch request: %w", err)
 	}
@@ -266,22 +297,23 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed += int64(len(events))
 		s.logger.Debug("webhook batch request failed",
-			zap.String("url", s.batchURL),
+			zap.String("url", redactURL(s.batchURL)),
 			zap.Int("batch_size", len(events)),
 			zap.String("error", err.Error()))
-		return fmt.Errorf("failed to send audit batch to %s: %w", s.batchURL, err)
+		return fmt.Errorf("failed to send audit batch to %s: %w", redactURL(s.batchURL), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		s.eventsFailed += int64(len(events))
 		s.logger.Debug("webhook batch returned error",
-			zap.String("url", s.batchURL),
+			zap.String("url", redactURL(s.batchURL)),
 			zap.Int("batch_size", len(events)),
 			zap.Int("status_code", resp.StatusCode))
-		return fmt.Errorf("webhook %s returned error status: %d", s.batchURL, resp.StatusCode)
+		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.batchURL), resp.StatusCode)
 	}
 
 	s.eventsWritten += int64(len(events))
