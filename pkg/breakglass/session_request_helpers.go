@@ -358,7 +358,7 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		// Recipient caps below must not make overlapping excluded members visible.
 		result.approversByGroup[group] = members
 
-		// Apply per-group member limit to prevent resource exhaustion
+		// Cap notification candidates; privacy snapshots remain complete.
 		if len(members) > MaxApproverGroupMembers {
 			reqLog.Warnw("Approver group has too many members, truncating",
 				"group", system.RedactGroupName(group),
@@ -884,13 +884,17 @@ func notificationApproverProviders(escalation *breakglassv1alpha1.BreakglassEsca
 // membership for an unresolved allowed provider. Empty resolved groups are known.
 func restrictedNotificationGroupMembers(escalation *breakglassv1alpha1.BreakglassEscalation, group string) ([]string, bool) {
 	var members []string
+	seen := make(map[string]bool)
 	for _, provider := range notificationApproverProviders(escalation) {
 		providerMembers, known := escalation.Status.IDPGroupMemberships[provider][group]
 		if !known {
 			return nil, false
 		}
 		for _, member := range providerMembers {
-			members = addIfNotPresent(members, member)
+			if !seen[member] {
+				seen[member] = true
+				members = append(members, member)
+			}
 		}
 	}
 	return members, true

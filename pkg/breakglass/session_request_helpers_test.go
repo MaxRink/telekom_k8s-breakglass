@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -583,4 +584,46 @@ func TestRestrictedNotificationPrivacyFilters(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestRestrictedNotificationMembershipPreservesOrderAndExactIdentity(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{AllowedIdentityProvidersForApprovers: []string{"first", "second"}}, Status: breakglassv1alpha1.BreakglassEscalationStatus{IDPGroupMemberships: map[string]map[string][]string{
+		"first":  {"team": {"b@example.com", "a@example.com", "b@example.com"}},
+		"second": {"team": {"a@example.com", "A@example.com", "c@example.com", "c@example.com"}},
+	}}}
+	members, known := restrictedNotificationGroupMembers(esc, "team")
+	require.True(t, known)
+	assert.Equal(t, []string{"b@example.com", "a@example.com", "A@example.com", "c@example.com"}, members)
+	assert.Equal(t, []string{"b@example.com", "a@example.com", "b@example.com"}, esc.Status.IDPGroupMemberships["first"]["team"])
+}
+
+func TestLargeNotificationSnapshotExcludesTailMemberBeyondRecipientCap(t *testing.T) {
+	members := make([]string, MaxApproverGroupMembers+10)
+	for i := range members {
+		members[i] = fmt.Sprintf("member-%d@example.com", i)
+	}
+	members[len(members)-1] = "excluded@example.com"
+	esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProvidersForApprovers: []string{"provider"},
+		Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}, Users: []string{"excluded@example.com", "visible@example.com"}},
+		NotificationExclusions:               &breakglassv1alpha1.NotificationExclusions{Groups: []string{"team"}},
+	}, Status: breakglassv1alpha1.BreakglassEscalationStatus{IDPGroupMemberships: map[string]map[string][]string{"provider": {"team": members}}}}
+	sender := &FakeMailSender{}
+	controller := &BreakglassSessionController{log: zap.NewNop().Sugar(), mail: sender}
+	result := &escalationResolutionResult{allApprovers: []string{"excluded@example.com", "visible@example.com"}, approversByGroup: map[string][]string{"_explicit_users": {"excluded@example.com", "visible@example.com"}}}
+	controller.resolveAndAddGroupMembers(context.Background(), esc, result, controller.log)
+	require.Equal(t, members, result.approversByGroup["team"], "privacy snapshot must remain complete")
+	expected := append([]string{"excluded@example.com", "visible@example.com"}, members[:MaxApproverGroupMembers]...)
+	require.Equal(t, expected, result.allApprovers, "candidate cap and first-seen order must remain unchanged")
+	filtered := controller.filterExcludedNotificationRecipients(controller.log, result.allApprovers, result.approversByGroup, esc)
+	require.Equal(t, []string{"visible@example.com"}, filtered, "tail membership must exclude even an explicit recipient")
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", filtered, result.approversByGroup, esc)
+	assert.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{"visible@example.com"}, sender.LastRecivers)
+	// Group rendering can still find eligible members at the end of a full
+	// snapshot; duplicate candidate entries must not produce duplicate sends.
+	sender.SendCallCount = 0
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", []string{members[len(members)-2], members[len(members)-2]}, result.approversByGroup, esc)
+	assert.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{members[len(members)-2]}, sender.LastRecivers)
 }

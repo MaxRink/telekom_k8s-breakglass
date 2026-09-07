@@ -14,7 +14,9 @@ be resolved and no successful request-time membership snapshot is available, all
 request notifications are suppressed. Session creation and approval remain
 available. Successfully resolved empty groups are distinct from unavailable
 membership. Complete request-time membership is retained for filtering even when
-notification recipient limits truncate the candidate list.
+notification recipient limits truncate the candidate list. Membership deduplication
+and recipient matching use sets; the caps bound recipient candidates, not the
+size of the complete privacy snapshot.
 
 `approvers.hiddenFromUI` removes hidden group names from email content as well as
 removing their members from recipients. An item explicitly listed in

@@ -640,6 +640,10 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 	// Build a map of approver email -> groups they belong to (across ALL groups)
 	// This ensures we send one email per approver, showing all their groups
 	approverToGroups := make(map[string][]string)
+	eligible := make(map[string]bool, len(filteredApprovers))
+	for _, approver := range filteredApprovers {
+		eligible[approver] = true
+	}
 
 	// For each configured approver group, collect which groups each approver belongs to
 	for _, groupName := range matchedEscalation.Spec.Approvers.Groups {
@@ -647,12 +651,9 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 
 		// Filter the group members to only include those in filteredApprovers
 		for _, member := range groupMembers {
-			for _, filtered := range filteredApprovers {
-				if member == filtered {
-					// Record this approver -> group mapping
-					approverToGroups[member] = append(approverToGroups[member], groupName)
-					break
-				}
+			if eligible[member] {
+				// Record this approver -> group mapping in configured group order.
+				approverToGroups[member] = append(approverToGroups[member], groupName)
 			}
 		}
 	}
@@ -681,11 +682,8 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 		// Filter explicit users to only include those in filteredApprovers
 		var approversForExplicit []string
 		for _, user := range explicitUsers {
-			for _, filtered := range filteredApprovers {
-				if user == filtered {
-					approversForExplicit = append(approversForExplicit, user)
-					break
-				}
+			if eligible[user] {
+				approversForExplicit = append(approversForExplicit, user)
 			}
 		}
 
