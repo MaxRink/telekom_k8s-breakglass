@@ -470,3 +470,8 @@ stringData:
   username: audit-user
   password: audit-password
 ```
+# Secret reference namespace
+
+Kafka TLS CA, client certificate, and SASL credential Secret references must set
+an explicit namespace equal to the controller namespace. Empty namespaces are
+validation errors and are never defaulted or read.

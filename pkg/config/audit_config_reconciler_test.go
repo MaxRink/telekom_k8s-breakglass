@@ -27,9 +27,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -64,6 +66,16 @@ func newTestAuditConfigReconciler(t *testing.T, objs ...runtime.Object) (*AuditC
 
 type auditFakeEventRecorder struct {
 	Events chan string
+}
+
+type countingAuditClient struct {
+	ctrlclient.Client
+	gets []types.NamespacedName
+}
+
+func (c *countingAuditClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	c.gets = append(c.gets, types.NamespacedName{Namespace: key.Namespace, Name: key.Name})
+	return c.Client.Get(ctx, key, obj, opts...)
 }
 
 func newAuditFakeEventRecorder(buffer int) *auditFakeEventRecorder {
@@ -1403,10 +1415,52 @@ func TestAuditKafkaSecretNamespaceValidation(t *testing.T) {
 				if namespace == "foreign" {
 					require.Len(t, errs, 1)
 					assert.Contains(t, errs[0], "namespace must be controller namespace")
+				} else if namespace == "" {
+					require.Len(t, errs, 1)
+					assert.Contains(t, errs[0], "namespace must be set explicitly")
 				} else {
 					assert.Empty(t, errs)
 				}
 			})
 		}
 	}
+}
+
+func TestAuditKafkaSecretNamespaceValidationDoesNotReadInvalidNamespaces(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	base := fake.NewClientBuilder().WithScheme(scheme).Build()
+	counting := &countingAuditClient{Client: base}
+	r := NewAuditConfigReconciler(counting, zaptest.NewLogger(t).Sugar(), newAuditFakeEventRecorder(1), nil, nil, time.Minute)
+	r.SetControllerNamespace("controller")
+	for _, namespace := range []string{"", "foreign"} {
+		err := r.validateSecretExists(context.Background(), "credentials", namespace)
+		require.Error(t, err)
+	}
+	assert.Empty(t, counting.gets)
+}
+
+func TestAuditConfigReconcile_EmptyTLSNamespaceFailsAndDoesNotReload(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{ObjectMeta: metav1.ObjectMeta{Name: "empty-tls-namespace"}, Spec: breakglassv1alpha1.AuditConfigSpec{
+		Enabled: true,
+		Sinks: []breakglassv1alpha1.AuditSinkConfig{{Name: "kafka", Type: breakglassv1alpha1.AuditSinkTypeKafka, Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+			Brokers: []string{"localhost:9092"}, Topic: "audit", TLS: &breakglassv1alpha1.KafkaTLSSpec{Enabled: true,
+				CASecretRef: &breakglassv1alpha1.SecretKeySelector{Name: "ca", Namespace: ""}},
+		}}},
+	}}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca", Namespace: "controller"}, Data: map[string][]byte{"ca.crt": []byte("ca")}}
+	r, _ := newTestAuditConfigReconciler(t, config, secret)
+	r.SetControllerNamespace("controller")
+	reloaded := false
+	r.onReloadMultiple = func(context.Context, []*breakglassv1alpha1.AuditConfig) error { reloaded = true; return nil }
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: config.Name}})
+	require.NoError(t, err)
+	require.False(t, reloaded)
+	updated := &breakglassv1alpha1.AuditConfig{}
+	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, updated))
+	condition := apimeta.FindStatusCondition(updated.Status.Conditions, "Ready")
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "ValidationFailed", condition.Reason)
 }

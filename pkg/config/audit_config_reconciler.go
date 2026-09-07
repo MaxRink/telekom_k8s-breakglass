@@ -352,7 +352,7 @@ func (r *AuditConfigReconciler) validateSink(ctx context.Context, sink breakglas
 // validateSecretExists checks if a secret exists
 func (r *AuditConfigReconciler) validateSecretExists(ctx context.Context, name, namespace string) error {
 	if namespace == "" {
-		namespace = r.controllerNamespace
+		return fmt.Errorf("secret %q namespace must be set explicitly to controller namespace %q", name, r.controllerNamespace)
 	}
 	if r.controllerNamespace != "" && namespace != r.controllerNamespace {
 		return fmt.Errorf("secret %q namespace must be controller namespace %q", name, r.controllerNamespace)

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+
 - Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
   debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
   signing keys when identity-provider trust settings change.
