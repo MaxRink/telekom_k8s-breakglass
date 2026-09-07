@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # Session request notification privacy
 
 Request emails go only to approvers of the first ready escalation matching the
-requested granted group. Other eligible escalations do not contribute recipients.
+requested group. Other eligible escalations do not contribute recipients.
 
 `notificationExclusions.groups` always denotes groups, even when a group name
 looks like an email address. If an exclusion or hidden group's membership cannot
