@@ -1394,3 +1394,25 @@ func TestLoadIdentityProviderByIssuerExplicitIssuerIsAuthoritative(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, idp.Name, cfg.Name)
 }
+
+func TestLoadIdentityProviderByIssuer_DoesNotOverrideExplicitIssuer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "explicit-issuer-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://configured-issuer.example.com",
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority:        "https://authority.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
+			},
+		},
+	}
+	loader := NewIdentityProviderLoader(fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build())
+
+	_, err := loader.LoadIdentityProviderByIssuer(context.Background(), "https://authority.example.com")
+	require.Error(t, err)
+}

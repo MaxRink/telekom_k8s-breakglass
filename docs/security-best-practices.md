@@ -2,6 +2,32 @@
 
 This document covers security considerations and best practices for deploying and operating the breakglass controller.
 
+## Administrative and requester trust boundaries
+
+Ordinary users request and approve sessions through the authenticated REST API.
+The API derives their identity from verified tokens and applies requester,
+approver, and session policies. Kubernetes RBAC is a separate boundary:
+permission to create or modify session CRs or their status is privileged
+controller or automation authority. Admission validates resource fields; it
+does not bind every declared requester field to the Kubernetes admission caller.
+Do not grant session CR write permissions to ordinary REST users as an
+alternative way to request access.
+
+Writers of `IdentityProvider`, `ClusterConfig`, `MailProvider`, `AuditConfig`,
+`DebugSessionTemplate`, `DebugPodTemplate`, bindings, and credential Secrets
+control administrative policy. Selecting endpoints, service accounts, and
+reviewed workload templates is intentional authority. Restrict these writes
+with Kubernetes RBAC, and scope controller credentials to the resources they
+need. This does not remove validation requirements or narrower constraints
+promised by a policy. See [debug session authoring](debug-session-authoring.md).
+
+Development exceptions are specific to each subsystem. Explicit SMTP or Kafka
+TLS bypass options are unsafe on untrusted networks; they are not production
+recommendations. The API OIDC verifier and OIDC proxy reject IDP
+`insecureSkipVerify`; configure a certificate authority instead. See
+[mail providers](mail-provider.md), [audit configuration](audit-config.md), and
+[OIDC proxy configuration](configuration-reference.md).
+
 ## Rate Limiting
 
 The breakglass API includes **built-in rate limiting** (per-IP, and for some endpoints per-user when authenticated). In production environments, you may still want additional rate limiting at the infrastructure level (ingress/API gateway) to prevent:
@@ -204,23 +230,25 @@ This requires a matching audience protocol mapper in your identity provider (e.g
 
 ### Token Storage in the Browser
 
-The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`.
+The browser frontend uses `sessionStorage` through `oidc-client-ts`. Access
+tokens remain readable by same-origin JavaScript and are explicitly attached as
+Bearer tokens to API requests. Session storage limits persistence and prevents
+other origins from reading it; it does not protect tokens from compromised
+same-origin scripts. Browser-local cached runtime configuration is bootstrap
+state, not the server's issuer authorization policy.
 
-**Why not `httpOnly` cookies?**
+CSP restricts script sources and reduces injection opportunities, but cannot
+guarantee that every XSS payload is blocked. Keep access tokens short-lived
+(for example, 5–15 minutes), constrain their audience, and avoid logging token
+objects or authenticated HTTP request configurations. Bearer authentication
+avoids the automatic cookie credential attachment that enables conventional
+cookie-based CSRF; it does not remove XSS or other request-forgery risks.
 
-Using `httpOnly` cookies for token storage would require a Backend-For-Frontend (BFF) proxy pattern — the server would need to issue and manage session cookies, translate them into Bearer tokens, and handle CSRF protection. This adds significant architectural complexity for a privilege escalation tool that is used infrequently and for short durations.
-
-The current Bearer token approach provides adequate security because:
-
-| Control | How it protects tokens |
-|---------|----------------------|
-| **Content Security Policy (CSP)** | Restricts script sources to `'self'` plus specific hash-allowed inline scripts, preventing arbitrary XSS payloads from accessing storage |
-| **Input sanitization** | Free-form reason fields are sanitized to strip HTML/JS injection attempts |
-| **Same-origin policy** | `sessionStorage` is origin-scoped — a cross-origin page cannot read it |
-| **Short token lifetime** | OIDC tokens should be configured with 5–15 minute expiry at the IDP |
-| **No CSRF risk** | Bearer tokens must be explicitly attached to requests — the browser never sends them automatically |
-
-> **Recommendation:** Configure your OIDC provider to issue short-lived access tokens (5–15 minutes). If your threat model requires `httpOnly` cookies, you would need to implement a BFF proxy layer in front of the breakglass API.
+An `httpOnly` cookie design would require a server-side session or
+Backend-for-Frontend layer with its own CSRF protection. That is a different
+architecture, not a configuration switch in this SPA. The development mock API
+uses synthetic records and does not exercise production authentication; see
+[the frontend development guide](../frontend/README.md).
 
 If using an API gateway (Kong, Ambassador, etc.), configure rate limiting there.
 
@@ -361,24 +389,30 @@ spec:
 
 ### SAR Authorization Webhook (Design Decision)
 
-The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes [SubjectAccessReview](https://kubernetes.io/docs/reference/access-authn-authz/authorization/#checking-api-access) (SAR) requests **without caller authentication**. This is a deliberate design decision:
+The SAR handler accepts Kubernetes
+[SubjectAccessReview](https://kubernetes.io/docs/reference/access-authn-authz/authorization/#checking-api-access)
+requests without authenticating the HTTP caller. It is exposed on the shared
+Gin API listener (default port 8080) at both
+`/breakglass/webhook/authorize/:cluster_name` and
+`/api/breakglass/webhook/authorize/:cluster_name`. The admission webhook listener
+on port 9443 is separate. Rate limiting reduces abuse but does not authenticate
+SAR callers.
 
-**Why no authentication on the SAR endpoint:**
+The SAR body contains asserted user and group identities. Only the API server
+or another explicitly trusted caller should reach these routes. A direct call
+returns an authorization decision, not Kubernetes permissions or credentials,
+but can disclose decisions and affect activity tracking, counters, and logs.
+The [Kubernetes webhook protocol](https://kubernetes.io/docs/reference/access-authn-authz/webhook/) can use transport authentication; the built-in
+Gin handler does not validate a configured kubeconfig bearer token or client
+certificate. A validating gateway or proxy must provide that protection when
+required; see [webhook setup](webhook-setup.md#transport-authentication).
 
-1. **Kubernetes webhook protocol**: The API server calls authorization webhooks as part of its own request pipeline. Adding token-based authentication would require the API server itself to obtain and present tokens — increasing complexity and creating a circular dependency (the API server would need breakglass credentials to authorize breakglass requests).
-
-2. **Served by the Gin API server**: The SAR webhook is registered on the shared Gin HTTP server (default port 8080), **not** on the controller-runtime webhook server (port 9443). Port 9443 is used exclusively for validating/mutating admission webhooks, which have their own TLS certificates generated at startup.
-
-3. **Rate limiting**: The endpoint includes built-in per-IP rate limiting to prevent abuse even if an attacker gains network access.
-
-> **⚠️ Security Warning:** Because the SAR endpoint shares the Gin API port (8080) and has no HTTP-layer authentication, **any in-cluster workload with network access to port 8080 can send crafted SubjectAccessReview requests**. Without a NetworkPolicy, this means any pod in the cluster could probe authorization decisions and trigger side effects (rate-limiter counters, metrics, potential session-activity lookups) by sending SAR requests with arbitrary `spec.user`/`spec.groups` values. Note that calling the webhook directly does **not** grant Kubernetes permissions — it only returns an `allowed`/`denied` decision.
-
-**Recommended mitigations:**
-
-- **NetworkPolicy (required)**: Deploy a NetworkPolicy (see above) restricting ingress on port 8080 to the Kubernetes API server's IP range and the ingress controller namespace. This is the primary defense.
-- **Kubernetes audit logging**: Enable audit logging to detect unexpected or malicious SAR requests
-- **Network segmentation**: In multi-tenant clusters, ensure the breakglass service is not exposed to untrusted namespaces
-- In production, consider a dedicated listener for the SAR webhook endpoint to separate it from the general API traffic
+Restrict direct pod access with NetworkPolicy and protect **both route aliases**
+at any ingress or gateway. Allowing ingress-controller pods through a
+NetworkPolicy does not authenticate public callers of `/api/*`. Deny public
+routing to the SAR paths or require authentication at a trusted gateway.
+Kubernetes audit logs cover requests processed by the API server; use service
+and gateway logging to observe direct HTTP calls as well.
 
 ### Build Info Endpoint
 
@@ -448,7 +482,7 @@ This enables a single template to serve multiple personas with different capabil
 
 - **Frontend**: Shows only options the user can select
 - **API**: Validates user groups server-side and rejects unauthorized selections with clear error messages
-- **Webhooks**: Admission validation ensures even direct `kubectl` creation respects group restrictions
+- **Webhooks**: Validate resource shape and configured values. Direct CR writes are privileged; admission must not be treated as authenticating the declared requester or replacing REST group authorization.
 
 ### Duration Limits
 

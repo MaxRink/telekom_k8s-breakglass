@@ -98,6 +98,11 @@ func (s *Service) Reload(ctx context.Context, config *breakglassv1alpha1.AuditCo
 func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, cfg := range configs {
+		if cfg != nil && cfg.Spec.Enabled && cfg.Spec.Filtering != nil && cfg.Spec.Filtering.ExcludeNamespaces != nil && len(cfg.Spec.Filtering.ExcludeNamespaces.SelectorTerms) > 0 {
+			return fmt.Errorf("audit config %q uses unsupported namespace selector exclusions; use namespace patterns", cfg.Name)
+		}
+	}
 
 	// Close the existing manager first so all in-flight goroutines stop before
 	// the underlying sinks are torn down. Without this ordering, async workers
@@ -266,7 +271,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 			case breakglassv1alpha1.AuditSinkTypeWebhook:
 				if sinkCfg.Webhook != nil {
 					fields = append(fields,
-						zap.String("url", sinkCfg.Webhook.URL),
+						zap.String("url", redactURL(sinkCfg.Webhook.URL)),
 						zap.Int("timeout_seconds", sinkCfg.Webhook.TimeoutSeconds),
 						zap.Int("batch_size", sinkCfg.Webhook.BatchSize))
 				}
@@ -746,6 +751,9 @@ func (s *Service) applyWebhookAuth(ctx context.Context, webhookCfg *breakglassv1
 }
 
 func (s *Service) requireControllerNamespace(refType, name, namespace string) error {
+	if s.configNS == "" {
+		return fmt.Errorf("%s secret %q cannot be read because controller namespace is not configured", refType, name)
+	}
 	if namespace != s.configNS {
 		return fmt.Errorf("%s secret %q namespace must be controller namespace %q, got %q", refType, name, s.configNS, namespace)
 	}
@@ -809,6 +817,9 @@ func (s *Service) buildKubernetesSink(sinkCfg breakglassv1alpha1.AuditSinkConfig
 
 // getSecretKey retrieves a specific key from a Kubernetes secret.
 func (s *Service) getSecretKey(ctx context.Context, name, namespace, key string) ([]byte, error) {
+	if err := s.requireControllerNamespace("audit", name, namespace); err != nil {
+		return nil, err
+	}
 	secret := &corev1.Secret{}
 	if err := s.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
 		return nil, fmt.Errorf("failed to get secret %s/%s: %w", namespace, name, err)

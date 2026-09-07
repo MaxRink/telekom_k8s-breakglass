@@ -1893,7 +1893,7 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 				TemplateString: `apiVersion: v1
 kind: Pod
 metadata:
-  name: {{ .session.name | truncName 63 }}
+  name: {{ .session.name | truncName 63 | k8sName }}
   labels:
     app: {{ .session.name | k8sName }}
 spec:
@@ -1902,10 +1902,10 @@ spec:
     image: busybox
     resources:
       limits:
-        memory: {{ parseQuantity "1Gi" | formatQuantity }}
+        memory: {{ parseQuantity "1Gi" | formatQuantity | yamlQuote }}
     env:
     - name: REQUIRED_VAR
-      value: {{ required "REQUIRED_VAR is required" .vars.requiredValue }}
+      value: {{ required "REQUIRED_VAR is required" .vars.requiredValue | yamlQuote }}
   volumes:
   - name: config
     configMap:
@@ -2140,7 +2140,7 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 				PodTemplateRef: &DebugPodTemplateReference{
 					Name: "pod-template",
 				},
-				PodOverridesTemplate: "metadata:\n  labels:\n    custom: {{ .vars.customLabel | default \"default\" }}",
+				PodOverridesTemplate: "metadata:\n  labels:\n    custom: {{ .vars.customLabel | default \"default\" | yamlQuote }}",
 			},
 		}
 		result := ValidateDebugSessionTemplate(template)
@@ -3385,7 +3385,7 @@ kind: Pod
 spec:
   containers:
     - name: debug-{{ .session.name }}
-      image: {{ .vars.image | default "busybox:latest" }}
+      image: {{ .vars.image | default "busybox:latest" | yamlQuote }}
 `,
 			},
 		}
@@ -3792,7 +3792,7 @@ kind: Pod
 spec:
   containers:
     - name: debug
-      image: {{ .vars.image }}
+      image: {{ .vars.image | yamlQuote }}
 `, map[string]string{"image": "busybox:latest"})
 		assert.Empty(t, warnings, "template with provided var should render cleanly")
 	})
@@ -3900,16 +3900,16 @@ spec:
     spec:
       containers:
         - name: debug
-          image: {{ .vars.image | default "busybox:latest" }}
+          image: {{ .vars.image | default "busybox:latest" | yamlQuote }}
           command: ["sleep", "infinity"]
 `, map[string]string{"image": "alpine:3.21"})
 		assert.Empty(t, warnings, "real-world DaemonSet template should render cleanly")
 	})
 }
 
-// ==================== DebugPodTemplate Dry-Run Integration Tests ====================
+// ==================== DebugPodTemplate Non-Executing Admission Tests ====================
 
-func TestValidateDebugPodTemplate_DryRunWarnings(t *testing.T) {
+func TestValidateDebugPodTemplate_DoesNotExecuteTemplates(t *testing.T) {
 	t.Run("valid Go template produces no warnings", func(t *testing.T) {
 		template := &DebugPodTemplate{
 			Spec: DebugPodTemplateSpec{
@@ -3920,16 +3920,16 @@ metadata:
 spec:
   containers:
     - name: debug
-      image: {{ .vars.image | default "busybox:latest" }}
+      image: {{ .vars.image | default "busybox:latest" | yamlQuote }}
 `,
 			},
 		}
 		result := ValidateDebugPodTemplate(template)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
-		assert.Empty(t, result.Warnings, "no dry-run warnings expected for valid template")
+		assert.Empty(t, result.Warnings, "no execution warnings expected for valid template")
 	})
 
-	t.Run("template with execution error gets warning", func(t *testing.T) {
+	t.Run("template with execution error is not executed", func(t *testing.T) {
 		// Use `call` on a non-function value to force an execution error
 		template := &DebugPodTemplate{
 			Spec: DebugPodTemplateSpec{
@@ -3937,7 +3937,7 @@ spec:
 kind: Pod
 spec:
   containers:
-    - name: {{ call .session.name }}
+    - name: {{ call .session.name | yamlQuote }}
       image: busybox
 `,
 			},
@@ -3945,14 +3945,14 @@ spec:
 		result := ValidateDebugPodTemplate(template)
 		// Template syntax is valid, format is skipped (has {{), no format errors expected
 		assert.True(t, result.IsValid(), "template syntax is valid")
-		// But dry-run should warn about execution failure
-		assert.NotEmpty(t, result.Warnings, "expected dry-run warning for execution error")
+		// Admission must not execute the call expression.
+		assert.Empty(t, result.Warnings, "admission must not execute template expressions")
 	})
 }
 
-// ==================== DebugSessionTemplate Dry-Run Integration Tests ====================
+// ==================== DebugSessionTemplate Non-Executing Admission Tests ====================
 
-func TestValidateDebugSessionTemplate_DryRunWarnings(t *testing.T) {
+func TestValidateDebugSessionTemplate_DoesNotExecuteTemplates(t *testing.T) {
 	t.Run("valid Go template with ExtraDeployVariables defaults", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			Spec: DebugSessionTemplateSpec{
@@ -3964,7 +3964,7 @@ metadata:
 spec:
   containers:
     - name: debug
-      image: {{ .vars.image }}
+      image: {{ .vars.image | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -3980,7 +3980,7 @@ spec:
 		assert.Empty(t, result.Warnings, "valid template with var defaults should produce no warnings")
 	})
 
-	t.Run("var without default gets PLACEHOLDER", func(t *testing.T) {
+	t.Run("var without default is accepted without evaluation", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			Spec: DebugSessionTemplateSpec{
 				Mode: DebugSessionModeWorkload,
@@ -3989,25 +3989,25 @@ kind: Pod
 spec:
   containers:
     - name: debug
-      image: {{ .vars.customImage }}
+      image: {{ .vars.customImage | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
 						Name:      "customImage",
 						InputType: InputTypeText,
 						Required:  true,
-						// No default — should get PLACEHOLDER
+						// No default: admission does not evaluate the variable.
 					},
 				},
 			},
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
-		// PLACEHOLDER is valid YAML, so no warnings expected
-		assert.Empty(t, result.Warnings, "PLACEHOLDER should be valid YAML")
+		// Admission checks output syntax without substituting defaults.
+		assert.Empty(t, result.Warnings, "missing defaults do not trigger execution warnings")
 	})
 
-	t.Run("template with execution error gets warning", func(t *testing.T) {
+	t.Run("template with execution error is not executed", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			Spec: DebugSessionTemplateSpec{
 				Mode: DebugSessionModeWorkload,
@@ -4015,15 +4015,14 @@ spec:
 kind: Pod
 spec:
   containers:
-    - name: {{ call .session.name }}
+    - name: {{ call .session.name | yamlQuote }}
       image: busybox
 `,
 			},
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid(), "syntax is valid, format skipped due to {{")
-		assert.NotEmpty(t, result.Warnings, "execution failure should produce dry-run warning")
-		assert.Contains(t, result.Warnings[0], "dry-run render warning")
+		assert.Empty(t, result.Warnings, "admission must not execute template expressions")
 	})
 
 	t.Run("non-templated podTemplateString skips dry-run", func(t *testing.T) {
@@ -4038,7 +4037,7 @@ spec:
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid())
-		// No {{ in template, so tryRenderTemplateString returns nil immediately
+		// Plain manifests require no template execution.
 		assert.Empty(t, result.Warnings)
 	})
 
@@ -4515,7 +4514,10 @@ spec:
   containers:
     - name: debug
       image: busybox
-      args: {{ .vars.args }}
+      args:
+{{ range .vars.args | fromJson }}
+        - {{ . | yamlQuote }}
+{{ end }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -4542,7 +4544,7 @@ spec:
       image: busybox
       env:
         - name: CONFIG
-          value: {{ .vars.config }}
+          value: {{ .vars.config | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -4623,7 +4625,7 @@ spec:
       image: busybox
       env:
         - name: REPLICAS
-          value: {{ .vars.replicas }}
+          value: {{ .vars.replicas | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -4651,7 +4653,7 @@ spec:
       image: busybox
       env:
         - name: RATIO
-          value: {{ .vars.ratio }}
+          value: {{ .vars.ratio | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{

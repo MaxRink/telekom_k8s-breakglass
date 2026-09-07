@@ -95,7 +95,7 @@ describe("AuthService", () => {
       expect(user).toBeNull();
     });
 
-    it("returns the loaded user when refresh-token stripping cannot be persisted", async () => {
+    it("returns a sanitized user and clears storage when refresh-token stripping cannot be persisted", async () => {
       const mockUser = new User({
         profile: {
           email: "test@example.com",
@@ -115,11 +115,13 @@ describe("AuthService", () => {
 
       vi.spyOn(authService.userManager, "getUser").mockResolvedValue(mockUser);
       vi.spyOn(authService.userManager, "storeUser").mockRejectedValue(new Error("storage unavailable"));
+      vi.spyOn(authService.userManager, "removeUser").mockResolvedValue(undefined);
 
       const user = await authService.getUser();
 
       expect(user).toBe(mockUser);
-      expect(user?.refresh_token).toBe("stale-refresh-token");
+      expect(user?.refresh_token).toBeUndefined();
+      expect(authService.userManager.removeUser).toHaveBeenCalledOnce();
     });
   });
 

@@ -225,6 +225,20 @@ describe("Logger Service", () => {
       expect(console.error).toHaveBeenCalled();
     });
 
+    it("does not log Axios request configuration or bearer tokens", () => {
+      const token = "secret-bearer-token";
+      const err = {
+        message: "Request failed",
+        config: { headers: { Authorization: `Bearer ${token}` } },
+        response: { status: 500, data: { error: "Server error" } },
+      };
+
+      handleAxiosError("API", err, undefined, false);
+
+      expect(JSON.stringify((console.error as Mock).mock.calls)).not.toContain(token);
+      expect(JSON.stringify((console.error as Mock).mock.calls)).not.toContain("Authorization");
+    });
+
     it("handles missing response gracefully", () => {
       const err = { message: "Network error" };
 
