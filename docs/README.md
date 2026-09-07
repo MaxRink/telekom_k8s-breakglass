@@ -94,6 +94,8 @@ Every utility is published as an immutable,
 
 ## Security & Policy
 
+- **[Security Scanning](./security-scanning.md)** - CI vulnerability enforcement, PR warnings, and retained reports
+
 - **[Security Best Practices](./security-best-practices.md)** - Rate limiting, input sanitization, network security
 - **Frontend input sanitization** - Request reason sanitization and duration parsing are centralized in shared UI utilities for consistent validation.
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions and pod security rules
@@ -101,6 +103,8 @@ Every utility is published as an immutable,
 - **[BreakglassEscalation - Security Overrides](./breakglass-escalation.md#podsecurityoverrides)** - Per-escalation pod security exemptions
 
 ## Development & Maintenance
+
+- **[CI Concurrency Fixtures](./ci-validation.md)** - Deterministic live-fallback deduplication regression checks
 
 - **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
 - **[Package Structure](./package-structure.md)** - Sub-package layout of `pkg/breakglass/`
