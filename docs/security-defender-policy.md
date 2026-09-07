@@ -31,3 +31,4 @@ Override authorization reuses a resolver only for the same recorded provider and
 Unchanged providers reuse the configured Keycloak membership cache (`spec.keycloak.cacheTTL`, default 10 minutes) and token cache. Group membership revocation therefore becomes visible when that membership entry expires, rather than requiring a fresh IdP lookup on every SAR. Credential or configuration changes invalidate the resolver on the next successful configuration read. Reads observe the configured Kubernetes client; cache-backed clients remain subject to informer propagation delay.
 
 Provider loading and group-resolution diagnostics use the webhook logger, including resolver creation and membership-cache hits at their existing log levels.
+Within one approval decision, each provider/group membership result is reused, including failures; a new decision retries membership resolution.

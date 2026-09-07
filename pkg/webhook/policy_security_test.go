@@ -24,6 +24,17 @@ type policyMemberResolver struct {
 	err     error
 }
 
+type countingPolicyMemberResolver struct {
+	members []string
+	err     error
+	calls   *int
+}
+
+func (r countingPolicyMemberResolver) Members(_ context.Context, _ string) ([]string, error) {
+	(*r.calls)++
+	return r.members, r.err
+}
+
 func (r policyMemberResolver) Members(_ context.Context, group string) ([]string, error) {
 	if group != "security-team" {
 		return nil, errors.New("unexpected group")
@@ -163,5 +174,41 @@ func TestOverrideApprovalUsesEachRecordedProvider(t *testing.T) {
 				t.Fatalf("approval=%v want=%v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestOverrideApprovalCachesMembersPerProviderAndGroupPerDecision(t *testing.T) {
+	calls := 0
+	resolver := countingPolicyMemberResolver{members: []string{"other@example.com"}, calls: &calls}
+	controller := &WebhookController{approverResolverFetchFn: func(_ context.Context, provider string) (breakglass.GroupMemberResolver, error) {
+		if provider != "idp-a" {
+			return nil, errors.New("unexpected provider")
+		}
+		return resolver, nil
+	}}
+	session := breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+		Approvers: []string{"first@example.com", "second@example.com"}, ApproverIdentityProviders: []string{"idp-a", "idp-a"},
+	}}
+	overrides := &breakglassv1alpha1.PodSecurityOverrides{RequireApproval: true, Approvers: &breakglassv1alpha1.PodSecurityApprovers{Groups: []string{"security-team"}}}
+	if controller.podSecurityOverrideApprovalGranted(context.Background(), session, overrides, "idp-a") {
+		t.Fatal("unexpected approval")
+	}
+	if calls != 1 {
+		t.Fatalf("Members calls=%d, want 1", calls)
+	}
+	if controller.podSecurityOverrideApprovalGranted(context.Background(), session, overrides, "idp-a") {
+		t.Fatal("unexpected approval")
+	}
+	if calls != 2 {
+		t.Fatalf("new decision calls=%d, want 2", calls)
+	}
+
+	calls = 0
+	resolver.err = errors.New("unavailable")
+	if controller.podSecurityOverrideApprovalGranted(context.Background(), session, overrides, "idp-a") {
+		t.Fatal("unexpected approval")
+	}
+	if calls != 1 {
+		t.Fatalf("failed Members calls=%d, want 1", calls)
 	}
 }
