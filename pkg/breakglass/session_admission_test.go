@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -140,4 +142,33 @@ func TestDurableQuotaLimitPrecedence(t *testing.T) {
 	limits, err = sm.sessionQuotaLimits(t.Context(), session, esc)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int32{sessionScope("tuple", "user", "cluster", "admin"): 1}, limits)
+}
+
+func TestQuotaAdmissionPreservesProviderApprovalHistory(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "esc"}}
+	s := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID}}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "subject-a", Cluster: "cluster", GrantedGroup: "admin", IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending}}
+	recordApprover(&s.Status, "same@example.com", "idp-a")
+	idp := &breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "idp-a"}}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(s).WithObjects(esc, idp, s).Build()
+	sm := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(s), s))
+	originalSpec := s.Spec
+	assert.False(t, IsSessionPendingApproval(*s))
+	assert.False(t, IsSessionAccessActive(*s))
+	// Admission updates metadata without changing the authenticated requester or approvals.
+	require.NoError(t, sm.admitSession(t.Context(), s))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(s), s))
+	assert.Equal(t, originalSpec, s.Spec)
+	assert.True(t, IsSessionPendingApproval(*s))
+	stale := s.DeepCopy()
+	recordApprover(&s.Status, "same@example.com", "idp-b")
+	require.NoError(t, sm.UpdateBreakglassSessionStatus(t.Context(), *s))
+	stale.Status.State = breakglassv1alpha1.SessionStateApproved
+	require.True(t, apierrors.IsConflict(sm.UpdateBreakglassSessionStatus(t.Context(), *stale)))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(s), s))
+	assert.Equal(t, originalSpec, s.Spec)
+	assert.Equal(t, breakglassv1alpha1.SessionStatePending, s.Status.State)
+	assert.Equal(t, []string{"same@example.com", "same@example.com"}, s.Status.Approvers)
+	assert.Equal(t, []string{"idp-a", "idp-b"}, s.Status.ApproverIdentityProviders)
+	assert.Equal(t, quotas.Ready, s.Annotations[quotas.AdmissionAnnotation])
 }

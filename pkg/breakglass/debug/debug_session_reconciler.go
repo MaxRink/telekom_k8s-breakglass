@@ -234,7 +234,10 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		}
 	}
 	if binding == nil {
-		binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		binding, err = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		if binding != nil {
 			log.Infow("Auto-discovered binding for session",
 				"binding", binding.Name,
@@ -292,7 +295,10 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 			}
 		}
 		if binding == nil {
-			binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+			binding, err = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 		return c.activateSession(ctx, ds, template, binding)
 	}

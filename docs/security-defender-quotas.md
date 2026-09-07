@@ -77,3 +77,10 @@ proof that a session stopped. Resolve the owning session through its terminal
 lifecycle or delete that exact session with normal cleanup, then retry admission.
 Ledger restoration/rebuild requires stopping all writers and accounting for all
 nonterminal sessions and provisional reservations before service resumes.
+
+Admission preserves requester provider/issuer fields and provider-aligned approval
+history. Status writes reject the caller's stale resource version before updating
+admission metadata, so an older approval snapshot cannot overwrite a newer vote.
+Debug lifecycle binding discovery errors stop processing before admission or
+activation; a later quota lookup cannot substitute for the binding used to
+evaluate approval and workload constraints.

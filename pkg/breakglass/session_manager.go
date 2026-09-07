@@ -679,9 +679,6 @@ func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs b
 		if IsSessionTerminalState(current.Status.State) {
 			return fmt.Errorf("refusing to revive terminal session")
 		}
-		if bs.ResourceVersion != "" && bs.ResourceVersion != current.ResourceVersion {
-			return fmt.Errorf("session changed before quota admission; retry")
-		}
 		if bs.UID != "" && bs.UID != current.UID {
 			return fmt.Errorf("session UID changed")
 		}

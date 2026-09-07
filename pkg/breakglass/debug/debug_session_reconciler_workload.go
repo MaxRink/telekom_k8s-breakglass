@@ -35,11 +35,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		var err error
 		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
 		if err != nil {
-			log.Warnw("Failed to get binding by ref, will try auto-discovery",
-				"binding", ds.Spec.BindingRef.Name,
-				"namespace", ds.Spec.BindingRef.Namespace,
-				"error", err)
-			// Non-fatal: try auto-discovery below
+			return fmt.Errorf("resolve workload binding: %w", err)
 		}
 	}
 
@@ -49,8 +45,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	if binding == nil {
 		discoveredBinding, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster)
 		if err != nil {
-			log.Warnw("Failed to auto-discover binding, continuing without binding config",
-				"error", err)
+			return fmt.Errorf("discover workload binding: %w", err)
 		} else if discoveredBinding != nil {
 			log.Infow("Auto-discovered binding for session",
 				"binding", discoveredBinding.Name,

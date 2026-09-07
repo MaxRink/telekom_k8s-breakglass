@@ -131,3 +131,36 @@ func TestDebugQuotaLegacySelectorRequiresClusterConfig(t *testing.T) {
 	_, _, err := c.debugQuotaPolicy(t.Context(), session)
 	require.ErrorContains(t, err, "cluster config required")
 }
+
+func TestDebugLifecycleDoesNotIgnoreBindingDiscoveryFailure(t *testing.T) {
+	for _, approved := range []bool{false, true} {
+		t.Run(fmt.Sprint(approved), func(t *testing.T) {
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template"}}
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build()
+			c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(failQuotaClusterConfigReader{Reader: cli}).WithQuotaNamespace("controller")
+			session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name}}
+			if approved {
+				now := metav1.Now()
+				session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedAt: &now}
+				_, err := c.handlePendingApproval(t.Context(), session)
+				require.ErrorContains(t, err, "cluster config unavailable")
+			} else {
+				_, err := c.handlePending(t.Context(), session)
+				require.ErrorContains(t, err, "cluster config unavailable")
+			}
+			require.Empty(t, session.Status.State)
+			require.Empty(t, session.Annotations)
+		})
+	}
+}
+
+func TestDebugWorkloadBindingResolutionFailsClosed(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template"}}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(failQuotaClusterConfigReader{Reader: cli}).WithQuotaNamespace("controller")
+	session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name}}
+	require.ErrorContains(t, c.deployDebugResources(t.Context(), session, template), "cluster config unavailable")
+	session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{Name: "missing", Namespace: "ns"}
+	require.ErrorContains(t, c.deployDebugResources(t.Context(), session, template), "resolve workload binding")
+	require.Nil(t, session.Status.ResolvedBinding)
+}
