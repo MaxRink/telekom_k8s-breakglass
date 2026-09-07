@@ -7,3 +7,5 @@ Pushes to main, scheduled runs, and manual runs retain the enforcing scanner exi
 The dependency update includes `golang.org/x/crypto` v0.56.0 for CVE-2026-78662 and CVE-2026-56855, plus `@humanfs/node` 0.16.8 for GHSA-p498-v437-472g. The latter is a transitive frontend development dependency.
 
 Run `go test ./.github/scripts/security_scan_contract_test.go` to exercise PR versus enforcing-event behavior and the actual warning command.
+
+The frontend development lockfile also uses `qs` 6.16.0 or newer to address GHSA-x5fp-wj9c-mxmx and GHSA-4mjr-xmp4-gh2g. Its compatible transitive update keeps the existing Express/body-parser dependency ranges.
