@@ -37,6 +37,9 @@ Cluster identity-policy lookup failures are logged before returning an internal
 error. Issuer uniqueness errors identify `spec.issuer` when explicitly configured,
 or `spec.oidc.authority` when authority supplies the effective issuer.
 
-The OIDC inheritance E2E case reuses the bootstrap `breakglass-e2e-idp` rather
-than creating a second provider for its issuer. It continues to exercise the
-ClusterConfig reference while respecting cluster-wide issuer uniqueness.
+The OIDC inheritance E2E case lists the existing IdentityProviders and selects
+exactly one by effective issuer (`spec.issuer`, falling back to
+`spec.oidc.authority`). This keeps the ClusterConfig reference coverage valid
+in both single-cluster setup (the bootstrap provider) and multi-cluster setup
+(`main-idp` alongside other providers), while respecting cluster-wide issuer
+uniqueness and avoiding duplicate fixture creation.
