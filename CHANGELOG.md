@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Reject missing, empty, or multiple issuer extras explicitly when admitting new ephemeral containers; no-op updates remain unaffected. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
+- Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
 
 - Reuse provider-bound approver group resolvers after reloading provider configuration and credentials; unchanged providers retain the configured membership-cache TTL.
 
