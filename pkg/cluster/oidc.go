@@ -331,7 +331,8 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 		// token was issued to the original OIDC client, not the Keycloak SA).
 		// Instead, we store the IDP Keycloak SA credentials separately for use as
 		// fallback if the refresh token expires (see evaluateFallback).
-		if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil {
+		if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil &&
+			(ref.FallbackPolicy == breakglassv1alpha1.FallbackPolicyAuto || ref.FallbackPolicy == breakglassv1alpha1.FallbackPolicyWarn) {
 			p.log.Debugw("Storing IDP Keycloak SA credentials for potential fallback",
 				"cluster", cc.Name, "identityProvider", ref.Name,
 				"fallbackPolicy", string(ref.FallbackPolicy))

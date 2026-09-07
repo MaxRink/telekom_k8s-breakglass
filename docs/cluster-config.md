@@ -1414,3 +1414,9 @@ If you notice slow API calls:
 - [BreakglassEscalation](./breakglass-escalation.md) - Escalation policies  
 - [DenyPolicy](./deny-policy.md) - Access restrictions
 - [Webhook Setup](./webhook-setup.md) - Authorization webhook configuration
+# OIDC refresh fallback cache dependencies
+
+Keycloak service-account credentials are tracked as cache dependencies for
+refresh-token configurations only when fallback policy is `Auto` or `Warn`.
+Empty and `None` policies keep the refresh-only cache independent of the
+unused service-account Secret; re-resolution clears prior fallback state.
