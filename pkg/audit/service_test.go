@@ -20,7 +20,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -34,7 +33,7 @@ type countingAuditClient struct {
 
 func (c *countingAuditClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
 	c.gets++
-	return c.Client.Get(ctx, types.NamespacedName(key), obj, opts...)
+	return c.Client.Get(ctx, key, obj, opts...)
 }
 
 func newServiceTestScheme(t *testing.T) *runtime.Scheme {
