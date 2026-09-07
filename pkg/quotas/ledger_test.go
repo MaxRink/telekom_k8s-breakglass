@@ -228,6 +228,41 @@ func TestReservationCapacityPrunesUnrelatedKinds(t *testing.T) {
 	}
 }
 
+func TestReservationCapacityPruningContinuesAfterUnreadableReservation(t *testing.T) {
+	store := testStore(t)
+	entries := map[string]Entry{}
+	for _, uid := range []string{"first", "second"} {
+		entries[uid] = Entry{Kind: "DebugSession", Namespace: "debug", Name: uid, UID: uid, Scopes: []string{strings.Repeat("x", 240*1024)}}
+	}
+	data, err := json.Marshal(ledger{Version: 1, Entries: entries})
+	require.NoError(t, err)
+	require.NoError(t, store.Client.Create(t.Context(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: ledgerName, Namespace: store.Namespace},
+		Data:       map[string]string{"ledger": string(data)},
+	}))
+	var reads []string
+	live := func(_ context.Context, entry Entry) (bool, error) {
+		if entry.UID == "candidate" {
+			return true, nil
+		}
+		reads = append(reads, entry.UID)
+		if len(reads) == 1 {
+			return false, errors.New("reservation GET unavailable")
+		}
+		return false, nil
+	}
+	candidate := claimant("candidate")
+	candidate.Scopes = []string{strings.Repeat("y", 50*1024)}
+	require.NoError(t, store.Reserve(t.Context(), candidate, nil, noLegacy, live))
+	// One existing entry is unreadable and remains occupied; the other is
+	// terminal and must be pruned so the candidate fits under the size bound.
+	require.Len(t, reads, 2)
+	state := readLedger(t, store)
+	require.Contains(t, state.Entries, reads[0])
+	require.NotContains(t, state.Entries, reads[1])
+	require.Contains(t, state.Entries, candidate.UID)
+}
+
 type competingQuotaWriter struct {
 	client.Client
 	competing Entry
@@ -282,6 +317,32 @@ func TestLazyPruneStillValidatesLedgerUIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Client.Create(t.Context(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ledgerName, Namespace: store.Namespace}, Data: map[string]string{"ledger": string(data)}}))
 	require.ErrorContains(t, store.Reserve(t.Context(), claimant("candidate"), nil, noLegacy, alwaysLive), "invalid quota ledger UID")
+}
+
+func TestLazyPruneContinuesAfterUnreadableReservation(t *testing.T) {
+	store := testStore(t)
+	for _, uid := range []string{"first", "second"} {
+		require.NoError(t, store.Reserve(t.Context(), claimant(uid), nil, noLegacy, alwaysLive))
+	}
+	var reads []string
+	live := func(_ context.Context, entry Entry) (bool, error) {
+		if entry.UID == "candidate" {
+			return true, nil
+		}
+		reads = append(reads, entry.UID)
+		if len(reads) == 1 {
+			return false, errors.New("reservation GET unavailable")
+		}
+		return false, nil
+	}
+	require.NoError(t, store.Reserve(t.Context(), claimant("candidate"), map[string]int32{"total": 2}, noLegacy, live))
+	// Whichever entry the map iteration examines first is unreadable; the
+	// other is terminal. Both must be checked so the terminal slot can be freed.
+	require.Len(t, reads, 2)
+	state := readLedger(t, store)
+	require.Contains(t, state.Entries, reads[0])
+	require.NotContains(t, state.Entries, reads[1])
+	require.Contains(t, state.Entries, "candidate")
 }
 
 func TestLazyPruneDoesNotFreeUnreadableReservation(t *testing.T) {

@@ -35,7 +35,10 @@ Quota denial records a terminal rejection/failure with an optimistic status
 write. Cleanup of ledger entries happens when a candidate scope is full or the ledger
 reaches its storage bound, only after an authoritative GET proves that exact UID
 terminal or deleted. Unrelated entries remain conservatively occupied without
-per-admission reads. Storage pressure triggers cleanup across both session kinds. Missing
+per-admission reads. When a saturated scope contains an unreadable reservation,
+that reservation remains occupied while other entries are checked for confirmed
+terminal cleanup; admission still fails closed if capacity cannot be proven.
+Storage pressure triggers cleanup across both session kinds. Missing
 entries in a list never prove that a reservation is free. Expiry timestamps
 alone do not release slots before lifecycle cleanup records terminal state.
 Status writes for managed sessions use resource-version fencing so stale

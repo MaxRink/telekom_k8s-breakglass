@@ -136,13 +136,19 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 				// Unchecked records remain occupied. Only a saturated scope
 				// needs authoritative reads to recover terminal reservations.
 				if count >= limit {
+					var verifyErr error
+					// An unreadable reservation remains occupied, but it must not
+					// prevent checking other entries that may be terminal.
 					for uid, entry := range state.Entries {
 						if !slices.Contains(entry.Scopes, scope) {
 							continue
 						}
 						occupied, err := verify(entry)
 						if err != nil {
-							return fmt.Errorf("verify quota reservation: %w", err)
+							if verifyErr == nil {
+								verifyErr = err
+							}
+							continue
 						}
 						if !occupied {
 							delete(state.Entries, uid)
@@ -151,6 +157,9 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 						if count < limit {
 							break
 						}
+					}
+					if count >= limit && verifyErr != nil {
+						return fmt.Errorf("verify quota reservation: %w", verifyErr)
 					}
 				}
 				if count >= limit {
@@ -166,10 +175,14 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 		if len(encoded) > maxLedgerBytes {
 			// Unrelated terminal entries must not permanently exhaust storage.
 			// Global pruning is exceptional and still requires exact-UID proof.
+			var verifyErr error
 			for uid, entry := range state.Entries {
 				occupied, err := verify(entry)
 				if err != nil {
-					return fmt.Errorf("verify quota capacity reservation: %w", err)
+					if verifyErr == nil {
+						verifyErr = err
+					}
+					continue
 				}
 				if !occupied {
 					delete(state.Entries, uid)
@@ -180,6 +193,9 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 				return fmt.Errorf("encode pruned quota ledger: %w", err)
 			}
 			if len(encoded) > maxLedgerBytes {
+				if verifyErr != nil {
+					return fmt.Errorf("verify quota capacity reservation: %w", verifyErr)
+				}
 				return fmt.Errorf("quota ledger capacity reached")
 			}
 		}

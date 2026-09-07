@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
 
 - Quota admission rejects ambiguous escalation ownership and reclaims durable reservations only under quota or storage pressure, reducing unrelated API reads while preserving exact-UID checks.
+- Saturated quota cleanup continues checking other reservations after an unreadable UID while retaining that slot and failing closed when capacity remains unproven.
 
 - Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
 
