@@ -186,29 +186,45 @@ func TestDefenderNodePolicyRejectsAffinityAndAbsentEmptyLabel(t *testing.T) {
 }
 
 func TestDefenderOrphanCompensationUsesCreatedUID(t *testing.T) {
-	created := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "default", UID: types.UID("created")}}
-	replacement := created.DeepCopy()
-	replacement.UID = types.UID("replacement")
-	sawUID := false
-	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(replacement).WithInterceptorFuncs(interceptor.Funcs{
-		Delete: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.DeleteOption) error {
-			options := &ctrlclient.DeleteOptions{}
-			for _, opt := range opts {
-				opt.ApplyToDelete(options)
+	for _, replacedBeforeRead := range []bool{true, false} {
+		t.Run(fmt.Sprintf("replaced-before-read=%t", replacedBeforeRead), func(t *testing.T) {
+			created := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "default", UID: types.UID("created")}}
+			replacement := created.DeepCopy()
+			replacement.UID = types.UID("replacement")
+			initial := created
+			if replacedBeforeRead {
+				initial = replacement
 			}
-			require.NotNil(t, options.Preconditions)
-			require.NotNil(t, options.Preconditions.UID)
-			require.Equal(t, created.UID, *options.Preconditions.UID)
-			sawUID = true
-			return apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, obj.GetName(), fmt.Errorf("UID changed"))
-		},
-	}).Build()
-	h := NewKubectlDebugHandler(nil, nil).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
-	h.deleteOrphanedPod(context.Background(), spoke, created, fmt.Errorf("status rejected"))
-	require.True(t, sawUID)
-	current := &corev1.Pod{}
-	require.NoError(t, spoke.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), current))
-	require.Equal(t, replacement.UID, current.UID)
+			deleteCalls := 0
+			spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(initial).WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.DeleteOption) error {
+					deleteCalls++
+					options := &ctrlclient.DeleteOptions{}
+					for _, opt := range opts {
+						opt.ApplyToDelete(options)
+					}
+					require.NotNil(t, options.Preconditions)
+					require.NotNil(t, options.Preconditions.UID)
+					require.Equal(t, created.UID, *options.Preconditions.UID)
+					// Replace after the helper's read; model the API rejecting the
+					// original UID precondition without deleting the replacement.
+					require.NoError(t, cl.Delete(ctx, created))
+					require.NoError(t, cl.Create(ctx, replacement))
+					return apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, obj.GetName(), fmt.Errorf("UID changed"))
+				},
+			}).Build()
+			h := NewKubectlDebugHandler(nil, nil)
+			h.deleteOrphanedPod(context.Background(), spoke, created, fmt.Errorf("status rejected"))
+			if replacedBeforeRead {
+				require.Zero(t, deleteCalls)
+			} else {
+				require.Equal(t, 1, deleteCalls)
+			}
+			current := &corev1.Pod{}
+			require.NoError(t, spoke.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), current))
+			require.Equal(t, replacement.UID, current.UID)
+		})
+	}
 }
 
 func TestDefenderLeaveTargetsActiveRejoinAndPreservesHistory(t *testing.T) {
