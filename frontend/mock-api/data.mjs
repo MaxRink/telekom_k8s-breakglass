@@ -1714,6 +1714,7 @@ const stressSessions = LARGE_REQUESTER_STACK.map((group, index) => {
 });
 
 const seedSessions = [...permutationSessions, ...stressSessions];
+const MAX_SCALE_HINT = 1000;
 
 const initialSessions = seedSessions.map((session) => cloneSession(session));
 initialSessions.forEach((session) => {
@@ -1745,7 +1746,7 @@ function parseScaleHint(value) {
     console.warn("[mock-api] Invalid scale hint value:", value);
     return 0;
   }
-  return Math.max(parsed, 0);
+  return Math.min(Math.max(parsed, 0), MAX_SCALE_HINT);
 }
 
 function generateScaleDataset(count) {

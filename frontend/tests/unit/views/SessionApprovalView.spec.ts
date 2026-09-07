@@ -10,6 +10,7 @@ import { reactive, ref } from "vue";
 import SessionApprovalView from "@/views/SessionApprovalView.vue";
 import { AuthKey } from "@/keys";
 import { pushError, pushSuccess } from "@/services/toast";
+import { handleAxiosError } from "@/services/logger";
 
 const mockPush = vi.fn();
 const mockLogin = vi.fn();
@@ -188,6 +189,57 @@ describe("SessionApprovalView", () => {
     vi.advanceTimersByTime(3500);
 
     expect(mockPush).toHaveBeenCalled();
+  });
+
+  it("routes load and approval failures through sanitized Axios logging", async () => {
+    const token = "secret-approval-token";
+    const axiosError = {
+      message: "Request failed",
+      config: { headers: { Authorization: `Bearer ${token}` } },
+      response: { status: 500, data: { error: "Server error" } },
+    };
+    mockGetSessionByName.mockRejectedValueOnce(axiosError);
+
+    mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledWith("SessionApprovalView", axiosError, undefined, false);
+
+    vi.mocked(handleAxiosError).mockClear();
+    mockGetSessionByName.mockResolvedValueOnce(approvalResponse("session-1", "requester@example.com"));
+    mockApproveReview.mockRejectedValueOnce(axiosError);
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: {
+            template: '<button data-testid="approve" @click="$emit(\'approve\')">Approve</button>',
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+    await wrapper.find('[data-testid="approve"]').trigger("click");
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledWith("SessionApprovalView", axiosError, undefined, false);
   });
 
   it("does not approve or reject direct approval links when a required note is empty", async () => {

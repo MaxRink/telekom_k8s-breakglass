@@ -7,7 +7,7 @@ import BreakglassSessionService from "@/services/breakglassSession";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import type { SessionCR } from "@/model/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
-import { handleAxiosError, debug, error as logError } from "@/services/logger";
+import { handleAxiosError, debug } from "@/services/logger";
 import type { AxiosLikeError } from "@/model/errors";
 
 // Type for the approval metadata returned by the API
@@ -207,7 +207,7 @@ const loadSession = async () => {
       return;
     }
     const axiosLike = e as AxiosLikeError;
-    logError("SessionApprovalView", "Failed to load session:", e);
+    handleAxiosError("SessionApprovalView", e, undefined, false);
     if (axiosLike.response?.status === 404) {
       error.value = "Session Not Found";
       errorDetails.value = `Session "${requestedSessionName}" does not exist. It may have been deleted or the link is incorrect.`;
@@ -267,7 +267,7 @@ const handleApprove = async () => {
       return;
     }
     const axiosLike = e as AxiosLikeError;
-    logError("SessionApprovalView", "Failed to approve session:", e);
+    handleAxiosError("SessionApprovalView", e, undefined, false);
     if (axiosLike.response?.status === 404) {
       pushError("Session not found - it may have been deleted or already processed");
     } else if (axiosLike.response?.status === 403) {
@@ -315,7 +315,7 @@ const handleReject = async () => {
       return;
     }
     const axiosLike = e as AxiosLikeError;
-    logError("SessionApprovalView", "Failed to reject session:", e);
+    handleAxiosError("SessionApprovalView", e, undefined, false);
     if (axiosLike.response?.status === 404) {
       pushError("Session not found - it may have been deleted or already processed");
     } else if (axiosLike.response?.status === 403) {
