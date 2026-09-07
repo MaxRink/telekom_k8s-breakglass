@@ -329,9 +329,10 @@ func TestDebugSessionCRUD(t *testing.T) {
 		session, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 			TemplateRef: sessionTemplate.Name,
 			Cluster:     clusterName,
-			Namespace:   namespace,
 		})
 		require.NoError(t, err, "Failed to create DebugSession via API")
+		assert.Equal(t, namespace, session.Namespace, "DebugSession must remain in the hub resource namespace")
+		assert.Equal(t, "breakglass-debug", session.Spec.TargetNamespace)
 
 		// Add to cleanup
 		var sessionToCleanup breakglassv1alpha1.DebugSession

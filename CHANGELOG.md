@@ -123,6 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep debug session CRUD fixtures in the hub namespace while using the default
+  `breakglass-debug` target, and use valid exact node names in Helm scheduling
+  fixtures.
+
 - **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
   redirects, preserve explicit issuer bindings in runtime selection and admission,
   and invalidate cluster credentials
