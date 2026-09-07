@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Explain how to recover legacy debug sessions whose auxiliary resource UIDs were not recorded.
+
 - Accept configured Kubernetes default node-condition toleration durations when checking debug workload identity, and reuse one live Pod lookup per authorization request while retaining UID checks.
 
 - Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.

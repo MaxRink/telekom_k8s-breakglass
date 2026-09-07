@@ -198,7 +198,6 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
-	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
 	// Step 1: Create the target namespace for debug pods (shared, do not cleanup)
@@ -513,7 +512,6 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
-	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
 	// Create minimal pod and session templates

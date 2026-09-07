@@ -181,6 +181,11 @@ func TestAuxiliaryReadinessUsesOneUIDCheckedSnapshot(t *testing.T) {
 	result = m.checkSingleResourceReadiness(context.Background(), zap.NewNop().Sugar(), target, "v1", "ConfigMap", "config", "ns", "other")
 	require.Equal(t, 1, gets)
 	require.True(t, result.failed)
+	gets = 0
+	result = m.checkSingleResourceReadiness(context.Background(), zap.NewNop().Sugar(), target, "v1", "ConfigMap", "config", "ns", "")
+	require.Zero(t, gets)
+	require.True(t, result.failed)
+	require.Contains(t, result.message, "terminate this legacy debug session and request a new session")
 }
 
 func TestCleanupResourcesRetainsInventoryWhenClusterConfigMissing(t *testing.T) {

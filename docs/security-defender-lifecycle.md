@@ -67,3 +67,7 @@ never selects the hub namespace of the DebugSession object. Omit both fields
 to use the template target namespace. Fixed template targets reject a different
 requested namespace. E2E fixtures keep hub resource lookup and cleanup namespaces
 separate from workload targets, and verify both on the creation response.
+
+Auxiliary readiness errors for legacy resources without recorded UIDs direct
+operators to terminate the legacy session and request a new one. Readiness does
+not adopt a resource by name or infer its original identity.
