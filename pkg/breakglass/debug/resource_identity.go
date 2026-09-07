@@ -91,9 +91,10 @@ func podMatchesWorkloadTemplate(pod *corev1.Pod, template *corev1.PodTemplateSpe
 			spec.Affinity = nil
 			spec.Tolerations = nil
 		} else {
+			// DefaultTolerationSeconds admission uses configurable durations.
 			tolerations := spec.Tolerations[:0]
 			for _, tolerance := range spec.Tolerations {
-				if (tolerance.Key == "node.kubernetes.io/not-ready" || tolerance.Key == "node.kubernetes.io/unreachable") && tolerance.Operator == corev1.TolerationOpExists && tolerance.Effect == corev1.TaintEffectNoExecute && tolerance.TolerationSeconds != nil && *tolerance.TolerationSeconds == 300 {
+				if (tolerance.Key == "node.kubernetes.io/not-ready" || tolerance.Key == "node.kubernetes.io/unreachable") && tolerance.Operator == corev1.TolerationOpExists && tolerance.Effect == corev1.TaintEffectNoExecute {
 					continue
 				}
 				tolerations = append(tolerations, tolerance)
