@@ -620,6 +620,7 @@ containers:
     - --enable-api=true
     - --enable-cleanup=true
     - --enable-webhooks=true
+    - --breakglass-namespace=breakglass-system
     - --config-path=/etc/breakglass/config.yaml
     - --pod-namespace=breakglass-system
 ```
@@ -633,7 +634,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=true \
-  --enable-webhooks=true
+  --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system
 ```
 
 **Multi-Replica (Production)**:
@@ -644,6 +646,7 @@ breakglass-controller \
   --enable-api=true \
   --enable-cleanup=true \
   --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system \
   --pod-namespace=breakglass-system
 ```
 
@@ -663,7 +666,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=false \
-  --enable-webhooks=false
+  --enable-webhooks=false \
+  --breakglass-namespace=breakglass-system
 ```
 
 **Email Notifications (Optional)**:

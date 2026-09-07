@@ -79,7 +79,7 @@ func main() {
 // 1. MONOLITHIC (default):
 //
 //	All components run in a single instance. Use defaults or:
-//	breakglass-controller
+//	breakglass-controller --breakglass-namespace=breakglass-system
 //
 // 2. WEBHOOK-ONLY INSTANCE (validating webhooks only):
 //
@@ -95,7 +95,8 @@ func main() {
 //	Runs API endpoints (Session/Escalation), web UI, and SAR authorization webhook.
 //	breakglass-controller \
 //	  --enable-webhooks=false \
-//	  --enable-cleanup=false
+//	  --enable-cleanup=false \
+//	  --breakglass-namespace=breakglass-system
 //
 // 4. FRONTEND-ONLY INSTANCE:
 //
@@ -111,7 +112,8 @@ func main() {
 //	breakglass-controller \
 //	  --enable-frontend=false \
 //	  --enable-api=false \
-//	  --enable-webhooks=false
+//	  --enable-webhooks=false \
+//	  --breakglass-namespace=breakglass-system
 //
 // COMPONENT ARCHITECTURE
 // ======================
@@ -138,6 +140,9 @@ func main() {
 //	ENABLE_VALIDATING_WEBHOOKS=true  # Which validating webhooks to register
 func run() error {
 	cliConfig := cli.Parse()
+	if err := cliConfig.Validate(); err != nil {
+		return fmt.Errorf("validate CLI configuration: %w", err)
+	}
 
 	// Setup logging with zap
 	zapLogger, err := utils.SetupLogger(cliConfig.Debug)

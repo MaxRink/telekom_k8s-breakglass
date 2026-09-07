@@ -22,7 +22,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=true \
-  --enable-webhooks=true
+  --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system
 ```
 
 ### Multi-Replica Deployment
@@ -33,7 +34,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=true \
-  --enable-webhooks=true
+  --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system
 ```
 
 ### Webhook-Only Instance
@@ -728,7 +730,7 @@ Used for:
 - Locating secret references
 - Storing and enforcing durable session quota reservations in the controller namespace
 
-The packaged Kubernetes Deployment passes its pod namespace through this flag so quota admission and Secret references use the same namespace. Set the flag explicitly for a standalone controller process.
+The packaged Kubernetes Deployment passes its pod namespace through this flag so quota admission and Secret references use the same namespace. Set the flag explicitly for a standalone controller process. Any process with API, controller, or cleanup roles enabled fails during startup when this value is empty or whitespace; the error names both this flag and `BREAKGLASS_NAMESPACE`. Read-only frontend or webhook-only processes may omit it.
 
 #### `--disable-email`
 

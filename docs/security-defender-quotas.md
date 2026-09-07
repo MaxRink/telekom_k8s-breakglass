@@ -71,7 +71,11 @@ ConfigMaps remain in the controller's trust boundary.
 
 All API and lifecycle roles need ConfigMap get/create/update and session
 get/list/patch/status-update permissions. The shipped controller role already
-includes these operations; review custom API-only roles. The ledger uses version
+includes these operations; review custom API-only roles. Startup validation
+requires a nonblank `--breakglass-namespace` (or `BREAKGLASS_NAMESPACE`) when
+API, controller, or cleanup roles are enabled. Read-only frontend or webhook-only
+processes may omit it; the value is never defaulted because replicas must share
+one explicit ledger namespace. The ledger uses version
 1 JSON and refuses unsupported/corrupt data or serialized size above 512 KiB.
 It fails closed when storage/read/CAS retries fail. This deliberately bounds
 storage; deployments approaching that ceiling need a sharded reservation
