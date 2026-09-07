@@ -3571,6 +3571,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: signerName
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.ConfigMapEnvSource
   map:
     fields:
@@ -3617,6 +3620,9 @@ var schemaYAML = typed.YAMLObject(`types:
   map:
     fields:
     - name: defaultMode
+      type:
+        scalar: numeric
+    - name: defaultUser
       type:
         scalar: numeric
     - name: items
@@ -3828,10 +3834,16 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resourceFieldRef
       type:
         namedType: io.k8s.api.core.v1.ResourceFieldSelector
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.DownwardAPIVolumeSource
   map:
     fields:
     - name: defaultMode
+      type:
+        scalar: numeric
+    - name: defaultUser
       type:
         scalar: numeric
     - name: items
@@ -3846,6 +3858,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: medium
       type:
         namedType: io.k8s.api.core.v1.StorageMedium
+    - name: mode
+      type:
+        scalar: numeric
     - name: sizeLimit
       type:
         namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
@@ -3994,6 +4009,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.core.v1.GRPCAction
   map:
     fields:
+    - name: mode
+      type:
+        namedType: io.k8s.api.core.v1.GRPCProbeMode
     - name: port
       type:
         scalar: numeric
@@ -4001,6 +4019,8 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
       default: ""
+- name: io.k8s.api.core.v1.GRPCProbeMode
+  scalar: string
 - name: io.k8s.api.core.v1.GitRepoVolumeSource
   map:
     fields:
@@ -4043,6 +4063,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: port
       type:
         namedType: io.k8s.apimachinery.pkg.util.intstr.IntOrString
+    - name: protocol
+      type:
+        namedType: io.k8s.api.core.v1.HTTPProtocol
     - name: scheme
       type:
         namedType: io.k8s.api.core.v1.URIScheme
@@ -4055,6 +4078,8 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: value
       type:
         scalar: string
+- name: io.k8s.api.core.v1.HTTPProtocol
+  scalar: string
 - name: io.k8s.api.core.v1.HostAlias
   map:
     fields:
@@ -4139,6 +4164,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.Lifecycle
   map:
     fields:
@@ -4400,6 +4428,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: signerName
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
     - name: userAnnotations
       type:
         map:
@@ -4549,6 +4580,9 @@ var schemaYAML = typed.YAMLObject(`types:
   map:
     fields:
     - name: defaultMode
+      type:
+        scalar: numeric
+    - name: defaultUser
       type:
         scalar: numeric
     - name: sources
@@ -4775,6 +4809,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: defaultMode
       type:
         scalar: numeric
+    - name: defaultUser
+      type:
+        scalar: numeric
     - name: items
       type:
         list:
@@ -4838,6 +4875,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.Signal
   scalar: string
 - name: io.k8s.api.core.v1.SleepAction
@@ -5080,6 +5120,12 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.core.v1.VolumeMount
   map:
     fields:
+    - name: bindMountOptions
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
     - name: mountPath
       type:
         scalar: string

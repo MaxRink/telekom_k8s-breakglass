@@ -23,7 +23,7 @@ ARG BUILD_DATE=unknown
 # toolbox, a compiler, a package manager, or an interactive shell entrypoint.
 RUN apk add --no-cache \
         ethtool=6.14.1-r0 \
-        flock=2.41-r9 \
+        flock=2.41.6-r1 \
         iproute2=6.15.0-r0 \
     && rm -f /sbin/apk /sbin/apk.static
 
