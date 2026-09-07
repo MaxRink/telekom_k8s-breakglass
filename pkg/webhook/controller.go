@@ -546,7 +546,7 @@ func (wc *WebhookController) getClusterConfigAcrossNamespaces(ctx context.Contex
 	return wc.ccProvider.GetAcrossAllNamespaces(ctx, name)
 }
 
-func (WebhookController) BasePath() string {
+func (*WebhookController) BasePath() string {
 	return "breakglass/webhook"
 }
 
@@ -557,7 +557,7 @@ func (wc *WebhookController) Register(rg *gin.RouterGroup) error {
 	return nil
 }
 
-func (b WebhookController) Handlers() []gin.HandlerFunc {
+func (b *WebhookController) Handlers() []gin.HandlerFunc {
 	// Return per-IP rate limiting middleware for SAR endpoints
 	if b.rateLimiter != nil {
 		return []gin.HandlerFunc{b.rateLimiter.Middleware()}
