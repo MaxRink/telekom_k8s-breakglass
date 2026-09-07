@@ -353,7 +353,7 @@ func TestTrackOIDCSecrets_TracksImplicitKeycloakSecret(t *testing.T) {
 			if mode == "explicit override" {
 				expected = "explicit-secret"
 			}
-			expectFallback := mode == "inherited" || mode == "refresh fallback" || mode == "explicit override"
+			expectFallback := mode == "inherited" || mode == "refresh fallback" || mode == "refresh warn" || mode == "explicit override"
 			select {
 			case actual := <-grants:
 				if !expectFallback {
