@@ -202,8 +202,10 @@ from the live API reader before deciding that no session exists.
 
 The built-in SAR HTTP handler does not authenticate bearer tokens or client
 certificates. Adding a token or certificate to the API server's webhook
-kubeconfig alone does not protect the receiver. TLS server verification still
-protects the API server's connection to its configured webhook endpoint.
+kubeconfig alone does not protect the receiver. When enabled and configured
+with a trusted CA, TLS server verification protects the API server's connection
+to its configured webhook endpoint. Setting `insecure-skip-tls-verify: true`
+disables that server verification.
 
 If mutual TLS or bearer authentication is required, configure a gateway,
 reverse proxy, or dedicated listener that actually validates those credentials
