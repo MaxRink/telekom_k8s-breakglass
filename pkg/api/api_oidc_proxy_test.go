@@ -98,7 +98,7 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 			name:           "Invalid: path traversal with multiple components",
 			proxyPath:      "/token/../../admin",
 			expectedStatus: http.StatusForbidden,
-			expectedError:  "invalid proxy path: absolute URLs and path traversal not allowed",
+			expectedError:  "requested path is not an allowed OIDC endpoint",
 		},
 		{
 			name:           "Invalid: contains both scheme and path",
@@ -142,6 +142,9 @@ func TestValidateOIDCProxyPath(t *testing.T) {
 		shouldPass bool
 	}{
 		{"allows well-known endpoint", "/.well-known/openid-configuration", true},
+		{"rejects endpoint sibling", "/.well-known/openid-configuration-extra", false},
+		{"allows Keycloak realm subtree", "/auth/realms/example/protocol/openid-connect/token", true},
+		{"rejects token sibling", "/token-extra", false},
 		{"rejects disallowed prefix", "/not-allowed", false},
 		{"rejects suspicious absolute", "http://evil", false},
 		{"rejects encoded traversal", "/protocol/openid-connect/%2e%2e/%2e%2e/admin", false},

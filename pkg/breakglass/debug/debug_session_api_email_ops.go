@@ -674,7 +674,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback string) {
 	switch kubectlDebugOperationHTTPStatus(err) {
 	case http.StatusForbidden:
-		apiresponses.RespondForbidden(ctx, err.Error())
+		apiresponses.RespondForbidden(ctx, "debug operation is not allowed")
 	case http.StatusBadRequest:
 		apiresponses.RespondBadRequest(ctx, err.Error())
 	default:

@@ -79,6 +79,11 @@ func (m *NamespaceMatcher) MatchesAny() bool {
 	return m.filter == nil || m.filter.IsEmpty()
 }
 
+// RequiresNamespaceLabels reports whether selector terms need labels to evaluate.
+func (m *NamespaceMatcher) RequiresNamespaceLabels() bool {
+	return m.filter != nil && len(m.filter.SelectorTerms) > 0
+}
+
 // matchesPatterns checks if namespace matches any pattern.
 func (m *NamespaceMatcher) matchesPatterns(namespace string) bool {
 	if m.filter == nil {

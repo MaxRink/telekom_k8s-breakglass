@@ -60,6 +60,12 @@ so you can tweak UI layouts WYSIWYG-style.
 The production Keycloak mock profile uses `mock.user@breakglass.dev`, matching the mock API's
 current user so owner-only debug session controls are visible in the local UI.
 
+`frontend/mock-api/` is an optional standalone Node development fixture server. It uses synthetic
+in-memory records and a fixed mock user, performs no Kubernetes operations, and is not included in
+the production runtime image. Its fabricated approval, injection, and pod-copy responses exercise
+UI layouts only; use synthetic data and keep the mock server reachable only from trusted local
+development environments. Scale testing is bounded to 1,000 generated records.
+
 ### Switching UI flavours locally
 
 Need to preview the Telekom theme versus the OSS/neutral look without touching the mock data? Use

@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -14,6 +15,8 @@ import (
 	"gopkg.in/gomail.v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+var errSMTPRecipientRejected = errors.New("SMTP server rejected recipient")
 
 type Sender interface {
 	Send(receivers []string, subject, body string) error
@@ -193,7 +196,7 @@ func (s *sender) sendPlainSMTP(receivers []string, subject, body string) error {
 	// Set recipients
 	for _, rcpt := range receivers {
 		if err := client.Rcpt(rcpt); err != nil {
-			return fmt.Errorf("RCPT TO failed for %s: %w", rcpt, err)
+			return fmt.Errorf("RCPT TO failed: %w", errSMTPRecipientRejected)
 		}
 	}
 
@@ -212,25 +215,17 @@ func (s *sender) sendPlainSMTP(receivers []string, subject, body string) error {
 		fromHeader = fmt.Sprintf("%s <%s>", safeSenderName, safeSenderAddress)
 	}
 
-	// Sanitize receivers to prevent header injection through Bcc field
-	safeReceivers := make([]string, len(receivers))
-	for i, r := range receivers {
-		safeReceivers[i] = sanitizeHeaderValue(r)
-	}
-
 	// Sanitize subject and body before constructing raw MIME message
 	safeSubject := sanitizeHeaderValue(subject)
 	safeBody := sanitizeBodyValue(body)
 
 	msg := fmt.Sprintf("From: %s\r\n"+
-		"Bcc: %s\r\n"+
 		"Subject: %s\r\n"+
 		"MIME-Version: 1.0\r\n"+
 		"Content-Type: text/html; charset=UTF-8\r\n"+
 		"\r\n"+
 		"%s",
 		fromHeader,
-		joinReceivers(safeReceivers),
 		safeSubject,
 		safeBody)
 

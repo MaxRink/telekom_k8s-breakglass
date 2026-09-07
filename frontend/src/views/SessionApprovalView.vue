@@ -7,7 +7,7 @@ import BreakglassSessionService from "@/services/breakglassSession";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import type { SessionCR } from "@/model/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
-import { handleAxiosError, debug, error as logError } from "@/services/logger";
+import { handleAxiosError, debug } from "@/services/logger";
 import type { AxiosLikeError } from "@/model/errors";
 
 // Type for the approval metadata returned by the API
@@ -207,7 +207,7 @@ const loadSession = async () => {
       return;
     }
     const axiosLike = e as AxiosLikeError;
-    logError("SessionApprovalView", "Failed to load session:", e);
+    const normalized = handleAxiosError("SessionApprovalView", e, "Failed to load session", false);
     if (axiosLike.response?.status === 404) {
       error.value = "Session Not Found";
       errorDetails.value = `Session "${requestedSessionName}" does not exist. It may have been deleted or the link is incorrect.`;
@@ -228,9 +228,8 @@ const loadSession = async () => {
       error.value = "Server Error";
       errorDetails.value = "An unexpected error occurred. Please try again later or contact support.";
     } else {
-      const { message } = handleAxiosError("SessionApprovalView", e, "Failed to load session");
       error.value = "Error Loading Session";
-      errorDetails.value = message;
+      errorDetails.value = normalized.message;
     }
   } finally {
     if (requestId === loadRequestId) {
@@ -267,7 +266,7 @@ const handleApprove = async () => {
       return;
     }
     const axiosLike = e as AxiosLikeError;
-    logError("SessionApprovalView", "Failed to approve session:", e);
+    const normalized = handleAxiosError("SessionApprovalView", e, "Failed to approve session", false);
     if (axiosLike.response?.status === 404) {
       pushError("Session not found - it may have been deleted or already processed");
     } else if (axiosLike.response?.status === 403) {
@@ -281,7 +280,7 @@ const handleApprove = async () => {
     } else if (axiosLike.code === "ECONNABORTED" || axiosLike.code === "ERR_NETWORK") {
       pushError("Network error - please check your connection and try again");
     } else {
-      handleAxiosError("SessionApprovalView", e, "Failed to approve session");
+      pushError(normalized.message, normalized.status, normalized.cid);
     }
     isApproving.value = false;
   }
@@ -315,7 +314,7 @@ const handleReject = async () => {
       return;
     }
     const axiosLike = e as AxiosLikeError;
-    logError("SessionApprovalView", "Failed to reject session:", e);
+    const normalized = handleAxiosError("SessionApprovalView", e, "Failed to reject session", false);
     if (axiosLike.response?.status === 404) {
       pushError("Session not found - it may have been deleted or already processed");
     } else if (axiosLike.response?.status === 403) {
@@ -329,7 +328,7 @@ const handleReject = async () => {
     } else if (axiosLike.code === "ECONNABORTED" || axiosLike.code === "ERR_NETWORK") {
       pushError("Network error - please check your connection and try again");
     } else {
-      handleAxiosError("SessionApprovalView", e, "Failed to reject session");
+      pushError(normalized.message, normalized.status, normalized.cid);
     }
     isApproving.value = false;
   }

@@ -275,3 +275,25 @@ func TestFilteredSinkNamespaceSelectorTermsWhenLabelsArePresent(t *testing.T) {
 
 	assert.Equal(t, []string{"labels-match"}, received)
 }
+
+func TestFilteredSinkExcludeSelectorFailsClosedWithoutLabels(t *testing.T) {
+	var received []string
+	sink := NewFilteredSink(&testSink{
+		name:      "selector-exclude",
+		writeFunc: func(event *Event) { received = append(received, event.Target.Name) },
+	}, EventFilterConfig{
+		ExcludeNamespaces: &breakglassv1alpha1.NamespaceFilter{
+			SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+				{MatchLabels: map[string]string{"audit-enabled": "false"}},
+			},
+		},
+	})
+	for _, target := range []Target{
+		{Name: "unknown", Namespace: "app-a"},
+		{Name: "excluded", Namespace: "app-b", NamespaceLabels: map[string]string{"audit-enabled": "false"}},
+		{Name: "unrelated", Namespace: "app-c", NamespaceLabels: map[string]string{"audit-enabled": "true"}},
+	} {
+		require.NoError(t, sink.Write(context.Background(), &Event{Type: EventSessionRequested, Target: target}))
+	}
+	assert.Equal(t, []string{"unrelated"}, received)
+}
