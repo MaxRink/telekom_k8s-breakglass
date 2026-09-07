@@ -15,8 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestSessionIdentityProviderMatches(t *testing.T) {
@@ -111,4 +114,23 @@ func TestApprovalUsesOnlyAuthenticatedProvidersMembership(t *testing.T) {
 		result := wc.checkApprovalAuthorization(c, session)
 		require.Equal(t, provider == "idp-b", result.Allowed, "provider %q: %s", provider, result.Message)
 	}
+}
+
+func TestClusterIdentityLookupFailureIsLogged(t *testing.T) {
+	core, observed := observer.New(zap.ErrorLevel)
+	lookupErr := errors.New("cluster lookup unavailable")
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return lookupErr
+		},
+	}).Build()
+	wc := &BreakglassSessionController{clusterConfigManager: NewClusterConfigManager(cli), log: zap.New(core).Sugar()}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	require.False(t, wc.validateClusterIdentityProvider(c, context.Background(), "spoke"))
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	entries := observed.All()
+	require.Len(t, entries, 1)
+	require.Equal(t, "Failed to resolve cluster identity provider policy", entries[0].Message)
+	require.Contains(t, entries[0].ContextMap()["error"], lookupErr.Error())
 }

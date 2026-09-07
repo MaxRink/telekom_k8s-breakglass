@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
+
 - Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
 
 - Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
