@@ -35,6 +35,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -51,10 +52,12 @@ const debugSessionNamePrefix = "debug"
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
-	log        *zap.SugaredLogger
-	client     ctrlclient.Client
-	apiReader  ctrlclient.Reader // Uncached reader for consistent reads
-	ccProvider *cluster.ClientProvider
+	quotaNamespace string
+	quotaEnabled   bool
+	log            *zap.SugaredLogger
+	client         ctrlclient.Client
+	apiReader      ctrlclient.Reader // Uncached reader for consistent reads
+	ccProvider     *cluster.ClientProvider
 	// clusterClients optionally overrides how target-cluster clients are
 	// obtained. When nil, ccProvider is used. Tests set this to evaluate
 	// namespace selectorTerms without a live spoke cluster.
@@ -1321,6 +1324,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// The reconciler continues to use SSA for status updates and lifecycle management,
 	// which is the correct boundary: Create() for API-driven creation, SSA for
 	// controller-driven reconciliation.
+	if c.quotaEnabled {
+		if session.Annotations == nil {
+			session.Annotations = map[string]string{}
+		}
+		session.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
+	}
 	if err := c.client.Create(apiCtx, session); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			apiresponses.RespondConflict(ctx, "session already exists")
@@ -1328,6 +1337,19 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 		reqLog.Errorw("Failed to create debug session", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")
+		return
+	}
+
+	quotaController := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(c.reader())
+	if c.quotaEnabled {
+		quotaController.WithQuotaNamespace(c.quotaNamespace)
+	}
+	if err := quotaController.admitDebugSession(apiCtx, session); err != nil {
+		if errors.Is(err, quotas.ErrFull) {
+			apiresponses.RespondConflict(ctx, "debug session quota reached")
+		} else {
+			apiresponses.RespondInternalErrorSimple(ctx, "debug session admission incomplete; retry after reconciliation")
+		}
 		return
 	}
 

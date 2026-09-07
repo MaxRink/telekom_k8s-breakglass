@@ -10,20 +10,6 @@ import (
 	"time"
 
 	"github.com/go-logr/zapr"
-	"go.uber.org/zap"
-
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
-	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/client-go/tools/record"
-
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -45,6 +31,17 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/telemetry"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
+	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // RBAC markers for resources managed by non-reconciler components (cleanup, API handlers, etc.)
@@ -462,7 +459,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 
 	sessionManager := breakglass.NewSessionManagerWithClientAndReader(
 		reconcilerMgr.GetClient(), reconcilerMgr.GetAPIReader(),
-		breakglass.WithSessionLogger(log.Named("session-manager")))
+		breakglass.WithSessionLogger(log.Named("session-manager")), breakglass.WithQuotaNamespace(cliConfig.BreakglassNamespace))
 
 	// Authenticated rate limiter: 50 req/s per user, 10 req/s per IP (unauthenticated)
 	apiRateLimiter := ratelimit.NewAuthenticated(ratelimit.DefaultAuthenticatedAPIConfig())
@@ -486,6 +483,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	// Uses APIReader for consistent reads after writes (avoids cache coherence issues)
 	debugSessionAPICtrl := debug.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, authMiddleware).
 		WithAPIReader(reconcilerMgr.GetAPIReader()).
+		WithQuotaNamespace(cliConfig.BreakglassNamespace).
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)

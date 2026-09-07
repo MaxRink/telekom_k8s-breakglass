@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -724,7 +726,7 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 		return nil, false
 	}
 
-	// Check session limits (IDP-level with escalation overrides)
+	// Check session limits (IDP-level with escalation overrides) before creating a provisional object.
 	if err := wc.checkSessionLimits(ctx, params.matchedEsc, params.spec.IdentityProviderName, params.userIdentifier, params.userGroups, reqLog); err != nil {
 		reqLog.Warnw("Session limit check failed", "error", err, "escalation", params.matchedEsc.Name, "user", params.userIdentifier)
 		// Distinguish infrastructure errors (500) from user-facing limit errors (422).
@@ -749,6 +751,14 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	safeCluster := naming.ToRFC1123Subdomain(params.request.Clustername)
 	safeGroup := naming.ToRFC1123Subdomain(params.request.GroupName)
 	bs.GenerateName = fmt.Sprintf("%s-%s-", safeCluster, safeGroup)
+	if wc.sessionManager.quotaEnabled {
+		groups, err := json.Marshal(params.userGroups)
+		if err != nil {
+			apiresponses.RespondInternalError(c, "encode admission groups", err, reqLog)
+			return nil, false
+		}
+		bs.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending, "breakglass.t-caas.telekom.com/quota-user-groups": string(groups)}
+	}
 	if err := wc.sessionManager.AddBreakglassSession(ctx, &bs); err != nil {
 		reqLog.Errorw("error while adding breakglass session", "error", err)
 		reason := "internal_error"
@@ -770,6 +780,17 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	// Note: bs already has its Name populated by AddBreakglassSession (passed as pointer).
 	// Do not try to fetch it again as this can race with informer cache population.
 	// Instead, reuse the bs object that was created.
+
+	if err := wc.sessionManager.admitSession(ctx, &bs); err != nil {
+		// A failed/ambiguous admission remains provisional and cannot be approved.
+		// Its durable reservation is never released by an HTTP worker timeout.
+		if errors.Is(err, quotas.ErrFull) {
+			apiresponses.RespondConflict(c, "session quota reached")
+		} else {
+			apiresponses.RespondInternalError(c, "reserve session quota", err, reqLog)
+		}
+		return nil, false
+	}
 
 	// Get approval timeout from escalation spec using helper
 	approvalTimeout := ParseApprovalTimeout(params.matchedEsc.Spec, reqLog)

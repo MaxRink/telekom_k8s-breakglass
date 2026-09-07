@@ -519,7 +519,7 @@ GroupOverrideLoop:
 }
 
 // checkUserSessionCount counts active sessions for a user and checks against a limit.
-// Uses the spec.user field index for efficient lookup when available.
+// Uses an uncached full list so concurrent replica creates are visible.
 func (wc *BreakglassSessionController) checkUserSessionCount(
 	ctx context.Context,
 	userIdentifier string,
@@ -527,16 +527,20 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 	source string,
 	log *zap.SugaredLogger,
 ) error {
-	// Use indexed query to fetch only sessions for this user
-	sessionList, err := wc.sessionManager.GetUserBreakglassSessions(ctx, userIdentifier)
-	if err != nil {
+	// Read the complete population from the API server: indexed informer reads
+	// can lag a just-created session on another replica.
+	all := &breakglassv1alpha1.BreakglassSessionList{}
+	if err := wc.sessionManager.Reader().List(ctx, all); err != nil {
 		return fmt.Errorf("failed to list sessions for user: %w", err)
 	}
 
 	// Count sessions that still reserve a request slot for this user (across ALL escalations).
 	var userActive int32
-	for i := range sessionList {
-		session := &sessionList[i]
+	for i := range all.Items {
+		session := &all.Items[i]
+		if session.Spec.User != userIdentifier {
+			continue
+		}
 		if !IsSessionOccupyingSlot(*session) {
 			continue
 		}
@@ -559,7 +563,6 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 // checkTotalSessionCount counts sessions occupying request slots for an escalation and checks against a limit.
 // Sessions are counted by matching owner reference to ensure sessions created by different
 // escalations that grant the same group are not incorrectly counted together.
-// Optimized: only lists sessions in states that can occupy a slot instead of all sessions.
 func (wc *BreakglassSessionController) checkTotalSessionCount(
 	ctx context.Context,
 	escalation *breakglassv1alpha1.BreakglassEscalation,
@@ -570,26 +573,16 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	// Optimization: only list sessions in potentially slot-occupying states
 	// rather than listing all sessions and filtering out terminal states.
 	// This reduces data transfer from etcd significantly in clusters with many expired sessions.
-	pendingSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStatePending)
-	if err != nil {
-		return fmt.Errorf("failed to list pending sessions: %w", err)
-	}
-	approvedSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateApproved)
-	if err != nil {
-		return fmt.Errorf("failed to list approved sessions: %w", err)
-	}
-	waitingSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateWaitingForScheduledTime)
-	if err != nil {
-		return fmt.Errorf("failed to list scheduled waiting sessions: %w", err)
+	all := &breakglassv1alpha1.BreakglassSessionList{}
+	if err := wc.sessionManager.Reader().List(ctx, all); err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
 	}
 
 	// Count slot-occupying sessions for this specific escalation (by matching owner reference UID)
 	// This ensures sessions from different escalations that grant the same group are counted separately.
 	var totalActive int32
-	slotSessions := append(pendingSessions, approvedSessions...)
-	slotSessions = append(slotSessions, waitingSessions...)
-	for i := range slotSessions {
-		session := &slotSessions[i]
+	for i := range all.Items {
+		session := &all.Items[i]
 		if !isOwnedByEscalation(session, escalation) {
 			continue
 		}

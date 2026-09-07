@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	durationutils "github.com/telekom/k8s-breakglass/pkg/utils"
@@ -134,6 +135,9 @@ type AuditEmitter interface {
 // State takes absolute priority over timestamps. Terminal states (Rejected, Withdrawn, Expired, Timeout)
 // are never pending, regardless of timestamp values.
 func IsSessionPendingApproval(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
 	// CRITICAL: Check STATE FIRST - terminal states are never pending
 	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
 		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||

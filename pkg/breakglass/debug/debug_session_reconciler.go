@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -60,16 +62,19 @@ const (
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	log          *zap.SugaredLogger
-	client       ctrlclient.Client
-	ccProvider   *cluster.ClientProvider
-	auditService *audit.Service
-	auditManager *audit.Manager
-	mailService  breakglass.MailEnqueuer
-	auxiliaryMgr *AuxiliaryResourceManager
-	brandingName string
-	baseURL      string
-	disableEmail bool
+	quotaNamespace string
+	quotaEnabled   bool
+	log            *zap.SugaredLogger
+	client         ctrlclient.Client
+	apiReader      ctrlclient.Reader
+	ccProvider     *cluster.ClientProvider
+	auditService   *audit.Service
+	auditManager   *audit.Manager
+	mailService    breakglass.MailEnqueuer
+	auxiliaryMgr   *AuxiliaryResourceManager
+	brandingName   string
+	baseURL        string
+	disableEmail   bool
 }
 
 // NewDebugSessionController creates a new DebugSessionController
@@ -80,6 +85,12 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 		ccProvider:   ccProvider,
 		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
+}
+
+// WithAPIReader sets the uncached reader used for quota admission.
+func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
+	c.apiReader = reader
+	return c
 }
 
 // WithAuditManager sets the audit manager for the controller
@@ -135,6 +146,7 @@ func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 // +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;create;update
 
 // Reconcile handles DebugSession state transitions
 func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -228,6 +240,10 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"binding", binding.Name,
 				"namespace", binding.Namespace)
 		}
+	}
+
+	if err := c.admitDebugSession(ctx, ds); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Cache the resolved template in status after applying binding-level duration overrides.
@@ -507,6 +523,9 @@ func releaseSessionMetricSeries(sessionName string) {
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
+	if err := c.admitDebugSession(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
 	if mode == "" {
@@ -781,7 +800,7 @@ func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest brea
 // getTemplate retrieves a DebugSessionTemplate by name
 func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugSessionTemplate, error) {
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.quotaReader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		return nil, err
 	}
 	return template, nil
@@ -799,7 +818,7 @@ func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string
 // getBinding retrieves a DebugSessionClusterBinding by name and namespace
 func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
+	if err := c.quotaReader().Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
 		return nil, err
 	}
 	return binding, nil
@@ -871,22 +890,29 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := c.client.List(ctx, bindingList); err != nil {
+	if err := c.quotaReader().List(ctx, bindingList); err != nil {
 		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
 	}
 
 	// Get cluster config for label-based matching
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := c.client.List(ctx, clusterConfigList); err == nil {
-		for i := range clusterConfigList.Items {
-			if clusterConfigList.Items[i].Name == clusterName {
-				clusterConfig = &clusterConfigList.Items[i]
-				break
+	if err := c.quotaReader().List(ctx, clusterConfigList); err != nil {
+		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
+	}
+	for i := range clusterConfigList.Items {
+		if clusterConfigList.Items[i].Name == clusterName {
+			if clusterConfig != nil {
+				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
 			}
+			clusterConfig = &clusterConfigList.Items[i]
 		}
 	}
 
+	sort.Slice(bindingList.Items, func(i, j int) bool {
+		a, b := bindingList.Items[i], bindingList.Items[j]
+		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
+	})
 	for i := range bindingList.Items {
 		binding := &bindingList.Items[i]
 		if !breakglass.IsBindingActive(binding) {
@@ -896,6 +922,10 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		// Check if binding references this template
 		if !c.bindingMatchesTemplate(binding, template) {
 			continue
+		}
+
+		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
+			return nil, fmt.Errorf("cluster config required to resolve binding selector")
 		}
 
 		// Check if binding matches this cluster
