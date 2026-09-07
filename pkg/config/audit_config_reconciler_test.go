@@ -1441,6 +1441,20 @@ func TestAuditKafkaSecretNamespaceValidationDoesNotReadInvalidNamespaces(t *test
 	assert.Empty(t, counting.gets)
 }
 
+func TestAuditKafkaSecretNamespaceValidationRequiresControllerNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	base := fake.NewClientBuilder().WithScheme(scheme).Build()
+	counting := &countingAuditClient{Client: base}
+	r := NewAuditConfigReconciler(counting, zaptest.NewLogger(t).Sugar(), newAuditFakeEventRecorder(1), nil, nil, time.Minute)
+
+	err := r.validateSecretExists(context.Background(), "credentials", "explicit-secret-namespace")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "controller namespace is not configured")
+	assert.Empty(t, counting.gets)
+}
+
 func TestAuditConfigReconcile_EmptyTLSNamespaceExcludedFromReload(t *testing.T) {
 	config := &breakglassv1alpha1.AuditConfig{ObjectMeta: metav1.ObjectMeta{Name: "empty-tls-namespace"}, Spec: breakglassv1alpha1.AuditConfigSpec{
 		Enabled: true,
