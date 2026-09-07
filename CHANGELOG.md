@@ -58,10 +58,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject ambiguous normalized IdentityProvider issuers at authentication and
   duplicate effective issuers at admission. An explicit `spec.issuer` now takes
   precedence over `oidc.authority`; configure it to match the token issuer.
+
 - Prevent debug bindings from widening template duration and renewal limits,
   including the default renewal cap, and ignore legacy empty cluster selectors.
+
 - Reject nonfinite numeric variables and overflowing extended durations, and
   avoid disclosing restricted extra-deploy options in validation errors.
+
+- Recheck debug-session state and participant authority before spoke mutations,
+  retain late ephemeral-injection evidence, and compensate copied/node pods with
+  UID-guarded deletion. Cross-cluster revocation remains non-atomic.
+
+- Enforce resolved node affinity and legacy target namespaces, preserve empty
+  affinity restrictions, and deny approver reads when a recorded binding is missing.
+
+- Resolve debug-notification excluded group members before filtering mailboxes,
+  and preserve historical participant leave timestamps across repeated requests.
+
+- Bind debug resource cleanup, readiness, and pod access to original UIDs; retain cleanup inventory when cluster access is unavailable. Legacy sessions have an explicit operator recovery path. Reject unsupported denied-node globs at admission instead of silently ignoring them; migrate these entries to exact node names or denied node labels before upgrading.
 
 - **Authorization webhook session selection**: Register shared BreakglassSession
   field indexes even when reconcilers are disabled, so approved sessions remain
@@ -273,6 +287,10 @@ non-buggy case:
   no operator is locked out mid-incident.
 
 ### Security
+
+- Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
+
+- Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
 
 - **DebugSession `extraDeployValues` YAML injection**: End-user supplied values are now escaped where they enter the template render context (`buildVarsFromSession`), instead of relying on template authors remembering the opt-in `yamlQuote`/`yamlSafe` helpers — which the auxiliary-resource renderer did not even expose. A value containing a line terminator (LF, CR, CRLF, NEL, U+2028, U+2029) could previously close the scalar it was substituted into and inject **sibling YAML keys**; via `podOverridesTemplate` this let an unprivileged requester set `hostNetwork`, `hostPID` or `hostIPC` on the debug pod, which `applyPodOverridesStruct` applied verbatim. Line terminators are now collapsed to a single space and leading `---`/`...` document markers are defused. Values are escaped rather than rejected, and altered variables are logged. **Upgrade impact**: a template that deliberately relied on a multi-line variable to inject YAML structure will no longer do so — inline structural interpolation must be expressed in the template itself (or via `nindent`), not smuggled through a user-supplied value.
 - **DebugSession approval with an empty approver set**: An absent or empty `approvers` set (`nil`, `{}`, or `users: [] / groups: []`) no longer authorizes every authenticated user to approve or reject a session. The read authorizer already required a configured approver set via `debugSessionApproversConfigured`; the approve/reject path now applies the same predicate, so the two agree. Self-approval remains blocked. **Upgrade impact**: none in practice — `requiresApproval()` uses the same predicate, so sessions with an empty approver set are auto-approved and never enter `PendingApproval`, and both endpoints reject sessions that are not in that state. No session that was approvable before is unapprovable now. Operators who intended four-eyes control must name approvers explicitly; an empty set gates nothing and never did.
