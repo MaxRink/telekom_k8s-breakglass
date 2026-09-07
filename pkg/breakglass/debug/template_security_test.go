@@ -39,6 +39,31 @@ func TestTemplateSecurityRendering(t *testing.T) {
 	}
 }
 
+func TestTemplateMutationSerializationPreservesScalar(t *testing.T) {
+	r := NewTemplateRenderer()
+	payload := "safe\ninjected: true"
+	ctx := map[string]interface{}{
+		"vars":    map[string]interface{}{"value": payload},
+		"session": map[string]interface{}{"name": "original"},
+	}
+	for _, source := range []string{
+		`{{ $d := dict }}{{ $_ := set $d "value" .vars.value }}value: {{ get $d "value" | yamlQuote }}`,
+		`{{ $ignored := set .session "name" .vars.value }}value: {{ .session.name | yamlQuote }}`,
+	} {
+		rendered, err := r.RenderTemplateString(source, ctx)
+		if err != nil {
+			t.Fatalf("serialized mutation rejected: %v", err)
+		}
+		var got map[string]interface{}
+		if err := yaml.Unmarshal(rendered, &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got["value"] != payload {
+			t.Fatalf("mutation changed YAML structure: %#v", got)
+		}
+	}
+}
+
 func TestTemplateOutputValidationErrorKeepsContext(t *testing.T) {
 	r := NewTemplateRenderer()
 	_, err := r.RenderTemplateString(`{{ .vars.value }}`, map[string]interface{}{})

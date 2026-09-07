@@ -104,3 +104,16 @@ func TestTemplateMutationDisablesTrustedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplateMutationSerializationAndTrustedFields(t *testing.T) {
+	for _, source := range []string{
+		`{{ $d := dict }}{{ $_ := set $d "value" .vars.payload }}value: {{ get $d "value" | yamlQuote }}`,
+		`{{ $ignored := merge .session .vars }}value: {{ .session.name | yamlQuote }}`,
+		`{{ define "emit" }}{{ .session.name | yamlQuote }}{{ end }}value: {{ template "emit" . }}`,
+		`value: {{ .session.name }}`,
+	} {
+		if err := validateGoTemplateSyntax(source); err != nil {
+			t.Errorf("rejected safe template: %s: %v", source, err)
+		}
+	}
+}
