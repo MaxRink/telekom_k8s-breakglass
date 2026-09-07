@@ -612,7 +612,7 @@ func TestSessionManager_AuthorizationSelectionDeduplicatesLiveFallback(t *testin
 		sessions, err := manager.GetClusterUserBreakglassSessions(
 			context.Background(), liveSession.Spec.Cluster, liveSession.Spec.User,
 		)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		results <- sessions
 	}()
 	<-started
