@@ -716,7 +716,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 	approvers []string,
 	approversByGroup map[string][]string,
 	escalation *breakglassv1alpha1.BreakglassEscalation,
-) []string {
+) ([]string, bool) {
 	log.Debugw("filterExcludedNotificationRecipients called",
 		"approverCount", len(approvers),
 		"escalationNil", escalation == nil,
@@ -725,7 +725,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 	if escalation == nil || escalation.Spec.NotificationExclusions == nil {
 		log.Debugw("No notification exclusions configured",
 			"escalationNil", escalation == nil)
-		return approvers
+		return approvers, false
 	}
 
 	exclusions := escalation.Spec.NotificationExclusions
@@ -749,7 +749,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 		if restrictedProviders && !known {
 			members, known = restrictedNotificationGroupMembers(escalation, group)
 			if !known {
-				return nil
+				return nil, true
 			}
 		}
 		for _, member := range members {
@@ -774,7 +774,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 					"error", err,
 					"errorType", fmt.Sprintf("%T", err))
 				if _, known := approversByGroup[group]; !known {
-					return nil
+					return nil, true
 				}
 				continue
 			}
@@ -802,7 +802,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 			"knownGroupMemberCount", len(excludedGroupMembers))
 		for _, group := range exclusions.Groups {
 			if _, known := approversByGroup[group]; !known {
-				return nil
+				return nil, true
 			}
 		}
 	}
@@ -826,7 +826,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 		"totalDirectExcluded", len(excludedUsers),
 		"totalGroupMembersExcluded", len(excludedGroupMembers))
 
-	return filtered
+	return filtered, false
 }
 
 // filterHiddenFromUIRecipients filters out users/groups that are marked as hidden from UI in the escalation.
@@ -836,7 +836,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 	approvers []string,
 	approversByGroup map[string][]string,
 	escalation *breakglassv1alpha1.BreakglassEscalation,
-) []string {
+) ([]string, bool) {
 	hiddenFromUICount := 0
 	if escalation != nil {
 		hiddenFromUICount = len(escalation.Spec.Approvers.HiddenFromUI)
@@ -850,7 +850,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 		log.Debugw("No hidden approvers configured, returning all approvers",
 			"escalationNil", escalation == nil,
 			"hiddenCount", hiddenFromUICount)
-		return approvers
+		return approvers, false
 	}
 
 	log.Infow("Hidden approvers configured",
@@ -884,7 +884,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 		if restrictedProviders && !known {
 			members, known = restrictedNotificationGroupMembers(escalation, group)
 			if !known {
-				return nil
+				return nil, true
 			}
 		}
 		for _, member := range members {
@@ -909,7 +909,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 					"error", err,
 					"errorType", fmt.Sprintf("%T", err))
 				if _, known := approversByGroup[group]; !known {
-					return nil
+					return nil, true
 				}
 				continue
 			}
@@ -935,7 +935,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 			"knownGroupMemberCount", len(hiddenGroupMembers))
 		for _, group := range hiddenGroups {
 			if _, known := approversByGroup[group]; !known {
-				return nil
+				return nil, true
 			}
 		}
 	}
@@ -959,5 +959,5 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 		"totalDirectHidden", len(hiddenUsers),
 		"totalGroupMembersHidden", len(hiddenGroupMembers))
 
-	return filtered
+	return filtered, false
 }

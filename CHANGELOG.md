@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Report unresolved privacy membership as notification suppression separately from
+  the normal case where all recipients were filtered by configuration.
+
 - Bound per-group notification attribution rendering while preserving the full
   membership snapshot used for privacy exclusions and hidden approver filtering.
 

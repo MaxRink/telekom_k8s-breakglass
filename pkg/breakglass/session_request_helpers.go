@@ -850,18 +850,31 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 		"escalationName", matchedEsc.Name,
 		"preFilterApproverCount", len(allApprovers))
 
-	filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, approversByGroup, matchedEsc)
+	filteredApprovers, exclusionsSuppressed := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, approversByGroup, matchedEsc)
+	if exclusionsSuppressed {
+		reqLog.Warnw("Suppressing session request notifications because excluded-group membership could not be resolved",
+			"escalationName", matchedEsc.Name,
+			"originalApproverCount", len(allApprovers))
+		return
+	}
 	reqLog.Debugw("After filterExcludedNotificationRecipients",
 		"postExcludeApproverCount", len(filteredApprovers),
 		"excludedCount", len(allApprovers)-len(filteredApprovers))
 
-	filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, approversByGroup, matchedEsc)
+	preHiddenApproverCount := len(filteredApprovers)
+	filteredApprovers, hiddenSuppressed := wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, approversByGroup, matchedEsc)
+	if hiddenSuppressed {
+		reqLog.Warnw("Suppressing session request notifications because hidden-group membership could not be resolved",
+			"escalationName", matchedEsc.Name,
+			"originalApproverCount", len(allApprovers))
+		return
+	}
 	reqLog.Debugw("After filterHiddenFromUIRecipients",
 		"postHiddenFilterApproverCount", len(filteredApprovers),
-		"hiddenFilteredOutCount", len(allApprovers)-len(filteredApprovers))
+		"hiddenFilteredOutCount", preHiddenApproverCount-len(filteredApprovers))
 
 	if len(filteredApprovers) == 0 {
-		reqLog.Infow("All approvers excluded from notifications via NotificationExclusions or HiddenFromUI",
+		reqLog.Infow("No approvers remain eligible for session request notifications after configured exclusions and hidden approvers",
 			"escalationName", matchedEsc.Name,
 			"originalApproverCount", len(allApprovers))
 		return

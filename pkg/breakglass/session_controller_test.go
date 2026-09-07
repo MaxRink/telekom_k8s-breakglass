@@ -23,6 +23,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -6463,7 +6464,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 		}
 
 		ctrl := &BreakglassSessionController{}
-		result := ctrl.filterExcludedNotificationRecipients(log, tc.approvers, nil, escalation)
+		result, _ := ctrl.filterExcludedNotificationRecipients(log, tc.approvers, nil, escalation)
 
 		if len(result) != len(tc.expect) {
 			t.Fatalf("case %s: expected %d recipients, got %d: %v", tc.name, len(tc.expect), len(result), result)
@@ -6548,7 +6549,7 @@ func TestFilterExcludedNotificationRecipientsUsesRequestResolvedMembers(t *testi
 			if tc.expected != nil {
 				expected = tc.expected
 			}
-			result := tc.ctrl.filterExcludedNotificationRecipients(log, testApprovers, approversByGroup, escalation)
+			result, _ := tc.ctrl.filterExcludedNotificationRecipients(log, testApprovers, approversByGroup, escalation)
 			assert.Equal(t, expected, result)
 		})
 	}
@@ -6561,7 +6562,7 @@ func TestFilterExcludedNotificationRecipientsFailsClosedForUnresolvedGroup(t *te
 	escalation := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 		NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{Groups: []string{"unresolved"}},
 	}}
-	got := ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(),
+	got, _ := ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(),
 		[]string{"approver@example.com"}, map[string][]string{"other": {"approver@example.com"}}, escalation)
 	assert.Empty(t, got)
 }
@@ -6572,7 +6573,7 @@ func TestDisableNotificationsFlag(t *testing.T) {
 
 	// Test with nil escalation
 	ctrl := &BreakglassSessionController{}
-	result := ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, nil)
+	result, _ := ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, nil)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with nil escalation, got %d", len(result))
 	}
@@ -6583,7 +6584,7 @@ func TestDisableNotificationsFlag(t *testing.T) {
 			NotificationExclusions: nil,
 		},
 	}
-	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, escalation)
+	result, _ = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, escalation)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with no exclusions, got %d", len(result))
 	}
@@ -6594,7 +6595,7 @@ func TestDisableNotificationsFlag(t *testing.T) {
 			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{},
 		},
 	}
-	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, escalation)
+	result, _ = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, escalation)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with empty exclusions, got %d", len(result))
 	}
@@ -6653,7 +6654,7 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 					},
 				},
 			}
-			result := ctrl.filterHiddenFromUIRecipients(log, tt.approvers, nil, escalation)
+			result, _ := ctrl.filterHiddenFromUIRecipients(log, tt.approvers, nil, escalation)
 			if len(result) != tt.expected {
 				t.Fatalf("expected %d recipients, got %d; result: %v", tt.expected, len(result), result)
 			}
@@ -6661,7 +6662,7 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 	}
 
 	// Test with nil escalation
-	result := ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, nil)
+	result, _ := ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, nil)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with nil escalation, got %d", len(result))
 	}
@@ -6674,7 +6675,7 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 			},
 		},
 	}
-	result = ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, escalation)
+	result, _ = ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, escalation)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with empty hidden list, got %d", len(result))
 	}
@@ -6723,7 +6724,7 @@ func TestFilterHiddenFromUIRecipientsUsesRequestResolvedMembers(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.ctrl.filterHiddenFromUIRecipients(log, approvers, approversByGroup, escalation)
+			result, _ := tc.ctrl.filterHiddenFromUIRecipients(log, approvers, approversByGroup, escalation)
 			assert.Equal(t, []string{"visible@example.com"}, result)
 		})
 	}
@@ -6736,9 +6737,62 @@ func TestFilterHiddenFromUIRecipientsFailsClosedForUnresolvedGroup(t *testing.T)
 	escalation := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 		Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{HiddenFromUI: []string{"unresolved"}},
 	}}
-	got := ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(),
+	got, _ := ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(),
 		[]string{"approver@example.com"}, map[string][]string{"other": {"approver@example.com"}}, escalation)
 	assert.Empty(t, got)
+}
+
+func TestNotificationFiltersReportUnresolvedPrivacyMembership(t *testing.T) {
+	ctrl := &BreakglassSessionController{escalationManager: &testEscalationLookup{
+		resolver: &MockGroupResolver{members: map[string][]string{}},
+	}}
+	log := zap.NewNop().Sugar()
+	approvers := []string{"approver@example.com"}
+	excluded := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForApprovers: []string{"provider"},
+			NotificationExclusions:               &breakglassv1alpha1.NotificationExclusions{Groups: []string{"unresolved"}},
+		},
+	}
+	got, suppressed := ctrl.filterExcludedNotificationRecipients(log, approvers, nil, excluded)
+	assert.True(t, suppressed)
+	assert.Nil(t, got)
+
+	hidden := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForApprovers: []string{"provider"},
+			Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{HiddenFromUI: []string{"unresolved"}},
+		},
+	}
+	got, suppressed = ctrl.filterHiddenFromUIRecipients(log, approvers, nil, hidden)
+	assert.True(t, suppressed)
+	assert.Nil(t, got)
+}
+
+func TestSendSessionNotificationsDistinguishesPrivacySuppression(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	log := zap.New(core).Sugar()
+	sender := &FakeMailSender{}
+	ctrl := &BreakglassSessionController{log: log, mail: sender}
+	session := breakglassv1alpha1.BreakglassSession{}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "privacy-escalation"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForApprovers: []string{"provider"},
+			NotificationExclusions:               &breakglassv1alpha1.NotificationExclusions{Groups: []string{"unresolved"}},
+		},
+	}
+	ctrl.sendSessionNotifications(session, escalation, []string{"approver@example.com"}, nil, "requester@example.com", "requester", log)
+	assert.Zero(t, sender.SendCallCount)
+	assert.NotEmpty(t, logs.FilterMessage("Suppressing session request notifications because excluded-group membership could not be resolved").All())
+
+	core, logs = observer.New(zap.InfoLevel)
+	log = zap.New(core).Sugar()
+	escalation.Spec.AllowedIdentityProvidersForApprovers = nil
+	escalation.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{Users: []string{"approver@example.com"}}
+	ctrl.log = log
+	ctrl.sendSessionNotifications(session, escalation, []string{"approver@example.com"}, nil, "requester@example.com", "requester", log)
+	assert.NotEmpty(t, logs.FilterMessage("No approvers remain eligible for session request notifications after configured exclusions and hidden approvers").All())
 }
 
 func TestSendSessionNotificationsUsesRequestResolvedGroupMembers(t *testing.T) {
@@ -6829,14 +6883,14 @@ func TestHiddenFromUIAndNotificationExclusionsCombined(t *testing.T) {
 	}
 
 	// First filter: notification exclusions
-	filtered := ctrl.filterExcludedNotificationRecipients(log, approvers, nil, escalation)
+	filtered, _ := ctrl.filterExcludedNotificationRecipients(log, approvers, nil, escalation)
 	// Should have: alice, bob, charlie (dave excluded)
 	if len(filtered) != 3 {
 		t.Fatalf("after notificationExclusions filter: expected 3, got %d; result: %v", len(filtered), filtered)
 	}
 
 	// Second filter: hidden from UI
-	filtered = ctrl.filterHiddenFromUIRecipients(log, filtered, nil, escalation)
+	filtered, _ = ctrl.filterHiddenFromUIRecipients(log, filtered, nil, escalation)
 	// Should have: alice, bob (charlie hidden, dave already excluded)
 	if len(filtered) != 2 {
 		t.Fatalf("after hiddenFromUI filter: expected 2, got %d; result: %v", len(filtered), filtered)
@@ -7594,7 +7648,7 @@ func TestUseCaseM2MAutomation(t *testing.T) {
 
 		// Test the notification filter logic
 		recipients := []string{"user1@example.com", "user2@example.com"}
-		result := ctrl.filterExcludedNotificationRecipients(log, recipients, nil, escalation)
+		result, _ := ctrl.filterExcludedNotificationRecipients(log, recipients, nil, escalation)
 
 		// With DisableNotifications, filterExcludedNotificationRecipients doesn't filter
 		// The actual email suppression happens at send time based on DisableNotifications flag
@@ -11381,10 +11435,10 @@ func TestNotificationGroupResolutionBoundaries(t *testing.T) {
 				var got []string
 				if hidden {
 					esc.Spec.Approvers.HiddenFromUI = []string{group}
-					got = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), []string{group, member}, tc.known, esc)
+					got, _ = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), []string{group, member}, tc.known, esc)
 				} else {
 					esc.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{Users: []string{group}, Groups: []string{group}}
-					got = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), []string{group, member}, tc.known, esc)
+					got, _ = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), []string{group, member}, tc.known, esc)
 				}
 				assert.ElementsMatch(t, tc.want, got)
 			})

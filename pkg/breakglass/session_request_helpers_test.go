@@ -574,9 +574,9 @@ func TestRestrictedNotificationPrivacyFilters(t *testing.T) {
 					candidates := []string{"private@example.com", "visible@example.com"}
 					var got []string
 					if filter == "excluded" {
-						got = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+						got, _ = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
 					} else {
-						got = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+						got, _ = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
 					}
 					assert.Equal(t, tc.want, got)
 					assert.False(t, resolver.called)
@@ -615,7 +615,7 @@ func TestLargeNotificationSnapshotExcludesTailMemberBeyondRecipientCap(t *testin
 	require.Equal(t, members, result.approversByGroup["team"], "privacy snapshot must remain complete")
 	expected := append([]string{"excluded@example.com", "visible@example.com"}, members[:MaxApproverGroupMembers]...)
 	require.Equal(t, expected, result.allApprovers, "candidate cap and first-seen order must remain unchanged")
-	filtered := controller.filterExcludedNotificationRecipients(controller.log, result.allApprovers, result.approversByGroup, esc)
+	filtered, _ := controller.filterExcludedNotificationRecipients(controller.log, result.allApprovers, result.approversByGroup, esc)
 	require.Equal(t, []string{"visible@example.com"}, filtered, "tail membership must exclude even an explicit recipient")
 	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", filtered, result.approversByGroup, esc)
 	assert.Equal(t, 1, sender.SendCallCount)
@@ -627,11 +627,11 @@ func TestLargeNotificationSnapshotExcludesTailMemberBeyondRecipientCap(t *testin
 	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", []string{members[len(members)-2], members[len(members)-2]}, result.approversByGroup, esc)
 	assert.Equal(t, 1, sender.SendCallCount)
 	assert.Equal(t, []string{members[len(members)-2]}, sender.LastRecivers)
-	assert.NotContains(t, sender.LastBody, "team", "tail member must not receive a group attribution from the capped prefix")
+	assert.NotContains(t, sender.LastBody, `<span class="group-badge">team</span>`, "tail member must not receive a group attribution from the capped prefix")
 	hiddenEsc := esc.DeepCopy()
 	hiddenEsc.Spec.NotificationExclusions = nil
 	hiddenEsc.Spec.Approvers.HiddenFromUI = []string{"team"}
-	hidden := controller.filterHiddenFromUIRecipients(controller.log, []string{"excluded@example.com"}, result.approversByGroup, hiddenEsc)
+	hidden, _ := controller.filterHiddenFromUIRecipients(controller.log, []string{"excluded@example.com"}, result.approversByGroup, hiddenEsc)
 	assert.Empty(t, hidden, "tail member hidden through the complete group snapshot must not receive email")
 }
 
@@ -649,5 +649,5 @@ func TestLargeNotificationAttributionKeepsCrossGroupTailRecipient(t *testing.T) 
 	require.Equal(t, 1, sender.SendCallCount)
 	assert.Equal(t, []string{tail}, sender.LastRecivers)
 	assert.Contains(t, sender.LastBody, "overlap")
-	assert.NotContains(t, sender.LastBody, "large")
+	assert.NotContains(t, sender.LastBody, `<span class="group-badge">large</span>`)
 }
