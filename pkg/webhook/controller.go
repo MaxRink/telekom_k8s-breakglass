@@ -451,8 +451,10 @@ func (wc *WebhookController) podSecurityOverrideApprovalGranted(ctx context.Cont
 		}
 		// Explicit identifiers are provider-scoped whenever the escalation restricts
 		// providers. An unknown historical slot cannot satisfy that restriction.
-		if slices.Contains(overrides.Approvers.Users, approvedBy) {
-			return true
+		for _, user := range overrides.Approvers.Users {
+			if strings.EqualFold(user, approvedBy) {
+				return true
+			}
 		}
 		if provider == "" || len(overrides.Approvers.Groups) == 0 {
 			continue

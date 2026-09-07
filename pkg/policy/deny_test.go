@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -3938,7 +3939,7 @@ func TestEvaluatorMatchWithDetailsWarnThenDeny(t *testing.T) {
 
 func TestEffectiveRootPolicyAndApproval(t *testing.T) {
 	evaluator := NewEvaluator(nil, zap.NewNop().Sugar())
-	rules := &breakglassv1alpha1.PodSecurityRules{RiskFactors: breakglassv1alpha1.RiskFactors{RunAsRoot: 20}, BlockFactors: []string{"runAsRoot"}}
+	rules := &breakglassv1alpha1.PodSecurityRules{RiskFactors: breakglassv1alpha1.RiskFactors{RunAsRoot: 20}, BlockFactors: []string{"runAsRoot"}, Thresholds: []breakglassv1alpha1.RiskThreshold{{MaxScore: 10, Action: "allow"}}}
 	for _, tc := range []struct {
 		name                       string
 		podUID, containerUID       *int64
@@ -3953,11 +3954,18 @@ func TestEffectiveRootPolicyAndApproval(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pod := &corev1.Pod{Spec: corev1.PodSpec{SecurityContext: &corev1.PodSecurityContext{RunAsUser: tc.podUID}, Containers: []corev1.Container{{Name: "app", SecurityContext: &corev1.SecurityContext{RunAsUser: tc.containerUID}}}}}
-			action := Action{Pod: pod, PodSecurityOverrideApproved: tc.approved}
+			action := Action{Resource: "pods", Subresource: "exec", Pod: pod, PodSecurityOverrideApproved: tc.approved}
 			if tc.override {
 				action.PodSecurityOverrides = &breakglassv1alpha1.PodSecurityOverrides{Enabled: true, RequireApproval: true, ExemptFactors: []string{"runAsRoot"}, MaxAllowedScore: ptr.To(100)}
 			}
 			result := evaluator.evaluatePodSecurity(action, rules)
+			if result.OverrideApplied != tc.approved {
+				t.Fatalf("override applied=%v want=%v", result.OverrideApplied, tc.approved)
+			}
+			if tc.podUID != nil && tc.containerUID == nil && !slices.Contains(result.Factors, "runAsRoot:app") {
+				t.Fatalf("inherited root factor missing: %#v", result.Factors)
+			}
+
 			if result.Denied != tc.denied {
 				t.Fatalf("denied=%v want=%v: %s", result.Denied, tc.denied, result.Reason)
 			}
