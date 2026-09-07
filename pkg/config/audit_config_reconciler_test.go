@@ -74,7 +74,7 @@ type countingAuditClient struct {
 }
 
 func (c *countingAuditClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
-	c.gets = append(c.gets, types.NamespacedName(key))
+	c.gets = append(c.gets, key)
 	return c.Client.Get(ctx, key, obj, opts...)
 }
 
