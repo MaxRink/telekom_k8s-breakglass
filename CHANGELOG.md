@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reuse each provider/group membership result within one pod-security approval decision, including failed lookups, while retrying on later decisions.
+
+- Accept configured Kubernetes default node-condition toleration durations when checking debug workload identity, and reuse one live Pod lookup per authorization request while retaining UID checks.
+
 - Use indexed advisory quota prechecks when durable admission is enabled, retaining authoritative enforcement before session success.
 
 - Reuse provider-bound approver group resolvers after reloading provider configuration and credentials; unchanged providers retain the configured membership-cache TTL.
