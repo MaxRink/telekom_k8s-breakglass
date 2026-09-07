@@ -52,7 +52,7 @@ spec:
 
 ## Security: Secret Namespace Enforcement
 
-**All secrets MUST be in the same namespace as the breakglass controller** (typically `breakglass-system`). This is enforced for security - the controller cannot read secrets from arbitrary namespaces.
+**All secrets MUST be in the same namespace as the breakglass controller** (typically `breakglass-system`). This is enforced for security - the controller cannot read secrets from arbitrary namespaces. If the controller namespace is not configured, secret references are rejected before any Secret lookup.
 
 ```yaml
 # ✅ CORRECT - secrets in controller namespace

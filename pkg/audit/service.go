@@ -752,6 +752,9 @@ func (s *Service) applyWebhookAuth(ctx context.Context, webhookCfg *breakglassv1
 }
 
 func (s *Service) requireControllerNamespace(refType, name, namespace string) error {
+	if s.configNS == "" {
+		return fmt.Errorf("%s secret %q cannot be read because controller namespace is not configured", refType, name)
+	}
 	if namespace != s.configNS {
 		return fmt.Errorf("%s secret %q namespace must be controller namespace %q, got %q", refType, name, s.configNS, namespace)
 	}

@@ -20,10 +20,22 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
+
+type countingAuditClient struct {
+	ctrlclient.Client
+	gets int
+}
+
+func (c *countingAuditClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	c.gets++
+	return c.Client.Get(ctx, types.NamespacedName(key), obj, opts...)
+}
 
 func newServiceTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -1411,6 +1423,20 @@ func TestServiceRejectsSelectorExclusionsBeforeReplacingActiveManager(t *testing
 	entries := logs.FilterMessage("audit_event").All()
 	require.Len(t, entries, 1)
 	assert.Equal(t, "still-delivered", entries[0].ContextMap()["event_id"])
+}
+
+func TestServiceRejectsSecretLookupWithoutControllerNamespace(t *testing.T) {
+	scheme := newServiceTestScheme(t)
+	base := fake.NewClientBuilder().WithScheme(scheme).Build()
+	counting := &countingAuditClient{Client: base}
+	svc := NewService(counting, nil, zap.NewNop(), "")
+
+	for _, namespace := range []string{"", "explicit-secret-namespace"} {
+		_, err := svc.getSecretKey(context.Background(), "credentials", namespace, "token")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "controller namespace is not configured")
+	}
+	assert.Zero(t, counting.gets)
 }
 
 func TestServiceKafkaTLSRejectsForeignSecrets(t *testing.T) {
