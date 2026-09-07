@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,7 +15,11 @@ import (
 )
 
 func TestFilesystemScanPolicy(t *testing.T) {
-	data, err := os.ReadFile("../workflows/security.yml")
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate workflow contract test")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../workflows/security.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
