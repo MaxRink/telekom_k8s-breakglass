@@ -12,6 +12,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -127,6 +128,59 @@ func podMatchesWorkloadTemplate(pod *corev1.Pod, template *corev1.PodTemplateSpe
 	normalize(expected)
 	normalize(actual)
 	return equality.Semantic.DeepEqual(expected, actual)
+}
+
+// podMatchesAdmittedWorkloadTemplate applies the narrow Pod-admission exception
+// for a live workload Pod. ReplicaSet templates are synthetic objects and must
+// continue using podMatchesWorkloadTemplate without this exception.
+func podMatchesAdmittedWorkloadTemplate(ctx context.Context, target client.Client, pod *corev1.Pod, template *corev1.PodTemplateSpec, daemonSet bool) bool {
+	if podMatchesWorkloadTemplate(pod, template, daemonSet) {
+		return true
+	}
+	actual := pod.Spec.DeepCopy()
+	if !verifyAdmittedPriority(ctx, target, actual, template.Spec) {
+		return false
+	}
+	if template.Spec.Priority == nil {
+		actual.Priority = nil
+	}
+	if template.Spec.PreemptionPolicy == nil {
+		actual.PreemptionPolicy = nil
+	}
+	if template.Spec.PriorityClassName == "" {
+		actual.PriorityClassName = ""
+	}
+	return podMatchesWorkloadTemplate(&corev1.Pod{Spec: *actual}, template, daemonSet)
+}
+
+func verifyAdmittedPriority(ctx context.Context, target client.Client, actual *corev1.PodSpec, expected corev1.PodSpec) bool {
+	className := actual.PriorityClassName
+	if className == "" && actual.Priority == nil && actual.PreemptionPolicy == nil {
+		return true
+	}
+	if className == "" {
+		return (actual.Priority == nil || *actual.Priority == 0) &&
+			(actual.PreemptionPolicy == nil || *actual.PreemptionPolicy == corev1.PreemptLowerPriority)
+	}
+	priorityClass := &schedulingv1.PriorityClass{}
+	if err := target.Get(ctx, client.ObjectKey{Name: className}, priorityClass); err != nil {
+		return false
+	}
+	if expected.PriorityClassName == "" {
+		if !priorityClass.GlobalDefault {
+			return false
+		}
+	} else if expected.PriorityClassName != className {
+		return false
+	}
+	if actual.Priority == nil || *actual.Priority != priorityClass.Value || actual.PreemptionPolicy == nil {
+		return false
+	}
+	policy := corev1.PreemptLowerPriority
+	if priorityClass.PreemptionPolicy != nil {
+		policy = *priorityClass.PreemptionPolicy
+	}
+	return *actual.PreemptionPolicy == policy
 }
 
 func isDefaultServiceAccountVolume(volume corev1.Volume) bool {

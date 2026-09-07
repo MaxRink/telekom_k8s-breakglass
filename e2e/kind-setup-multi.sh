@@ -1563,6 +1563,10 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments", "daemonsets", "replicasets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Verify admission-derived scheduling fields for workload identity checks
+- apiGroups: ["scheduling.k8s.io"]
+  resources: ["priorityclasses"]
+  verbs: ["get"]
 # Allow creating events for debug session status reporting
 - apiGroups: [""]
   resources: ["events"]

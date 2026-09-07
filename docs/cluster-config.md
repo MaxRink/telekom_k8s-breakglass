@@ -1080,6 +1080,10 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments", "daemonsets", "replicasets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Verify admission-derived scheduling fields for workload identity checks
+- apiGroups: ["scheduling.k8s.io"]
+  resources: ["priorityclasses"]
+  verbs: ["get"]
 # Create events for status reporting
 - apiGroups: [""]
   resources: ["events"]
