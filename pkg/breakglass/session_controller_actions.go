@@ -616,9 +616,9 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 	return nil
 }
 
-// sendOnRequestEmailsByGroup sends separate emails for each approver group, where each email shows
-// only the specific group that matched. This allows approvers to understand which group they're
-// being notified on behalf of.
+// sendOnRequestEmailsByGroup sends each group-attributed recipient one email with
+// all matching groups found in the bounded snapshots. Explicit-only recipients
+// receive a notification without group attribution.
 func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 	log *zap.SugaredLogger,
 	bs breakglassv1alpha1.BreakglassSession,

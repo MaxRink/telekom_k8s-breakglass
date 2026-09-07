@@ -880,8 +880,7 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 		return
 	}
 
-	// Send separate emails per approver group
-	// Each email shows only the specific group that matched
+	// Send recipient notifications with all matching groups from bounded snapshots.
 	wc.sendOnRequestEmailsByGroup(reqLog, bs, authEmail, username, filteredApprovers, approversByGroup, matchedEsc)
 }
 
