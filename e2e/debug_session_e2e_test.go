@@ -311,7 +311,18 @@ func TestDebugSession_E2E_SessionCreation(t *testing.T) {
 		_ = cli.Delete(ctx, session)
 	}()
 
-	assert.Equal(t, testNamespace, session.Namespace)
+	// The hub object belongs to the selected ClusterConfig namespace, which
+	// need not be the namespace used for test fixtures or the spoke workload.
+	var clusterConfigs breakglassv1alpha1.ClusterConfigList
+	require.NoError(t, cli.List(ctx, &clusterConfigs))
+	var hubNamespaces []string
+	for _, clusterConfig := range clusterConfigs.Items {
+		if clusterConfig.Name == "tenant-a" {
+			hubNamespaces = append(hubNamespaces, clusterConfig.Namespace)
+		}
+	}
+	require.Len(t, hubNamespaces, 1, "expected one ClusterConfig for the requested cluster")
+	assert.Equal(t, hubNamespaces[0], session.Namespace)
 	assert.Equal(t, "breakglass-debug", session.Spec.TargetNamespace)
 
 	// Wait for session to be processed using helpers

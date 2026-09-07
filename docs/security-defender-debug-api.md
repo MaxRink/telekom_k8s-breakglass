@@ -30,3 +30,7 @@ Repeated leave requests do not change historical leave timestamps, and rejoined
 participants can leave their current active row. Failure to load a recorded
 binding denies approver-based session reads instead of falling through to broader
 template permissions. Existing requester and participant read access is unchanged.
+
+The session-creation E2E check compares the hub DebugSession namespace with its
+selected ClusterConfig namespace, independently of the fixture namespace, while
+asserting the template's spoke target namespace separately.
