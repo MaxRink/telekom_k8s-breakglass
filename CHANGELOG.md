@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
 - Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
 
 - Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
@@ -56,6 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
+
 - Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
 
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
@@ -66,6 +78,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
+  redirects, preserve explicit issuer bindings in runtime selection and admission,
+  and invalidate cluster credentials
+  when an inherited IdentityProvider client Secret changes. An escalation with an
+  updated specification remains unavailable until its Ready condition reflects
+  the current generation.
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
 
 - Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 
