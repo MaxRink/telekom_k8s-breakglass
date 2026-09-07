@@ -620,10 +620,34 @@ func TestLargeNotificationSnapshotExcludesTailMemberBeyondRecipientCap(t *testin
 	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", filtered, result.approversByGroup, esc)
 	assert.Equal(t, 1, sender.SendCallCount)
 	assert.Equal(t, []string{"visible@example.com"}, sender.LastRecivers)
-	// Group rendering can still find eligible members at the end of a full
-	// snapshot; duplicate candidate entries must not produce duplicate sends.
+	// A recipient remains eligible through the explicit-user path; its tail group
+	// attribution is omitted because the render scan is capped.
 	sender.SendCallCount = 0
+	result.approversByGroup["_explicit_users"] = append(result.approversByGroup["_explicit_users"], members[len(members)-2])
 	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", []string{members[len(members)-2], members[len(members)-2]}, result.approversByGroup, esc)
 	assert.Equal(t, 1, sender.SendCallCount)
 	assert.Equal(t, []string{members[len(members)-2]}, sender.LastRecivers)
+	assert.NotContains(t, sender.LastBody, "team", "tail member must not receive a group attribution from the capped prefix")
+	hiddenEsc := esc.DeepCopy()
+	hiddenEsc.Spec.NotificationExclusions = nil
+	hiddenEsc.Spec.Approvers.HiddenFromUI = []string{"team"}
+	hidden := controller.filterHiddenFromUIRecipients(controller.log, []string{"excluded@example.com"}, result.approversByGroup, hiddenEsc)
+	assert.Empty(t, hidden, "tail member hidden through the complete group snapshot must not receive email")
+}
+
+func TestLargeNotificationAttributionKeepsCrossGroupTailRecipient(t *testing.T) {
+	members := make([]string, MaxApproverGroupMembers+1)
+	for i := range members {
+		members[i] = fmt.Sprintf("large-%d@example.com", i)
+	}
+	tail := members[len(members)-1]
+	esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"large", "overlap"}}}}
+	sender := &FakeMailSender{}
+	controller := &BreakglassSessionController{log: zap.NewNop().Sugar(), mail: sender}
+	groups := map[string][]string{"large": members, "overlap": {tail}}
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", []string{tail}, groups, esc)
+	require.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{tail}, sender.LastRecivers)
+	assert.Contains(t, sender.LastBody, "overlap")
+	assert.NotContains(t, sender.LastBody, "large")
 }

@@ -16,7 +16,11 @@ available. Successfully resolved empty groups are distinct from unavailable
 membership. Complete request-time membership is retained for filtering even when
 notification recipient limits truncate the candidate list. Membership deduplication
 and recipient matching use sets; the caps bound recipient candidates, not the
-size of the complete privacy snapshot.
+size of the complete privacy snapshot. Per-recipient group attribution is also
+bounded to the first `MaxApproverGroupMembers` members of each group for
+rendering. A recipient eligible through an explicit user or another group still
+receives the email, but a matching group name beyond that bounded prefix is not
+listed in the rendered attribution.
 
 `approvers.hiddenFromUI` removes hidden group names from email content as well as
 removing their members from recipients. An item explicitly listed in

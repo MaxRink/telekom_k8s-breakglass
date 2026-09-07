@@ -637,8 +637,8 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 		"totalApprovers", len(filteredApprovers),
 		"groupCount", len(approversByGroup))
 
-	// Build a map of approver email -> groups they belong to (across ALL groups)
-	// This ensures we send one email per approver, showing all their groups
+	// Build a map of approver email -> groups they belong to across the bounded
+	// render prefixes. This keeps attribution work bounded per group.
 	approverToGroups := make(map[string][]string)
 	eligible := make(map[string]bool, len(filteredApprovers))
 	for _, approver := range filteredApprovers {
@@ -648,6 +648,13 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 	// For each configured approver group, collect which groups each approver belongs to
 	for _, groupName := range matchedEscalation.Spec.Approvers.Groups {
 		groupMembers := approversByGroup[groupName]
+		// Keep the complete snapshot above for privacy exclusions and hidden
+		// filtering, but bound this render-only attribution scan. A tail member
+		// remains eligible through filteredApprovers; this only omits the capped
+		// group name from that recipient's rendered attribution.
+		if len(groupMembers) > MaxApproverGroupMembers {
+			groupMembers = groupMembers[:MaxApproverGroupMembers]
+		}
 
 		// Filter the group members to only include those in filteredApprovers
 		for _, member := range groupMembers {
@@ -658,7 +665,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 		}
 	}
 
-	// Send one email to each approver, showing all groups they belong to
+	// Send one email to each approver, showing the groups found in the bounded prefixes.
 	for approver, groups := range approverToGroups {
 		log.Debugw("Sending email for approver",
 			"session", bs.Name,
