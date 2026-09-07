@@ -196,7 +196,7 @@ func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context
 			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
 				continue
 			}
-			if podMatchesWorkloadTemplate(pod, &workload.Spec.Template, true) {
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, true) {
 				return true
 			}
 		case "Deployment":
@@ -218,7 +218,9 @@ func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context
 			if !podMatchesWorkloadTemplate(&corev1.Pod{Spec: rs.Spec.Template.Spec}, &workload.Spec.Template, false) {
 				continue
 			}
-			if podMatchesWorkloadTemplate(pod, &rs.Spec.Template, false) {
+			// Only the live Pod from the API list receives admission defaults;
+			// the ReplicaSet-to-Deployment template comparison above stays strict.
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &rs.Spec.Template, false) {
 				return true
 			}
 		}

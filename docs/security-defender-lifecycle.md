@@ -58,7 +58,11 @@ Deployment records take their UID from the server response to the apply request.
 
 `TestTrackedApplyRetainsResponseIdentity` covers typed and GVK-bearing unstructured objects, asserting that the original object receives the apply response UID without a fallback GET.
 
-Workload matching tolerates configurable durations for the standard not-ready and unreachable `Exists`/`NoExecute` admission tolerations; unrelated tolerations and executable configuration remain checked. Pod-operation authorization lazily reads one live target Pod snapshot per request and reuses it across recorded references, including failed lookups. Each new request performs a fresh lookup.
+Workload matching tolerates configurable durations for the standard not-ready and unreachable `Exists`/`NoExecute` admission tolerations. Live DaemonSet and Deployment Pods can also contain scheduling defaults absent from their controller templates. The no-class defaults (`priority: 0`, `preemptionPolicy: PreemptLowerPriority`) are recognized directly. For a named class, added values must match a `PriorityClass` read from the target cluster. The class must match the explicitly configured name, or have `globalDefault: true` when the template omits a name. Explicitly configured fields, executable configuration, and the ReplicaSet-to-Deployment template comparison remain strict.
+
+Verifying named-class defaults requires the spoke credential to have `get` access to `scheduling.k8s.io/priorityclasses`. An already matching Pod specification needs no additional lookup. A denied read, missing class, or changed class that no longer explains the Pod's values fails closed; restore the matching class or terminate and recreate affected sessions after a class change. `TestTrackedWorkloadAdmittedPodMembership` exercises both controller paths and rejects modified ReplicaSet templates and container images.
+
+Pod-operation authorization lazily reads one live target Pod snapshot per request and reuses it across recorded references, including failed lookups. Each new request performs a fresh lookup.
 
 ## Debug session namespace selection
 

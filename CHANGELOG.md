@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Recognize Kubernetes scheduling defaults on debug workload Pods, validating
+  named-class additions against the spoke PriorityClass while retaining explicit
+  template fields, controller UID checks, and strict ReplicaSet template matching.
+
 - Reject unsupported audit namespace selector exclusions before replacing active
   sinks; migrate these exclusions to namespace patterns before upgrading.
 
@@ -132,6 +136,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Keep debug session CRUD fixtures in the hub namespace while using the default
+  `breakglass-debug` target, and use valid exact node names in Helm scheduling
+  fixtures.
 
 - **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
   redirects, preserve explicit issuer bindings in runtime selection and admission,
