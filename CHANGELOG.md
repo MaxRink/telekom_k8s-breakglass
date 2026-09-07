@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Validate both device-login verification URLs before displaying or opening them.
+
 - Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
 
 - Reject unsupported audit namespace selector exclusions before replacing active
