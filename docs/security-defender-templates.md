@@ -28,6 +28,7 @@ template calls. Loops must preserve their scalar context across iterations.
 Recursive calls, break/continue, and excessively ambiguous contexts are rejected.
 This is not a complete YAML validator or a hostile-template sandbox: administrator
 literal text, allowed function evaluation, and the resource structure remain trusted.
+Template output validation failures retain the `template output validation failed` context and the underlying diagnostic.
 
 This changes compatibility for templates using raw interpolation, `env`,
 `expandenv`, or string fragments around quoting helpers. Update templates before

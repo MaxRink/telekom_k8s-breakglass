@@ -61,7 +61,7 @@ func (r *TemplateRenderer) RenderTemplateString(templateStr string, ctx interfac
 	}
 
 	if err := breakglassv1alpha1.ValidateTemplateOutput(tmpl); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("template output validation failed: %w", err)
 	}
 
 	// Execute template
@@ -107,7 +107,7 @@ func (r *TemplateRenderer) ValidateTemplate(templateStr string, sampleCtx interf
 	}
 
 	if err := breakglassv1alpha1.ValidateTemplateOutput(tmpl); err != nil {
-		return err
+		return fmt.Errorf("template output validation failed: %w", err)
 	}
 
 	// Execute template with sample context

@@ -4,6 +4,7 @@
 package debug
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -35,6 +36,17 @@ func TestTemplateSecurityRendering(t *testing.T) {
 	}
 	if _, err := r.RenderTemplateString(strings.Repeat("x", maxTemplateOutputBytes+1), map[string]interface{}{}); err == nil {
 		t.Fatal("output cap not enforced")
+	}
+}
+
+func TestTemplateOutputValidationErrorKeepsContext(t *testing.T) {
+	r := NewTemplateRenderer()
+	_, err := r.RenderTemplateString(`{{ .vars.value }}`, map[string]interface{}{})
+	if err == nil || !strings.Contains(err.Error(), "template output validation failed:") || !strings.Contains(err.Error(), "serialize the complete scalar") || errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), "serialize the complete scalar") {
+		t.Fatalf("render error lost context: %v", err)
+	}
+	if err := r.ValidateTemplate(`{{ .vars.value }}`, map[string]interface{}{}); err == nil || !strings.Contains(err.Error(), "template output validation failed:") || !strings.Contains(err.Error(), "serialize the complete scalar") || errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), "serialize the complete scalar") {
+		t.Fatalf("validation error lost context: %v", err)
 	}
 }
 
