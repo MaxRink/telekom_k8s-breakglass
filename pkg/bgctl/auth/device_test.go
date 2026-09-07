@@ -126,6 +126,58 @@ func TestDeviceCodeLoginCancelsDuringPollingWait(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&tokenCalls))
 }
 
+func TestDeviceCodeLoginValidatesBothVerificationURLs(t *testing.T) {
+	t.Setenv("BGCTL_NO_BROWSER", "true")
+	tests := []struct {
+		name, manual, complete string
+		wantErr                bool
+		tls                    bool
+	}{
+		{name: "invalid manual URL", manual: "file:///tmp/device", complete: "https://example.com", wantErr: true},
+		{name: "invalid complete URL", manual: "https://example.com", complete: "javascript:alert(1)", wantErr: true},
+		{name: "distinct HTTPS URLs", manual: "https://manual.example/device", complete: "https://complete.example/device"},
+		{name: "explicit HTTP development authority", manual: "http://manual.example/device", complete: "http://complete.example/device"},
+		{name: "HTTPS authority rejects manual HTTP downgrade", manual: "http://127.0.0.1/device", complete: "https://complete.example/device", wantErr: true, tls: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tokenCalls int32
+			var server *httptest.Server
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/openid-configuration":
+					_ = json.NewEncoder(w).Encode(map[string]string{
+						"token_endpoint":                server.URL + "/token",
+						"device_authorization_endpoint": server.URL + "/device",
+					})
+				case "/device":
+					_ = json.NewEncoder(w).Encode(deviceCodeResponse{DeviceCode: "abc", UserCode: "XYZ", VerificationURI: tt.manual, VerificationURIComplete: tt.complete, ExpiresIn: 60})
+				case "/token":
+					atomic.AddInt32(&tokenCalls, 1)
+					_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "token", ExpiresIn: 60})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			if tt.tls {
+				server = httptest.NewTLSServer(handler)
+			} else {
+				server = httptest.NewServer(handler)
+			}
+			defer server.Close()
+			cfg := OIDCConfig{Authority: server.URL, ClientID: "bgctl", InsecureSkipTLS: tt.tls}
+			_, err := DeviceCodeLogin(context.Background(), cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Zero(t, atomic.LoadInt32(&tokenCalls))
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, int32(1), atomic.LoadInt32(&tokenCalls))
+		})
+	}
+}
+
 func TestRequestDeviceCodeUsesRequestContext(t *testing.T) {
 	requestStarted := make(chan struct{})
 	contentTypeSeen := make(chan string, 1)
