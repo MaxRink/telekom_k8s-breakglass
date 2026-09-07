@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
 - Clear inherited OIDC fallback credentials when resolving new settings, including
   transitions to direct OIDC configuration.
 
@@ -57,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
+
 - Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
 
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
@@ -67,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
 
 - **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
   redirects, preserve explicit issuer bindings in runtime selection and admission,

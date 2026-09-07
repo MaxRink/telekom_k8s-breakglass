@@ -13,12 +13,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/terminal"
 	"golang.org/x/oauth2"
 )
 
 const (
 	oidcErrorBodyLimit = 4 * 1024
 	oidcJSONBodyLimit  = 1 * 1024 * 1024
+	maxDeviceInterval  = 5 * time.Minute
+	maxDeviceLifetime  = 24 * time.Hour
 )
 
 type oidcDiscovery struct {
@@ -63,6 +66,12 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 	if endpoints.TokenEndpoint == "" {
 		return nil, errors.New("token endpoint not advertised")
 	}
+	allowHTTP := authorityAllowsHTTP(cfg.Authority)
+	for name, endpoint := range map[string]string{"device authorization": endpoints.DeviceAuthorizationEndpoint, "token": endpoints.TokenEndpoint} {
+		if err := validateCredentialURLFor(endpoint, allowHTTP); err != nil {
+			return nil, fmt.Errorf("invalid %s endpoint: %w", name, err)
+		}
+	}
 
 	deviceResp, err := requestDeviceCode(ctx, client, endpoints.DeviceAuthorizationEndpoint, cfg)
 	if err != nil {
@@ -74,14 +83,25 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 		verificationURL = deviceResp.VerificationURI
 	}
 
-	fmt.Printf("Visit %s and enter code: %s\n", deviceResp.VerificationURI, deviceResp.UserCode)
+	if verificationURL != "" {
+		if err := validateBrowserURLFor(verificationURL, allowHTTP); err != nil {
+			return nil, fmt.Errorf("invalid verification URL: %w", err)
+		}
+	}
+	fmt.Printf("Visit %s and enter code: %s\n", sanitizeTerminalText(deviceResp.VerificationURI), sanitizeTerminalText(deviceResp.UserCode))
 	if verificationURL != "" && !strings.EqualFold(os.Getenv("BGCTL_NO_BROWSER"), "true") {
-		_ = openBrowser(verificationURL)
+		_ = openBrowserFor(verificationURL, allowHTTP)
 	}
 
+	if deviceResp.Interval < 0 || time.Duration(deviceResp.Interval) > maxDeviceInterval/time.Second {
+		return nil, fmt.Errorf("device poll interval exceeds %s", maxDeviceInterval)
+	}
 	interval := time.Duration(deviceResp.Interval) * time.Second
-	if interval == 0 {
+	if deviceResp.Interval <= 0 {
 		interval = 5 * time.Second
+	}
+	if deviceResp.ExpiresIn <= 0 || time.Duration(deviceResp.ExpiresIn) > maxDeviceLifetime/time.Second {
+		return nil, fmt.Errorf("device code lifetime exceeds %s", maxDeviceLifetime)
 	}
 	deadline := time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second)
 
@@ -99,6 +119,9 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 			}
 			if errors.Is(err, errSlowDown) {
 				interval += 5 * time.Second
+				if interval > maxDeviceInterval {
+					return nil, errors.New("device poll interval exceeded maximum")
+				}
 				if err := waitForDevicePoll(ctx, interval); err != nil {
 					return nil, err
 				}
@@ -212,9 +235,9 @@ func deviceTokenPayloadError(payload tokenResponse) error {
 			return errSlowDown
 		default:
 			if description := strings.TrimSpace(payload.ErrorDesc); description != "" {
-				return fmt.Errorf("device token error: %s: %s", payload.Error, description)
+				return fmt.Errorf("device token error: %s: %s", sanitizeTerminalText(payload.Error), sanitizeTerminalText(description))
 			}
-			return fmt.Errorf("device token error: %s", payload.Error)
+			return fmt.Errorf("device token error: %s", sanitizeTerminalText(payload.Error))
 		}
 	}
 	return nil
@@ -275,7 +298,7 @@ func readLimitedBody(body io.Reader, limit int64) ([]byte, bool, error) {
 }
 
 func formatLimitedBody(data []byte, truncated bool, limit int64) string {
-	text := strings.TrimSpace(string(data))
+	text := sanitizeTerminalText(strings.TrimSpace(string(data)))
 	if text == "" {
 		text = "<empty response body>"
 	}
@@ -284,3 +307,5 @@ func formatLimitedBody(data []byte, truncated bool, limit int64) string {
 	}
 	return text
 }
+
+func sanitizeTerminalText(value string) string { return terminal.SafeText(value) }
