@@ -9,9 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
-
 - Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Validate both device-login verification URLs before displaying or opening them.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
 
 - Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
 
@@ -69,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
 
 - Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 
