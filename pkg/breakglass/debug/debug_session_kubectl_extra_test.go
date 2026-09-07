@@ -44,7 +44,7 @@ func TestFindActiveSession(t *testing.T) {
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive,
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "user@example.com"},
+				{User: "user@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderIssuer: "https://test-idp.example"},
 			},
 		},
 	}
@@ -62,7 +62,7 @@ func TestFindActiveSession(t *testing.T) {
 			State:     breakglassv1alpha1.DebugSessionStateActive,
 			ExpiresAt: &metav1.Time{Time: time.Now().Add(-1 * time.Hour)},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "user@example.com"},
+				{User: "user@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderIssuer: "https://test-idp.example"},
 			},
 		},
 	}
@@ -73,7 +73,7 @@ func TestFindActiveSession(t *testing.T) {
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive,
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "user@example.com", LeftAt: &leftAt},
+				{User: "user@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderIssuer: "https://test-idp.example", LeftAt: &leftAt},
 			},
 		},
 	}
@@ -82,18 +82,18 @@ func TestFindActiveSession(t *testing.T) {
 	handler := NewKubectlDebugHandler(client, &mockClientProvider{})
 
 	// Test finding the session (specific cluster)
-	found, err := handler.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+	found, err := handler.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "active-session", found.Name)
 
 	// Test wrong cluster
-	found, err = handler.FindActiveSession(context.Background(), "user@example.com", "wrong-cluster")
+	found, err = handler.FindActiveSessionForIssuer(context.Background(), "user@example.com", "wrong-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 
 	// Test wildcard cluster
-	found, err = handler.FindActiveSession(context.Background(), "user@example.com", "")
+	found, err = handler.FindActiveSessionForIssuer(context.Background(), "user@example.com", "", "https://test-idp.example")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	// Theoretically matches active-session or expired-session? No, expired should be ignored.
@@ -101,7 +101,7 @@ func TestFindActiveSession(t *testing.T) {
 	assert.Equal(t, "active-session", found.Name)
 
 	// Test wrong user
-	found, err = handler.FindActiveSession(context.Background(), "other@example.com", "test-cluster")
+	found, err = handler.FindActiveSessionForIssuer(context.Background(), "other@example.com", "test-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 
@@ -111,13 +111,13 @@ func TestFindActiveSession(t *testing.T) {
 	// Create a client with ONLY expired session to valid
 	clientExpired := fake.NewClientBuilder().WithScheme(scheme).WithObjects(expiredSession).Build()
 	handlerExpired := NewKubectlDebugHandler(clientExpired, &mockClientProvider{})
-	found, err = handlerExpired.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+	found, err = handlerExpired.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 
 	clientLeft := fake.NewClientBuilder().WithScheme(scheme).WithObjects(leftParticipantSession).Build()
 	handlerLeft := NewKubectlDebugHandler(clientLeft, &mockClientProvider{})
-	found, err = handlerLeft.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+	found, err = handlerLeft.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 }

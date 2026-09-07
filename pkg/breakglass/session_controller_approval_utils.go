@@ -250,7 +250,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		}
 
 		// Check self-approval restriction
-		if effectiveBlockSelf && matchesAuthIdentifier(session.Spec.User, authIdentifiers) {
+		if effectiveBlockSelf && matchesAuthIdentifier(session.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.AllowIDPMismatch) {
 			reqLog.Debugw("Self-approval blocked by escalation/cluster setting", "escalation", esc.Name, "approver", email)
 			// Track this as the most specific denial (highest priority)
 			mostSpecificDenial = ApprovalCheckResult{
@@ -326,11 +326,23 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				}
 			}
 
-			for _, member := range dedupMembers {
-				if strings.EqualFold(member, email) {
-					reqLog.Debugw("User is session approver (resolved group member)",
-						"session", session.Name, "escalation", esc.Name, "member", email)
-					return ApprovalCheckResult{Allowed: true}
+			legacyHierarchy := len(esc.Status.IDPGroupMemberships) == 0 || (len(esc.Status.IDPGroupMemberships) == 1 && esc.Status.IDPGroupMemberships[""] != nil)
+			if c.GetBool("legacy_identity_allowed") && (approverIdentityProvider == "" || legacyHierarchy) {
+				for _, member := range dedupMembers {
+					if strings.EqualFold(member, email) {
+						reqLog.Debugw("User is session approver (resolved group member)",
+							"session", session.Name, "escalation", esc.Name, "member", email)
+						return ApprovalCheckResult{Allowed: true}
+					}
+				}
+			}
+			if approverIdentityProvider != "" && len(esc.Status.IDPGroupMemberships) > 0 {
+				for _, g := range approverGroupsToCheck {
+					for _, member := range esc.Status.IDPGroupMemberships[approverIdentityProvider][g] {
+						if strings.EqualFold(member, email) {
+							return ApprovalCheckResult{Allowed: true}
+						}
+					}
 				}
 			}
 		}
@@ -1183,4 +1195,46 @@ func userHasApprovedSession(session breakglassv1alpha1.BreakglassSession, email 
 		}
 	}
 	return false
+}
+
+func userHasApprovedSessionForProvider(session breakglassv1alpha1.BreakglassSession, email, provider string, legacyAllowed bool) bool {
+	for i, approver := range session.Status.Approvers {
+		storedProvider := ""
+		if i < len(session.Status.ApproverIdentityProviders) {
+			storedProvider = session.Status.ApproverIdentityProviders[i]
+		}
+		if strings.EqualFold(approver, email) && ((storedProvider != "" && storedProvider == provider) || (storedProvider == "" && legacyAllowed)) {
+			return true
+		}
+	}
+	return strings.EqualFold(session.Status.Approver, email) && ((session.Status.ApproverIdentityProvider != "" && session.Status.ApproverIdentityProvider == provider) || (session.Status.ApproverIdentityProvider == "" && legacyAllowed))
+}
+
+func sessionIdentityProviderMatches(c *gin.Context, provider, issuer string, _ bool) bool {
+	// AllowIDPMismatch governs spoke authorization compatibility, not ownership:
+	// accepting multiple providers never makes their principals interchangeable.
+	if provider == "" && issuer == "" {
+		return c.GetBool("legacy_identity_allowed")
+	}
+	if provider != "" && c.GetString("identity_provider_name") != provider {
+		return false
+	}
+	return issuer == "" || strings.TrimRight(c.GetString("issuer"), "/") == strings.TrimRight(issuer, "/")
+}
+
+func recordApprover(status *breakglassv1alpha1.BreakglassSessionStatus, identity, provider string) {
+	// Preserve unknown historical slots; never attribute them to a later signer.
+	if len(status.ApproverIdentityProviders) > len(status.Approvers) {
+		status.ApproverIdentityProviders = status.ApproverIdentityProviders[:len(status.Approvers)]
+	}
+	for len(status.ApproverIdentityProviders) < len(status.Approvers) {
+		status.ApproverIdentityProviders = append(status.ApproverIdentityProviders, "")
+	}
+	for i, existing := range status.Approvers {
+		if strings.EqualFold(existing, identity) && status.ApproverIdentityProviders[i] == provider {
+			return
+		}
+	}
+	status.Approvers = append(status.Approvers, identity)
+	status.ApproverIdentityProviders = append(status.ApproverIdentityProviders, provider)
 }

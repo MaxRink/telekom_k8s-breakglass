@@ -188,14 +188,14 @@ func TestCanReadDebugSession_RequesterParticipantInviteeAndApprover(t *testing.T
 		identity debugSessionReadIdentity
 		want     bool
 	}{
-		{name: "requester username", identity: debugSessionReadIdentity{username: "alice"}, want: true},
-		{name: "requester email", identity: debugSessionReadIdentity{username: "subject", email: "alice@example.com"}, want: true},
-		{name: "active participant email", identity: debugSessionReadIdentity{username: "subject", email: "bob@example.com"}, want: true},
-		{name: "invited participant", identity: debugSessionReadIdentity{username: "invitee@example.com"}, want: true},
-		{name: "historical approver", identity: debugSessionReadIdentity{username: "historical-approver@example.com"}, want: true},
-		{name: "historical rejector", identity: debugSessionReadIdentity{username: "historical-rejector@example.com"}, want: true},
-		{name: "configured approver group", identity: debugSessionReadIdentity{username: "approver@example.com", groups: []string{"debug-approvers"}}, want: true},
-		{name: "unrelated user", identity: debugSessionReadIdentity{username: "mallory@example.com"}, want: false},
+		{name: "requester username", identity: debugSessionReadIdentity{legacyAllowed: true, username: "alice"}, want: true},
+		{name: "requester email", identity: debugSessionReadIdentity{legacyAllowed: true, username: "subject", email: "alice@example.com"}, want: true},
+		{name: "active participant email", identity: debugSessionReadIdentity{legacyAllowed: true, username: "subject", email: "bob@example.com"}, want: true},
+		{name: "invited participant", identity: debugSessionReadIdentity{legacyAllowed: true, username: "invitee@example.com"}, want: true},
+		{name: "historical approver", identity: debugSessionReadIdentity{legacyAllowed: true, username: "historical-approver@example.com"}, want: true},
+		{name: "historical rejector", identity: debugSessionReadIdentity{legacyAllowed: true, username: "historical-rejector@example.com"}, want: true},
+		{name: "configured approver group", identity: debugSessionReadIdentity{legacyAllowed: true, username: "approver@example.com", groups: []string{"debug-approvers"}}, want: true},
+		{name: "unrelated user", identity: debugSessionReadIdentity{legacyAllowed: true, username: "mallory@example.com"}, want: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ctrl.canReadDebugSession(ctx, session, tt.identity)
@@ -232,7 +232,7 @@ func TestCanReadDebugSession_EmptyApproversDoNotGrantReadAccess(t *testing.T) {
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "anyuser@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "anyuser@example.com"})
 	require.NoError(t, err)
 	assert.False(t, result, "empty approvers must not make debug session reads world-readable")
 }
@@ -262,11 +262,11 @@ func TestCanReadDebugSession_BindingApproverCanRead(t *testing.T) {
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "binding-approver@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "binding-approver@example.com"})
 	require.NoError(t, err)
 	assert.True(t, result)
 
-	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "other@example.com"})
+	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "other@example.com"})
 	require.NoError(t, err)
 	assert.False(t, result)
 }
@@ -304,14 +304,14 @@ func TestCanReadDebugSession_BindingApproversAreAuthoritative(t *testing.T) {
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-subject",
 		email:    "binding-approver@example.com",
 	})
 	require.NoError(t, err)
 	assert.True(t, result)
 
-	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "template-approver@example.com",
 	})
 	require.NoError(t, err)
@@ -366,7 +366,7 @@ func TestCanReadDebugSession_BindingApproversEmptyVsNil(t *testing.T) {
 				},
 			}
 
-			result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+			result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 				username: "template-approver@example.com",
 			})
 			require.NoError(t, err)
@@ -406,14 +406,14 @@ func TestCanReadDebugSession_ResolvedTemplateApproversAreAuthoritative(t *testin
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-subject",
 		email:    "snapshot-approver@example.com",
 	})
 	require.NoError(t, err)
 	assert.True(t, result)
 
-	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "live-template-approver@example.com",
 	})
 	require.NoError(t, err)
@@ -474,7 +474,7 @@ func TestDebugSessionReadAuthorizerCachesTemplateApprovers(t *testing.T) {
 		gets:   map[string]int{},
 	}
 	ctrl := NewDebugSessionAPIController(logger, countingClient, nil, nil)
-	authorizer := ctrl.newDebugSessionReadAuthorizer(debugSessionReadIdentity{
+	authorizer := ctrl.newDebugSessionReadAuthorizer(debugSessionReadIdentity{legacyAllowed: true,
 		username: "approver@example.com",
 		groups:   []string{"debug-approvers"},
 	})
@@ -523,7 +523,7 @@ func TestCanReadDebugSession_ReturnsErrorWhenBindingApproverLookupFails(t *testi
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "approver@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "approver@example.com"})
 	require.Error(t, err)
 	assert.False(t, result)
 	assert.Contains(t, err.Error(), "fetch debug session binding")
@@ -547,7 +547,7 @@ func TestCanReadDebugSession_ReturnsErrorWhenTemplateApproverLookupFails(t *test
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "approver@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "approver@example.com"})
 	require.Error(t, err)
 	assert.False(t, result)
 	assert.Contains(t, err.Error(), "fetch debug session template")
@@ -575,7 +575,7 @@ func TestCanActOnDebugSessionApproval_DeniesMissingIdentity(t *testing.T) {
 		},
 	}
 
-	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{}, nil)
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true}, nil)
 
 	assert.False(t, result)
 }
@@ -604,7 +604,7 @@ func TestCanActOnDebugSessionApproval_UsesEmailAuthorization(t *testing.T) {
 		},
 	}
 
-	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-subject",
 		email:    "approver@example.com",
 	}, nil)
@@ -656,12 +656,12 @@ func TestCanActOnDebugSessionApproval_CachesBindingApprovers(t *testing.T) {
 		},
 	}
 
-	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{legacyAllowed: true,
 		username: "binding-approver@example.com",
 	}, authorizer)
 	require.True(t, result)
 
-	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{
+	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{legacyAllowed: true,
 		username: "binding-approver@example.com",
 	}, authorizer)
 	require.True(t, result)
@@ -702,12 +702,12 @@ func TestCanActOnDebugSessionApproval_CachesMissingTemplate(t *testing.T) {
 		},
 	}
 
-	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{legacyAllowed: true,
 		username: "approver@example.com",
 	}, authorizer)
 	require.False(t, result)
 
-	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{
+	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{legacyAllowed: true,
 		username: "approver@example.com",
 	}, authorizer)
 	require.False(t, result)
@@ -920,7 +920,7 @@ func TestIsIdentityAuthorizedToApprove_EmailListedApprover(t *testing.T) {
 		},
 	}
 
-	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-approver-subject",
 		email:    "approver@example.com",
 	})
@@ -950,7 +950,7 @@ func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmail(t *testing.T) {
 		},
 	}
 
-	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-requester-subject",
 		email:    "requester@example.com",
 	})
@@ -980,7 +980,7 @@ func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmailCaseInsensitive(
 		},
 	}
 
-	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-requester-subject",
 		email:    "Requester@Example.com",
 	})
@@ -1288,7 +1288,7 @@ func TestCanUserOperateDebugResources(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, ctrl.canUserOperateDebugResources(session, tt.user))
+			assert.Equal(t, tt.want, ctrl.canUserOperateDebugResources(session, debugSessionReadIdentity{legacyAllowed: true, username: tt.user}))
 		})
 	}
 }

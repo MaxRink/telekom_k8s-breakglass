@@ -906,7 +906,8 @@ func TestCreateSessionRejectsDuplicateClusterConfigName(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusForbidden, w.Result().StatusCode)
+	// Ambiguous cluster configuration fails closed during canonical identity resolution.
+	require.Equal(t, http.StatusInternalServerError, w.Result().StatusCode)
 
 	var sessions breakglassv1alpha1.BreakglassSessionList
 	require.NoError(t, cli.List(context.Background(), &sessions))
@@ -997,6 +998,7 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		// middleware to set identity as self@example.com
 		c.Set("email", "self@example.com")
 		c.Set("username", "Self")
@@ -1269,6 +1271,7 @@ func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_AllowsGroupM
 			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
 		},
 		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			IDPGroupMemberships: map[string]map[string][]string{"approver-idp": {"idp-approvers": {"approver@example.com"}}},
 			ApproverGroupMembers: map[string][]string{
 				"idp-approvers": {"approver@example.com"},
 			},
@@ -1797,6 +1800,7 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -1895,6 +1899,7 @@ func TestFilterBreakglassSessionsExplicitOwnershipFiltersDoNotIncludeImplicitApp
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -1976,6 +1981,7 @@ func TestFilterBreakglassSessionsMineUsesAlternateIdentifiersWhenEmailMissing(t 
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -3015,6 +3021,7 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 			logger, _ := zap.NewDevelopment()
 			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 				func(c *gin.Context) {
+					c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 					c.Set("email", tt.approverEmail)
 					c.Set("username", tt.approverEmail)
 					c.Next()
@@ -3227,6 +3234,7 @@ func TestApprovalAuthorizationUsesResolvedApproverGroupMembers(t *testing.T) {
 			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"target-approvers"}},
 		},
 		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			IDPGroupMemberships: map[string]map[string][]string{"approver-idp": {"target-approvers": {"approver@example.com"}}},
 			ApproverGroupMembers: map[string][]string{
 				"target-approvers": {"approver@example.com"},
 			},
@@ -3622,6 +3630,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	// middleware sets email depending on action: creation & drop -> requester, approve -> approver
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodPost {
 			if strings.Contains(c.Request.URL.String(), "/approve") {
 				c.Set("email", "approver@e.com")
@@ -3750,6 +3759,7 @@ func TestDropScheduledApprovedSessionExpiresAndPreservesApprovalHistory(t *testi
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("email", "user@e.com")
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -3820,6 +3830,7 @@ func TestDropTerminalSessionRejected(t *testing.T) {
 
 			logger, _ := zap.NewDevelopment()
 			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 				c.Set("email", "user@e.com")
 				c.Next()
 			}, "/config/config.yaml", nil, cli)
@@ -3891,6 +3902,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "owner-username")
 		c.Set("user_id", "owner-subject")
 		c.Next()
@@ -4085,6 +4097,7 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -4142,6 +4155,7 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -4199,6 +4213,7 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -4264,6 +4279,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 
 	// Middleware that sets email based on a header to simulate different requesters
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -4391,6 +4407,7 @@ func TestNoBodySessionActionsRejectUnexpectedBody(t *testing.T) {
 
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if h := c.GetHeader("X-Test-Email"); h != "" {
 			c.Set("email", h)
 			c.Set("username", strings.Split(h, "@")[0])
@@ -4479,6 +4496,7 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -4758,6 +4776,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	mockAudit := NewMockAuditEmitter(true)
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			if c.Request.Method == http.MethodPost {
 				url := c.Request.URL.String()
 				if url == "/breakglassSessions" {
@@ -4849,6 +4868,7 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -4905,6 +4925,7 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -4961,6 +4982,7 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -5048,6 +5070,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		// Set identity based on requested state so the controller sees the session owner
 		state := c.Query("state")
 		switch state {
@@ -5162,6 +5185,7 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -5280,6 +5304,7 @@ func TestBreakglassSessionStatusListPushesExactStateFiltersAndPreservesAuthoriza
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("email", viewer)
 			c.Set("username", "viewer")
 			c.Next()
@@ -5344,6 +5369,7 @@ func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -5529,6 +5555,7 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -5818,6 +5845,7 @@ func TestOwnerRejectRecordsSubjectActorWhenEmailAndUsernameMissing(t *testing.T)
 	logger, _ := zap.NewDevelopment()
 	mockAudit := NewMockAuditEmitter(true)
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("user_id", "owner-subject")
 		c.Next()
 	}, "/config/config.yaml", nil, cli).WithAuditService(mockAudit)
@@ -5932,6 +5960,7 @@ func runBlockSelfApprovalPreventsSelfApproval(t *testing.T, sessionUser string) 
 
 	// middleware sets identity to the session owner (self) who would otherwise be an approver
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -6067,6 +6096,7 @@ func TestClusterConfig_BlockSelfApproval_CrossNamespacePreventsSelfApproval(t *t
 	logger, _ := zap.NewDevelopment()
 
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -6332,6 +6362,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 
 	// middleware that uses X-Test-Email header to set identity for each request
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
@@ -10934,6 +10965,7 @@ func TestTokenValidation_TerminalStatesAreInvalid(t *testing.T) {
 			escmanager := testEscalationLookup{Client: cli}
 			logger, _ := zap.NewDevelopment()
 			ctxSetup := func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 				c.Set("email", "alice@example.com")
 				c.Set("username", "alice")
 				c.Set("user_id", "alice@example.com")
@@ -11139,6 +11171,7 @@ func TestTokenValidation_ExistingSessionAllowsAuthorizedReaders(t *testing.T) {
 			logger, _ := zap.NewDevelopment()
 			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 				func(c *gin.Context) {
+					c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 					c.Set("email", tt.email)
 					c.Set("username", tt.email)
 					c.Set("user_id", tt.email)
@@ -11202,6 +11235,7 @@ func TestTokenValidation_ExistingSessionAllowsHistoricalApprover(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("email", "historical-approver@example.com")
 			c.Set("username", "historical-approver@example.com")
 			c.Set("user_id", "historical-approver@example.com")
@@ -11267,6 +11301,7 @@ func TestTokenValidation_StateAndExpiryValidity(t *testing.T) {
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("email", "requester@example.com")
 		c.Set("username", "requester")
 		c.Set("user_id", "requester@example.com")

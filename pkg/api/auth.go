@@ -714,6 +714,14 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		c.Set("identity_provider_name", selectedIDP)
 	}
 
+	// This trusted middleware signal is independent of whether a JWT happens
+	// to carry an issuer. Unknown/multi-provider configuration fails closed.
+	legacyIdentityAllowed := a.idpLoader == nil
+	if loader, ok := a.idpLoader.(*config.IdentityProviderLoader); ok {
+		legacyIdentityAllowed = loader.AllowsLegacyIdentity(c.Request.Context(), selectedIDP, issuer)
+	}
+	c.Set("legacy_identity_allowed", legacyIdentityAllowed)
+
 	// Attach raw claims for downstream debugging if needed
 	// Note: this is only used for debug logs and should not be exposed to end users.
 	c.Set("raw_claims", claims)

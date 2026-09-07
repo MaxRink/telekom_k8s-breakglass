@@ -96,7 +96,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
 		if actor, authIdentifiers, err := wc.authenticatedUserIdentifiers(c); err == nil {
 			authenticatedActor = actor
-			if matchesAuthIdentifier(bs.Spec.User, authIdentifiers) && IsSessionPendingApproval(bs) {
+			if matchesAuthIdentifier(bs.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) && IsSessionPendingApproval(bs) {
 				allowOwnerReject = true
 			}
 		}
@@ -243,8 +243,9 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		approver := firstNonEmpty(approverEmail, authenticatedActor)
 		if approver != "" {
 			bs.Status.Approver = approver
+			bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
 			// append to approvers history if not already present
-			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approver)
+			recordApprover(&bs.Status, approver, c.GetString("identity_provider_name"))
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -265,7 +266,8 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		rejector := authenticatedActor
 		if rejector != "" {
 			bs.Status.Approver = rejector
-			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, rejector)
+			bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
+			recordApprover(&bs.Status, rejector, c.GetString("identity_provider_name"))
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -829,14 +831,14 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 
 	filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	for _, ses := range sessions {
-		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers)
+		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, ses.Spec.IdentityProviderName, ses.Spec.IdentityProviderIssuer, ses.Spec.AllowIDPMismatch)
 		var isApprover bool
 		if includeApprover {
 			isApprover = wc.isSessionApprover(c, ses)
 		}
 		hasApproved := false
 		if includeApprovedByMe {
-			hasApproved = userHasApprovedSession(ses, userEmail)
+			hasApproved = userHasApprovedSessionForProvider(ses, userEmail, c.GetString("identity_provider_name"), c.GetBool("legacy_identity_allowed"))
 		}
 
 		include := false
@@ -950,7 +952,7 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 
 	// Check if user is the requester. Sessions can store the requester by email,
 	// preferred_username, or sub depending on the spoke cluster identity claim.
-	meta.IsRequester = matchesAuthIdentifier(session.Spec.User, authIdentifiers)
+	meta.IsRequester = matchesAuthIdentifier(session.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.AllowIDPMismatch)
 
 	// Check session state first
 	switch session.Status.State {
@@ -1027,7 +1029,7 @@ func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, 
 		}
 		return false, errAuthenticatedIdentityNotFound
 	}
-	if matchesAuthIdentifier(session.Spec.User, authIdentifiers) {
+	if matchesAuthIdentifier(session.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.AllowIDPMismatch) {
 		return true, nil
 	}
 
@@ -1035,7 +1037,7 @@ func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, 
 		return true, nil
 	}
 
-	if email != "" && userHasApprovedSession(session, email) {
+	if email != "" && userHasApprovedSessionForProvider(session, email, c.GetString("identity_provider_name"), c.GetBool("legacy_identity_allowed")) {
 		return true, nil
 	}
 

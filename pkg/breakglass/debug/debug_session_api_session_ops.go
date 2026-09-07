@@ -31,6 +31,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	if !ok {
 		return
 	}
+	identity, _ := debugSessionRequestIdentity(ctx)
 	if rejectUnexpectedDebugActionBody(ctx) {
 		return
 	}
@@ -68,7 +69,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	}
 
 	for _, p := range session.Status.Participants {
-		if p.User == username {
+		if debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) {
 			apiresponses.RespondConflict(ctx, "user already joined this session")
 			return
 		}
@@ -79,7 +80,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	if !isInvitedDebugSessionParticipant(session, username, userEmail) {
+	if !debugSessionProviderMatches(identity, session) || !isInvitedDebugSessionParticipant(session, username, userEmail) {
 		apiresponses.RespondForbidden(ctx, "user is not invited to join this debug session")
 		return
 	}
@@ -108,11 +109,13 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	// Add participant
 	now := metav1.Now()
 	participant := breakglassv1alpha1.DebugSessionParticipant{
-		User:        username,
-		Email:       userEmail,
-		DisplayName: displayName,
-		Role:        role,
-		JoinedAt:    now,
+		User:                   username,
+		Email:                  userEmail,
+		IdentityProviderName:   ctx.GetString("identity_provider_name"),
+		IdentityProviderIssuer: ctx.GetString("issuer"),
+		DisplayName:            displayName,
+		Role:                   role,
+		JoinedAt:               now,
 	}
 
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
@@ -264,11 +267,11 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 }
 
 func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
-	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+	if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		return true
 	}
 	for _, participant := range session.Status.Participants {
-		if participant.LeftAt != nil || !debugSessionIdentityMatches(identity, participant.User, participant.Email) {
+		if participant.LeftAt != nil || !debugSessionIdentityMatchesProvider(identity, participant.IdentityProviderName, participant.IdentityProviderIssuer, participant.User, participant.Email) {
 			continue
 		}
 		if participant.Role == breakglassv1alpha1.ParticipantRoleOwner ||
@@ -326,6 +329,8 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		return
 	}
 
+	identity, _ := debugSessionRequestIdentity(ctx)
+
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 
@@ -342,7 +347,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 
 	// Check if user is allowed to terminate (owner or admin)
 	// For now, only the owner can terminate
-	if session.Spec.RequestedBy != username {
+	if !debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
 		return
 	}
@@ -467,6 +472,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		approval = &existingApproval
 	}
 	approval.ApprovedBy = currentUser
+	approval.ApprovedByIdentityProvider = ctx.GetString("identity_provider_name")
 	approval.ApprovedAt = &now
 	approval.Reason = req.Reason
 
@@ -575,6 +581,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		approval = &existingApproval
 	}
 	approval.RejectedBy = currentUser
+	approval.RejectedByIdentityProvider = ctx.GetString("identity_provider_name")
 	approval.RejectedAt = &now
 	approval.Reason = sanitizedReason
 
@@ -700,11 +707,12 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	identity, _ := debugSessionRequestIdentity(ctx)
 	// Find the participant
 	participantIndex := -1
 	participants := append([]breakglassv1alpha1.DebugSessionParticipant(nil), session.Status.Participants...)
 	for i := range participants {
-		if participants[i].User == username {
+		if debugSessionIdentityMatchesProvider(identity, participants[i].IdentityProviderName, participants[i].IdentityProviderIssuer, participants[i].User, participants[i].Email) {
 			participantIndex = i
 			break
 		}

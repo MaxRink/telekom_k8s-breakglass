@@ -431,7 +431,8 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Verify user can perform mutating debug operations
-	if !c.canUserOperateDebugResources(session, username) {
+	identity, _ := debugSessionRequestIdentity(ctx)
+	if !c.canUserOperateDebugResources(session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -535,7 +536,8 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Verify user can perform mutating debug operations
-	if !c.canUserOperateDebugResources(session, username) {
+	identity, _ := debugSessionRequestIdentity(ctx)
+	if !c.canUserOperateDebugResources(session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -628,7 +630,8 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Verify user can perform mutating debug operations
-	if !c.canUserOperateDebugResources(session, username) {
+	identity, _ := debugSessionRequestIdentity(ctx)
+	if !c.canUserOperateDebugResources(session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -734,13 +737,13 @@ func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha
 }
 
 // canUserOperateDebugResources checks if the user can run mutating kubectl-debug operations.
-func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, user string) bool {
-	if session.Spec.RequestedBy == user {
+func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		return true
 	}
 
 	for _, p := range session.Status.Participants {
-		if p.User != user || p.LeftAt != nil {
+		if !debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) || p.LeftAt != nil {
 			continue
 		}
 
@@ -818,7 +821,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		}
 
 		totalActive++
-		if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+		if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 			userActive++
 		}
 	}

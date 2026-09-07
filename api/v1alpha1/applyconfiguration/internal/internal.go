@@ -687,6 +687,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approver
       type:
         scalar: string
+    - name: approverIdentityProvider
+      type:
+        scalar: string
+    - name: approverIdentityProviders
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: approvers
       type:
         list:
@@ -1234,6 +1243,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approvedBy
       type:
         scalar: string
+    - name: approvedByIdentityProvider
+      type:
+        scalar: string
     - name: reason
       type:
         scalar: string
@@ -1241,6 +1253,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: rejectedBy
+      type:
+        scalar: string
+    - name: rejectedByIdentityProvider
       type:
         scalar: string
     - name: required
@@ -1531,6 +1546,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: email
       type:
         scalar: string
+    - name: identityProviderIssuer
+      type:
+        scalar: string
+    - name: identityProviderName
+      type:
+        scalar: string
     - name: joinedAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
@@ -1560,6 +1581,12 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: identityProviderIssuer
+      type:
+        scalar: string
+    - name: identityProviderName
+      type:
+        scalar: string
     - name: invitedParticipants
       type:
         list:

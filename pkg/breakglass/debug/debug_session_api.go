@@ -351,9 +351,12 @@ type DebugSessionDetailResponse struct {
 }
 
 type debugSessionReadIdentity struct {
-	username string
-	email    string
-	groups   []string
+	username      string
+	email         string
+	groups        []string
+	provider      string
+	issuer        string
+	legacyAllowed bool
 }
 
 func debugSessionRequestIdentity(ctx *gin.Context) (debugSessionReadIdentity, bool) {
@@ -362,7 +365,7 @@ func debugSessionRequestIdentity(ctx *gin.Context) (debugSessionReadIdentity, bo
 		return debugSessionReadIdentity{}, false
 	}
 
-	identity := debugSessionReadIdentity{username: username}
+	identity := debugSessionReadIdentity{username: username, provider: ctx.GetString("identity_provider_name"), issuer: ctx.GetString("issuer"), legacyAllowed: ctx.GetBool("legacy_identity_allowed")}
 	if emailValue, exists := ctx.Get("email"); exists && emailValue != nil {
 		if email, ok := emailValue.(string); ok {
 			identity.email = email
@@ -634,7 +637,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			continue
 		}
 		// Mine filter
-		if mine && !debugSessionIdentityMatches(identity, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
+		if mine && !debugSessionIdentityMatchesProvider(identity, s.Spec.IdentityProviderName, s.Spec.IdentityProviderIssuer, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
 			continue
 		}
 		filtered = append(filtered, *s)
@@ -651,7 +654,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 		for _, p := range s.Status.Participants {
 			if p.LeftAt == nil {
 				activeParticipants++
-				if !isParticipant && debugSessionIdentityMatches(identity, p.User, p.Email) {
+				if !isParticipant && debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) {
 					isParticipant = true
 				}
 			}
@@ -1220,6 +1223,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			Cluster:                       req.Cluster,
 			RequestedBy:                   currentUserStr,
 			RequestedByEmail:              userEmail,
+			IdentityProviderName:          ctx.GetString("identity_provider_name"),
+			IdentityProviderIssuer:        ctx.GetString("issuer"),
 			RequestedByDisplayName:        displayName,
 			UserGroups:                    userGroups,
 			RequestedDuration:             req.RequestedDuration,
@@ -1479,24 +1484,43 @@ func (c *DebugSessionAPIController) canReadDebugSession(ctx context.Context, ses
 
 func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
 	identity := a.identity
-	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+	if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		return true, nil
 	}
 	for _, participant := range session.Status.Participants {
-		if participant.LeftAt == nil && debugSessionIdentityMatches(identity, participant.User, participant.Email) {
+		if participant.LeftAt == nil && debugSessionIdentityMatchesProvider(identity, participant.IdentityProviderName, participant.IdentityProviderIssuer, participant.User, participant.Email) {
 			return true, nil
 		}
 	}
 	for _, invitee := range session.Spec.InvitedParticipants {
-		if debugSessionIdentityMatches(identity, invitee) {
+		if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, invitee) {
 			return true, nil
 		}
 	}
 	if session.Status.Approval != nil &&
-		debugSessionIdentityMatches(identity, session.Status.Approval.ApprovedBy, session.Status.Approval.RejectedBy) {
+		(debugSessionIdentityMatchesProvider(identity, session.Status.Approval.ApprovedByIdentityProvider, "", session.Status.Approval.ApprovedBy) ||
+			debugSessionIdentityMatchesProvider(identity, session.Status.Approval.RejectedByIdentityProvider, "", session.Status.Approval.RejectedBy)) {
 		return true, nil
 	}
 	return a.isExplicitDebugSessionApprover(ctx, session)
+}
+
+func debugSessionProviderMatches(identity debugSessionReadIdentity, session *breakglassv1alpha1.DebugSession) bool {
+	if session.Spec.IdentityProviderName == "" && session.Spec.IdentityProviderIssuer == "" {
+		return identity.legacyAllowed
+	}
+	return (session.Spec.IdentityProviderName == "" || session.Spec.IdentityProviderName == identity.provider) &&
+		(session.Spec.IdentityProviderIssuer == "" || strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(identity.issuer, "/"))
+}
+
+func debugSessionIdentityMatchesProvider(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {
+	if provider == "" && issuer == "" && !identity.legacyAllowed {
+		return false
+	}
+	if provider != "" && identity.provider != provider || issuer != "" && strings.TrimRight(identity.issuer, "/") != strings.TrimRight(issuer, "/") {
+		return false
+	}
+	return debugSessionIdentityMatches(identity, values...)
 }
 
 func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {

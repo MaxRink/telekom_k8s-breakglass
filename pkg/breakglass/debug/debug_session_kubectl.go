@@ -32,6 +32,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
@@ -201,7 +202,12 @@ func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus,
 }
 
 // FindActiveSession finds an active debug session for the user/cluster
+// Deprecated: authorization requires issuer provenance; use FindActiveSessionForIssuer.
 func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error) {
+	return h.FindActiveSessionForIssuer(ctx, user, cluster, "")
+}
+
+func (h *KubectlDebugHandler) FindActiveSessionForIssuer(ctx context.Context, user, cluster, issuer string) (*breakglassv1alpha1.DebugSession, error) {
 	var list breakglassv1alpha1.DebugSessionList
 	listOpts := make([]ctrlclient.ListOption, 0, 3)
 	if cluster != "" && indexer.IsIndexRegistered("DebugSession", "spec.cluster") {
@@ -234,6 +240,16 @@ func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, clust
 		// Check if user is a participant
 		for _, p := range ds.Status.Participants {
 			if p.User == user && p.LeftAt == nil {
+				if p.Role != breakglassv1alpha1.ParticipantRoleOwner && p.Role != breakglassv1alpha1.ParticipantRoleParticipant {
+					continue
+				}
+				if p.IdentityProviderIssuer != "" {
+					if issuer == "" || strings.TrimRight(issuer, "/") != strings.TrimRight(p.IdentityProviderIssuer, "/") {
+						continue
+					}
+				} else if !config.IsOnlyEnabledIdentityProvider(ctx, h.client, p.IdentityProviderName, issuer) {
+					continue
+				}
 				return &ds, nil
 			}
 		}

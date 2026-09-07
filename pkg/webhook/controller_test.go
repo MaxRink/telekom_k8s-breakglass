@@ -1582,6 +1582,9 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			objs := make([]client.Object, 0, len(tt.debugSessions))
 			for i := range tt.debugSessions {
+				for j := range tt.debugSessions[i].Status.Participants {
+					tt.debugSessions[i].Status.Participants[j].IdentityProviderIssuer = "https://test-idp.example"
+				}
 				objs = append(objs, &tt.debugSessions[i])
 			}
 
@@ -1602,7 +1605,7 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				escalManager: escalMgr,
 			}
 
-			allowed, session, reason := wc.checkDebugSessionAccess(context.Background(), tt.username, tt.clusterName, tt.ra, logger.Sugar())
+			allowed, session, reason := wc.checkDebugSessionAccessForIssuer(context.Background(), tt.username, tt.clusterName, "https://test-idp.example", tt.ra, logger.Sugar())
 
 			if allowed != tt.expectAllowed {
 				t.Errorf("expected allowed=%v, got %v", tt.expectAllowed, allowed)

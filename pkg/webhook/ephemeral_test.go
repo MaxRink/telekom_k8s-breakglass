@@ -242,7 +242,7 @@ type mockDebugHandler struct {
 	validateErr error
 }
 
-func (m *mockDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error) {
+func (m *mockDebugHandler) FindActiveSessionForIssuer(ctx context.Context, user, cluster, issuer string) (*breakglassv1alpha1.DebugSession, error) {
 	return m.session, m.findErr
 }
 

@@ -595,3 +595,35 @@ func DefaultIdentityProviderLoader(ctx context.Context, kubeClient client.Client
 
 	return idpLoader, nil
 }
+
+// IsOnlyEnabledIdentityProvider permits legacy, unbound identities only when
+// exactly one configured provider exists and matches the authenticated issuer.
+// Count raw CRs, including invalid configurations: conversion failure must not
+// make an ambiguous deployment look like a single-provider deployment.
+func IsOnlyEnabledIdentityProvider(ctx context.Context, reader client.Reader, name, issuer string) bool {
+	if reader == nil || issuer == "" {
+		return false
+	}
+	list := &breakglassv1alpha1.IdentityProviderList{}
+	if err := reader.List(ctx, list); err != nil {
+		return false
+	}
+	count := 0
+	matches := false
+	for _, idp := range list.Items {
+		if idp.Spec.Disabled {
+			continue
+		}
+		count++
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		matches = (name == "" || idp.Name == name) && strings.TrimRight(effectiveIssuer, "/") == strings.TrimRight(issuer, "/")
+	}
+	return count == 1 && matches
+}
+
+func (l *IdentityProviderLoader) AllowsLegacyIdentity(ctx context.Context, name, issuer string) bool {
+	return IsOnlyEnabledIdentityProvider(ctx, l.kubeClient, name, issuer)
+}
