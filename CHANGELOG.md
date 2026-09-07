@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bound per-group notification attribution rendering while preserving the full
   membership snapshot used for privacy exclusions and hidden approver filtering.
 
-- Restrict session notification group recipients to the configured approver identity providers; unresolved membership never falls back to another provider, including hidden and excluded groups.
+- Restrict session notification group recipients to the configured approver
+  identity providers; unresolved membership never falls back to another provider,
+  including hidden and excluded groups.
 
-- Scope session request emails to the matched escalation, suppress notifications when hidden or excluded group membership is unresolved, and remove hidden group names from email content.
+- Scope session request emails to the matched escalation, suppress notifications
+  when hidden or excluded group membership is unresolved, and remove hidden group
+  names from email content.
 
 - Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
 

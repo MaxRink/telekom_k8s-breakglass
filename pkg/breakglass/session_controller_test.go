@@ -6610,10 +6610,11 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 	ctrl := &BreakglassSessionController{}
 
 	tests := []struct {
-		name      string
-		approvers []string
-		hidden    []string
-		expected  int
+		name       string
+		approvers  []string
+		hidden     []string
+		expected   int
+		suppressed bool
 	}{
 		{
 			name:      "No hidden groups",
@@ -6640,10 +6641,11 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 			expected:  0,
 		},
 		{
-			name:      "Empty approvers",
-			approvers: []string{},
-			hidden:    []string{"alice@example.com"},
-			expected:  0,
+			name:       "Empty approvers",
+			suppressed: true, // The hidden identifier is not a configured user, so unresolved group membership suppresses.
+			approvers:  []string{},
+			hidden:     []string{"alice@example.com"},
+			expected:   0,
 		},
 	}
 
@@ -6658,7 +6660,7 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 				},
 			}
 			result, suppressed := ctrl.filterHiddenFromUIRecipients(log, tt.approvers, nil, escalation)
-			assert.False(t, suppressed, "direct-user hiding should not suppress")
+			assert.Equal(t, tt.suppressed, suppressed)
 			if len(result) != tt.expected {
 				t.Fatalf("expected %d recipients, got %d; result: %v", tt.expected, len(result), result)
 			}
@@ -6666,7 +6668,8 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 	}
 
 	// Test with nil escalation
-	result, _ := ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, nil)
+	result, suppressed := ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, nil)
+	assert.False(t, suppressed)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with nil escalation, got %d", len(result))
 	}
@@ -6679,7 +6682,8 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 			},
 		},
 	}
-	result, _ = ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, escalation)
+	result, suppressed = ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, escalation)
+	assert.False(t, suppressed)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with empty hidden list, got %d", len(result))
 	}

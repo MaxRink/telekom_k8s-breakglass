@@ -475,6 +475,9 @@ func TestResolveAndAddGroupMembersPreservesResolutionForExclusions(t *testing.T)
 				ctrl.escalationManager = &testEscalationLookup{resolver: &MockGroupResolver{members: tc.members}}
 			}
 			result := &escalationResolutionResult{approversByGroup: map[string][]string{}, allApprovers: make([]string, MaxTotalApprovers-1)}
+			for i := range result.allApprovers {
+				result.allApprovers[i] = fmt.Sprintf("existing-%d@example.com", i)
+			}
 			esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}},
 			}}
