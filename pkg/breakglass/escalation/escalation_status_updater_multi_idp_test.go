@@ -41,12 +41,14 @@ import (
 type keycloakFixtureMode string
 
 const (
-	keycloakFixtureSuccess   keycloakFixtureMode = "success"
-	keycloakFixtureEmpty     keycloakFixtureMode = "empty"
-	keycloakFixtureMissing   keycloakFixtureMode = "missing"
-	keycloakFixtureMalformed keycloakFixtureMode = "malformed"
-	keycloakFixtureDetail404 keycloakFixtureMode = "detail-404"
-	keycloakFixtureTransient keycloakFixtureMode = "transient"
+	keycloakFixtureSuccess          keycloakFixtureMode = "success"
+	keycloakFixtureEmpty            keycloakFixtureMode = "empty"
+	keycloakFixtureMissing          keycloakFixtureMode = "missing"
+	keycloakFixtureMalformed        keycloakFixtureMode = "malformed"
+	keycloakFixtureDetail404        keycloakFixtureMode = "detail-404"
+	keycloakFixtureTransient        keycloakFixtureMode = "transient"
+	keycloakFixturePrivateEmpty     keycloakFixtureMode = "private-empty"
+	keycloakFixturePrivateTransient keycloakFixtureMode = "private-transient"
 )
 
 func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string) {
@@ -72,7 +74,7 @@ func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string)
 				writeJSON(`[{"name":"approvers"}]`)
 				return
 			}
-			writeJSON(`[{"id":"approver-group-id","name":"approvers"}]`)
+			writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"private-group-id","name":"private"}]`)
 		case "/admin/realms/test-realm/groups/approver-group-id/members":
 			if mode == keycloakFixtureTransient {
 				http.Error(w, "temporary failure", http.StatusInternalServerError)
@@ -83,12 +85,24 @@ func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string)
 				return
 			}
 			writeJSON(`[{"email":"approver@example.com"}]`)
+		case "/admin/realms/test-realm/groups/private-group-id/members":
+			if mode == keycloakFixturePrivateTransient {
+				http.Error(w, "temporary failure", http.StatusInternalServerError)
+				return
+			}
+			if mode == keycloakFixturePrivateEmpty {
+				writeJSON(`[]`)
+				return
+			}
+			writeJSON(`[{"email":"private@example.com"}]`)
 		case "/admin/realms/test-realm/groups/approver-group-id":
 			if mode == keycloakFixtureDetail404 {
 				http.Error(w, "group deleted", http.StatusNotFound)
 				return
 			}
 			writeJSON(`{"id":"approver-group-id","name":"approvers","subGroups":[]}`)
+		case "/admin/realms/test-realm/groups/private-group-id":
+			writeJSON(`{"id":"private-group-id","name":"private","subGroups":[]}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -100,6 +114,58 @@ func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string)
 		Bytes: server.Certificate().Raw,
 	})
 	return server.URL, string(certificateAuthority)
+}
+
+func TestEscalationStatusUpdaterSyncsPrivacyOnlyGroupsWithoutApproverStatus(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		mode          keycloakFixtureMode
+		wantPrivate   []string
+		wantPrivateOK bool
+		hiddenOnly    bool
+	}{
+		{name: "healthy group", mode: keycloakFixtureSuccess, wantPrivate: []string{"private@example.com"}, wantPrivateOK: true},
+		{name: "known empty group", mode: keycloakFixturePrivateEmpty, wantPrivate: []string{}, wantPrivateOK: true},
+		{name: "provider failure stays unknown", mode: keycloakFixturePrivateTransient},
+		{name: "hidden-only group", mode: keycloakFixtureSuccess, wantPrivate: []string{"private@example.com"}, wantPrivateOK: true, hiddenOnly: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			serverURL, certificateAuthority := newKeycloakFixture(t, tt.mode)
+			cli, escalation := newMultiIDPStatusTestClient(t, serverURL, certificateAuthority, breakglassv1alpha1.BreakglassEscalationStatus{})
+			stored := &breakglassv1alpha1.BreakglassEscalation{}
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), stored))
+			if tt.hiddenOnly {
+				stored.Spec.Approvers.HiddenFromUI = []string{"private"}
+			} else {
+				stored.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{Groups: []string{"private"}}
+			}
+			require.NoError(t, cli.Update(context.Background(), stored))
+			assert.Equal(t, []string{"private"}, notificationPrivacyGroups(stored))
+
+			recorder := fakeEventRecorder{Events: make(chan string, 20)}
+			updater := EscalationStatusUpdater{
+				Log:           zap.NewNop().Sugar(),
+				K8sClient:     cli,
+				IDPLoader:     cfgpkg.NewIdentityProviderLoader(cli),
+				EventRecorder: recorder,
+			}
+			updater.runOnce(context.Background(), zap.NewNop().Sugar())
+
+			updated := &breakglassv1alpha1.BreakglassEscalation{}
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
+			assert.Equal(t, []string{"approver@example.com"}, updated.Status.ApproverGroupMembers["approvers"])
+			private, known := updated.Status.IDPGroupMemberships["idp-a"]["private"]
+			assert.Equal(t, tt.wantPrivateOK, known)
+			if len(tt.wantPrivate) == 0 {
+				assert.Empty(t, private)
+			} else {
+				assert.Equal(t, tt.wantPrivate, private)
+			}
+			condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+			require.NotNil(t, condition)
+			assert.Equal(t, metav1.ConditionTrue, condition.Status, "privacy-only resolution must not alter approver readiness")
+		})
+	}
 }
 
 func newMultiIDPStatusTestClient(

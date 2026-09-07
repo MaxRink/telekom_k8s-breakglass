@@ -3057,12 +3057,12 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "valid template with variable",
-			template: "Hello {{ .Name }}",
+			template: "name: {{ .Name | yamlQuote }}",
 			wantErr:  false,
 		},
 		{
 			name:     "valid template with sprig function",
-			template: "{{ .Name | default \"unknown\" }}",
+			template: "{{ .Name | default \"unknown\" | yamlQuote }}",
 			wantErr:  false,
 		},
 		{
@@ -3077,7 +3077,7 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "valid range",
-			template: "{{- range .Items }}{{ . }}{{- end }}",
+			template: "{{ range .Items }}\n- {{ . | yamlQuote }}\n{{ end }}",
 			wantErr:  false,
 		},
 		{
@@ -3102,7 +3102,7 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "complex valid template",
-			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .session.name }}\n  labels:\n    {{- range $k, $v := .labels }}\n    {{ $k }}: {{ $v | yamlQuote }}\n    {{- end }}",
+			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .session.name }}\n  labels:\n    {{- range $k, $v := .labels }}\n    {{ $k | yamlQuote }}: {{ $v | yamlQuote }}\n    {{- end }}",
 			wantErr:  false,
 		},
 	}
@@ -3791,4 +3791,36 @@ func TestParseDurationCombinedRepresentableBoundaries(t *testing.T) {
 	}
 	_, err := ParseDuration("1d" + (maximum - 24*time.Hour + 1).String())
 	assert.Error(t, err)
+}
+
+func TestValidateIdentityProviderFields_ExplicitIssuerIsAuthoritative(t *testing.T) {
+	scheme := runtime.NewScheme()
+	assert.NoError(t, AddToScheme(scheme))
+	idp := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "provider"}, Spec: IdentityProviderSpec{
+		Issuer: "https://issuer.example.com",
+		OIDC:   OIDCConfig{Authority: "https://authority.example.com"},
+	}}
+	oldClient, oldCache := webhookClient, webhookCache
+	t.Cleanup(func() { webhookClient, webhookCache = oldClient, oldCache })
+	webhookCache = nil
+	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
+	for _, tc := range []struct {
+		issuer string
+		valid  bool
+	}{
+		{idp.Spec.OIDC.Authority, false},
+		{idp.Spec.Issuer, true},
+		{idp.Spec.Issuer + "/", true},
+	} {
+		t.Run(tc.issuer, func(t *testing.T) {
+			errs := validateIdentityProviderFields(context.Background(), idp.Name, tc.issuer, field.NewPath("name"), field.NewPath("issuer"))
+			if tc.valid {
+				assert.Empty(t, errs)
+			} else if assert.Len(t, errs, 1) {
+				assert.Equal(t, field.ErrorTypeInvalid, errs[0].Type)
+				assert.Equal(t, "issuer", errs[0].Field)
+				assert.Contains(t, errs[0].Detail, idp.Spec.Issuer)
+			}
+		})
+	}
 }

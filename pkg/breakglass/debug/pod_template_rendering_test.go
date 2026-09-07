@@ -236,9 +236,9 @@ containers:
 			name: "pod spec with variables",
 			templateStr: `
 containers:
-  - name: {{ .vars.containerName | default "debug" }}
-    image: {{ .vars.image }}
-    command: ["sleep", "{{ .vars.sleepTime }}"]
+  - name: {{ .vars.containerName | default "debug" | k8sName }}
+    image: {{ .vars.image | yamlQuote }}
+    command: ["sleep", {{ .vars.sleepTime | yamlQuote }}]
 `,
 			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
@@ -261,7 +261,7 @@ containers:
 			name: "pod spec with session metadata",
 			templateStr: `
 containers:
-  - name: debug-{{ .session.name | trunc 10 }}
+  - name: debug-{{ .session.name | trunc 10 | k8sName }}
     image: debug:latest
     env:
       - name: SESSION_NAME
@@ -301,7 +301,7 @@ containers:
 volumes:
   - name: data
     persistentVolumeClaim:
-      claimName: {{ .vars.pvcName }}
+      claimName: {{ .vars.pvcName | yamlQuote }}
 {{- end }}
 `,
 			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
@@ -391,7 +391,7 @@ hostPID: false
 {{- if eq .vars.enableHostNetwork "true" }}
 hostNetwork: true
 {{- end }}
-hostPID: {{ .vars.enableHostPID }}
+hostPID: {{ eq .vars.enableHostPID "true" }}
 `,
 			ctx: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
@@ -534,7 +534,7 @@ containers:
 volumes:
   - name: test-volume
     persistentVolumeClaim:
-      claimName: pvc-{{ .session.name | trunc 8 }}
+      claimName: pvc-{{ .session.name | trunc 8 | k8sName }}
 `,
 			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
 				{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
@@ -661,8 +661,8 @@ func TestBuildPodSpec_WithDebugPodTemplateTemplateString(t *testing.T) {
 			// Template is nil - using templateString instead
 			TemplateString: `
 containers:
-  - name: debug-{{ .session.name | trunc 15 }}
-    image: {{ .vars.image | default "busybox:latest" }}
+  - name: debug-{{ .session.name | trunc 15 | k8sName }}
+    image: {{ .vars.image | default "busybox:latest" | yamlQuote }}
     command: ["sleep", "infinity"]
     env:
       - name: SESSION_NAMESPACE
@@ -673,7 +673,7 @@ containers:
         value: {{ .session.requestedBy | quote }}
     resources:
       limits:
-        cpu: {{ .vars.cpuLimit | default "100m" }}
+        cpu: {{ .vars.cpuLimit | default "100m" | yamlQuote }}
         memory: 128Mi
       requests:
         cpu: 50m
@@ -880,7 +880,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .vars.pvcSize | default "10Gi" }}
+      storage: {{ .vars.pvcSize | default "10Gi" | yamlQuote }}
 `
 
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -1048,8 +1048,8 @@ func TestRenderPodTemplateStringMultiDoc_TemplateVariables(t *testing.T) {
 	}
 
 	templateStr := `containers:
-  - name: debug-{{ .session.name | trunc 10 }}
-    image: {{ .vars.image }}
+  - name: debug-{{ .session.name | trunc 10 | k8sName }}
+    image: {{ .vars.image | yamlQuote }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -1058,7 +1058,7 @@ metadata:
   namespace: {{ .target.namespace }}
 data:
   cluster: {{ .session.cluster }}
-  requestedBy: {{ .session.requestedBy }}
+  requestedBy: {{ .session.requestedBy | yamlQuote }}
 `
 
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -1079,7 +1079,7 @@ data:
 	require.NoError(t, err)
 
 	// Verify PodSpec with templated values
-	assert.Equal(t, "debug-very-long-", result.PodSpec.Containers[0].Name)
+	assert.Equal(t, "debug-very-long", result.PodSpec.Containers[0].Name, "k8sName removes the trailing dash left by truncation")
 	assert.Equal(t, "alpine:3.19", result.PodSpec.Containers[0].Image)
 
 	// Verify ConfigMap with templated values
@@ -1613,7 +1613,7 @@ spec:
         limits:
           cpu: "500m"
           memory: "256Mi"
-          ephemeral-storage: {{ .vars.captureStorageGi | default "2" }}Gi
+          ephemeral-storage: {{ printf "%sGi" (.vars.captureStorageGi | default "2") | yamlQuote }}
         requests:
           cpu: "100m"
           memory: "128Mi"
@@ -1623,7 +1623,7 @@ spec:
   volumes:
     - name: captures
       emptyDir:
-        sizeLimit: {{ .vars.captureStorageGi | default "2" }}Gi
+        sizeLimit: {{ printf "%sGi" (.vars.captureStorageGi | default "2") | yamlQuote }}
 `
 
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -4607,7 +4607,7 @@ func TestBuildPodSpec_PodOverridesTemplateString(t *testing.T) {
   - name: debug
     image: busybox:latest
 `,
-			PodOverridesTemplate: `hostNetwork: {{ .binding.hostNetwork | default "true" }}`,
+			PodOverridesTemplate: `hostNetwork: {{ eq (.binding.hostNetwork | default "true") "true" }}`,
 		},
 	}
 	_ = hostNet

@@ -95,6 +95,7 @@ Every utility is published as an immutable,
 ## Security & Policy
 
 - **[Security Scanning](./security-scanning.md)** - CI vulnerability enforcement, PR warnings, and retained reports
+- **[Cluster and Identity Security](./security-defender-cluster.md)** - Cluster credential and OIDC hardening
 
 - **[Security Best Practices](./security-best-practices.md)** - Rate limiting, input sanitization, network security
 - **Frontend input sanitization** - Request reason sanitization and duration parsing are centralized in shared UI utilities for consistent validation.

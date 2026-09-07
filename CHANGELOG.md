@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Scope session request emails to the matched escalation, suppress notifications
+  when hidden or excluded group membership is unresolved, and remove hidden group
+  names from email content.
+
+- Restrict session notification group recipients to the configured approver
+  identity providers; unresolved membership never falls back to another provider,
+  including hidden and excluded groups.
+
+- Bound per-group notification attribution rendering while preserving the full
+  membership snapshot used for privacy exclusions and hidden approver filtering.
+
+- Report unresolved privacy membership as notification suppression separately from
+  the normal case where all recipients were filtered by configuration.
+
+- Deduplicate notification group badges and avoid a second explicit-user email
+  when that recipient is already covered by an approver group.
+
+- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
+
+- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
+
+- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
+
+- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+
+- Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
+  debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
+  signing keys when identity-provider trust settings change.
+
+- Reject unsupported audit namespace selector exclusions before replacing active
+  sinks; migrate these exclusions to namespace patterns before upgrading.
+
 - Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
 
 - Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
@@ -60,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
+
 - Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
 
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
@@ -70,6 +114,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
+  restricted session notifications without changing approver readiness.
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
+- **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
+  redirects, preserve explicit issuer bindings in runtime selection and admission,
+  and invalidate cluster credentials
+  when an inherited IdentityProvider client Secret changes. An escalation with an
+  updated specification remains unavailable until its Ready condition reflects
+  the current generation.
 
 - Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 

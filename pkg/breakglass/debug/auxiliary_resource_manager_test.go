@@ -86,8 +86,8 @@ func TestFilterEnabledResources_EnabledByDefault(t *testing.T) {
 			{Name: "rbac", Category: "rbac"},
 		},
 		AuxiliaryResourceDefaults: map[string]bool{
-			"netpol": true,
-			"rbac":   false,
+			"network": true,
+			"rbac":    false,
 		},
 	}
 
@@ -255,9 +255,9 @@ func TestRenderTemplate_WithSprigFunctions(t *testing.T) {
 	}
 
 	// Use lowercase JSON field names
-	tmpl := []byte(`upper: "{{ .session.name | upper }}"
-truncated: "{{ .session.name | trunc 10 }}"
-default: "{{ .session.reason | default "no-reason" }}"`)
+	tmpl := []byte(`upper: {{ .session.name | upper | yamlQuote }}
+truncated: {{ .session.name | trunc 10 | yamlQuote }}
+default: {{ .session.reason | default "no-reason" | yamlQuote }}`)
 
 	result, err := mgr.renderTemplate(tmpl, ctx)
 	require.NoError(t, err)
@@ -494,7 +494,7 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 			template := &breakglassv1alpha1.DebugSessionTemplateSpec{
 				AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{tt.resource},
 				AuxiliaryResourceDefaults: map[string]bool{
-					tt.resource.Name: true,
+					tt.resource.Category: true,
 				},
 			}
 
@@ -573,8 +573,7 @@ metadata:
 			},
 		},
 		AuxiliaryResourceDefaults: map[string]bool{
-			"created-config": true,
-			"required-fail":  true,
+			"config": true,
 		},
 	}
 
@@ -854,7 +853,7 @@ func TestValidateAuxiliaryResources_ValidWithTemplateString(t *testing.T) {
 		{
 			Name:           "test",
 			Category:       "config",
-			TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}-config",
+			TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .session.name }}-config",
 		},
 	}
 
@@ -1373,8 +1372,8 @@ func TestFilterEnabledResources_DefaultEnabled(t *testing.T) {
 			{Name: "res2", Category: "cat2", Template: runtime.RawExtension{}},
 		},
 		AuxiliaryResourceDefaults: map[string]bool{
-			"res1": true,
-			"res2": false,
+			"cat1": true,
+			"cat2": false,
 		},
 	}
 	result := mgr.filterEnabledResources(template, nil, nil)
