@@ -258,3 +258,58 @@ func TestEffectiveDebugSessionConstraintsPreservesTemplatePolicyAndInputs(t *tes
 	require.NotNil(t, effective.MaxRenewals)
 	assert.Equal(t, int32(2), *effective.MaxRenewals)
 }
+
+func TestConstraintResolutionIsolatesSnapshots(t *testing.T) {
+	for _, resolver := range []string{"effective", "merge", "api"} {
+		for _, shape := range []string{"nil binding", "nil binding constraints", "binding constraints", "nil template", "both nil"} {
+			t.Run(resolver+"/"+shape, func(t *testing.T) {
+				allow := true
+				maximum := int32(4)
+				template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "4h", AllowRenewal: &allow, MaxRenewals: &maximum}}}
+				bindingAllow := false
+				bindingMaximum := int32(1)
+				binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "1h", AllowRenewal: &bindingAllow, MaxRenewals: &bindingMaximum}}}
+				switch shape {
+				case "nil binding":
+					binding = nil
+				case "nil binding constraints":
+					binding.Spec.Constraints = nil
+				case "nil template":
+					template = nil
+				case "both nil":
+					template = nil
+					binding = nil
+				}
+				beforeTemplate, beforeBinding := template.DeepCopy(), binding.DeepCopy()
+				var templateConstraints, bindingConstraints *breakglassv1alpha1.DebugSessionConstraints
+				if template != nil {
+					templateConstraints = template.Spec.Constraints
+				}
+				if binding != nil {
+					bindingConstraints = binding.Spec.Constraints
+				}
+				var result *breakglassv1alpha1.DebugSessionConstraints
+				switch resolver {
+				case "effective":
+					result = effectiveDebugSessionConstraints(template, binding)
+				case "merge":
+					result = mergeDebugSessionConstraints(templateConstraints, bindingConstraints)
+				case "api":
+					result = (&DebugSessionAPIController{}).mergeConstraints(templateConstraints, binding)
+				}
+				if shape == "both nil" {
+					require.Nil(t, result)
+					return
+				}
+				require.NotNil(t, result)
+				require.NotNil(t, result.AllowRenewal)
+				require.NotNil(t, result.MaxRenewals)
+				result.MaxDuration = "99h"
+				*result.AllowRenewal = !*result.AllowRenewal
+				*result.MaxRenewals = 99
+				require.Equal(t, beforeTemplate, template)
+				require.Equal(t, beforeBinding, binding)
+			})
+		}
+	}
+}
