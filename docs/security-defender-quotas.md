@@ -32,8 +32,10 @@ its admission attempt; policy changes are not an atomic transaction with
 admission already in flight.
 
 Quota denial records a terminal rejection/failure with an optimistic status
-write. Cleanup of ledger entries happens lazily during later admissions, only
-after an authoritative GET proves that exact UID terminal or deleted. Missing
+write. Cleanup of ledger entries happens when a candidate scope is full or the ledger
+reaches its storage bound, only after an authoritative GET proves that exact UID
+terminal or deleted. Unrelated entries remain conservatively occupied without
+per-admission reads. Storage pressure triggers cleanup across both session kinds. Missing
 entries in a list never prove that a reservation is free. Expiry timestamps
 alone do not release slots before lifecycle cleanup records terminal state.
 Status writes for managed sessions use resource-version fencing so stale
@@ -84,3 +86,10 @@ admission metadata, so an older approval snapshot cannot overwrite a newer vote.
 Debug lifecycle binding discovery errors stop processing before admission or
 activation; a later quota lookup cannot substitute for the binding used to
 evaluate approval and workload constraints.
+
+Regular sessions must have one unambiguous controlling `BreakglassEscalation`
+owner with the current API version, name, and UID. Admission and recovery verify
+that the live escalation still has that UID before using its policy. Invalid
+unrecorded legacy ownership blocks bootstrap until corrected; invalid metadata
+never removes an already-recorded UID reservation. Additional noncontrolling
+owners of other resource kinds do not change the escalation quota scope.

@@ -20,14 +20,50 @@ import (
 
 func sessionScope(parts ...string) string { b, _ := json.Marshal(parts); return string(b) }
 
-func regularQuotaEntry(s *breakglassv1alpha1.BreakglassSession) quotas.Entry {
-	scopes := []string{sessionScope("tuple", s.Spec.User, s.Spec.Cluster, s.Spec.GrantedGroup), sessionScope("user", s.Spec.User)}
-	for _, owner := range s.OwnerReferences {
-		if owner.Kind == "BreakglassEscalation" {
-			scopes = append(scopes, sessionScope("escalation", string(owner.UID)))
+// quotaEscalationOwner rejects ambiguous or noncontrolling policy provenance.
+func quotaEscalationOwner(s *breakglassv1alpha1.BreakglassSession) (*metav1.OwnerReference, error) {
+	var selected *metav1.OwnerReference
+	for i := range s.OwnerReferences {
+		owner := &s.OwnerReferences[i]
+		if owner.Kind != "BreakglassEscalation" {
+			if owner.Controller != nil && *owner.Controller {
+				return nil, fmt.Errorf("session quota has a different controlling owner")
+			}
+			continue
 		}
+		if selected != nil || owner.APIVersion != breakglassv1alpha1.GroupVersion.String() || owner.Controller == nil || !*owner.Controller || owner.Name == "" || owner.UID == "" {
+			return nil, fmt.Errorf("session quota requires one unambiguous controlling escalation owner")
+		}
+		selected = owner
 	}
-	return quotas.Entry{Kind: "BreakglassSession", Namespace: s.Namespace, Name: s.Name, UID: string(s.UID), Scopes: scopes}
+	if selected == nil {
+		return nil, fmt.Errorf("session quota requires escalation owner")
+	}
+	return selected, nil
+}
+
+func (c *SessionManager) quotaEscalation(ctx context.Context, s *breakglassv1alpha1.BreakglassSession) (*breakglassv1alpha1.BreakglassEscalation, error) {
+	owner, err := quotaEscalationOwner(s)
+	if err != nil {
+		return nil, err
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{}
+	if err := c.Reader().Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: owner.Name}, escalation); err != nil {
+		return nil, fmt.Errorf("read quota escalation: %w", err)
+	}
+	if escalation.UID != owner.UID {
+		return nil, fmt.Errorf("quota escalation UID changed")
+	}
+	return escalation, nil
+}
+
+func regularQuotaEntry(s *breakglassv1alpha1.BreakglassSession) (quotas.Entry, error) {
+	owner, err := quotaEscalationOwner(s)
+	if err != nil {
+		return quotas.Entry{}, err
+	}
+	scopes := []string{sessionScope("tuple", s.Spec.User, s.Spec.Cluster, s.Spec.GrantedGroup), sessionScope("user", s.Spec.User), sessionScope("escalation", string(owner.UID))}
+	return quotas.Entry{Kind: "BreakglassSession", Namespace: s.Namespace, Name: s.Name, UID: string(s.UID), Scopes: scopes}, nil
 }
 
 func (c *SessionManager) reserveSession(ctx context.Context, s *breakglassv1alpha1.BreakglassSession) error {
@@ -61,28 +97,19 @@ func (c *SessionManager) reserveSession(ctx context.Context, s *breakglassv1alph
 		}
 		return string(current.UID) == entry.UID && !IsSessionTerminalState(current.Status.State), nil
 	}
-	var escalation breakglassv1alpha1.BreakglassEscalation
-	found := false
-	for _, owner := range s.OwnerReferences {
-		if owner.Kind != "BreakglassEscalation" {
-			continue
-		}
-		if err := reader.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: owner.Name}, &escalation); err != nil {
-			return fmt.Errorf("read quota escalation: %w", err)
-		}
-		if escalation.UID != owner.UID {
-			return fmt.Errorf("quota escalation UID changed")
-		}
-		found = true
-	}
-	if !found {
-		return fmt.Errorf("session quota requires escalation owner")
-	}
-	limits, err := c.sessionQuotaLimits(ctx, s, &escalation)
+	escalation, err := c.quotaEscalation(ctx, s)
 	if err != nil {
 		return err
 	}
-	return (quotas.Store{Client: c.Client, Reader: reader, Namespace: c.quotaNamespace}).Reserve(ctx, regularQuotaEntry(s), limits,
+	entry, err := regularQuotaEntry(s)
+	if err != nil {
+		return err
+	}
+	limits, err := c.sessionQuotaLimits(ctx, s, escalation)
+	if err != nil {
+		return err
+	}
+	return (quotas.Store{Client: c.Client, Reader: reader, Namespace: c.quotaNamespace}).Reserve(ctx, entry, limits,
 		func(ctx context.Context, reserved map[string]quotas.Entry) ([]quotas.Entry, error) {
 			var sessions breakglassv1alpha1.BreakglassSessionList
 			if err := reader.List(ctx, &sessions); err != nil {
@@ -95,7 +122,11 @@ func (c *SessionManager) reserveSession(ctx context.Context, s *breakglassv1alph
 					continue
 				}
 				if !IsSessionTerminalState(item.Status.State) && item.Annotations[quotas.AdmissionAnnotation] != quotas.Pending {
-					entries = append(entries, regularQuotaEntry(item))
+					entry, err := regularQuotaEntry(item)
+					if err != nil {
+						return nil, fmt.Errorf("legacy session %s/%s quota owner: %w", item.Namespace, item.Name, err)
+					}
+					entries = append(entries, entry)
 				}
 			}
 			return entries, nil
@@ -215,14 +246,9 @@ func (c *SessionManager) recoverSessionAdmissions(ctx context.Context) error {
 			c.getLogger().Warnw("Session admission recovery deferred", "session", session.Name, "error", err)
 			continue
 		}
-		escalation := &breakglassv1alpha1.BreakglassEscalation{}
-		for _, owner := range session.OwnerReferences {
-			if owner.Kind != "BreakglassEscalation" {
-				continue
-			}
-			if err := c.Reader().Get(ctx, client.ObjectKey{Namespace: session.Namespace, Name: owner.Name}, escalation); err != nil {
-				return fmt.Errorf("read recovery escalation: %w", err)
-			}
+		escalation, err := c.quotaEscalation(ctx, session)
+		if err != nil {
+			return fmt.Errorf("resolve recovery escalation: %w", err)
 		}
 		session.Status.State = breakglassv1alpha1.SessionStatePending
 		session.Status.TimeoutAt = metav1.NewTime(time.Now().Add(ParseApprovalTimeout(escalation.Spec, c.getLogger())))

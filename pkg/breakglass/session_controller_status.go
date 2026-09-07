@@ -531,7 +531,7 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 	// can lag a just-created session on another replica.
 	all := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := wc.sessionManager.Reader().List(ctx, all); err != nil {
-		return fmt.Errorf("failed to list sessions for user: %w", err)
+		return fmt.Errorf("failed to list sessions for user quota check: %w", err)
 	}
 
 	// Count sessions that still reserve a request slot for this user (across ALL escalations).
@@ -570,9 +570,7 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	source string,
 	log *zap.SugaredLogger,
 ) error {
-	// Optimization: only list sessions in potentially slot-occupying states
-	// rather than listing all sessions and filtering out terminal states.
-	// This reduces data transfer from etcd significantly in clusters with many expired sessions.
+	// Read all sessions from the API server so informer lag cannot hide usage.
 	all := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := wc.sessionManager.Reader().List(ctx, all); err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)

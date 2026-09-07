@@ -42,7 +42,7 @@ type ledger struct {
 // Store uses one bounded ledger for all scopes, so multi-scope admission is one
 // atomic CAS. Entries never expire with worker lifetime. Namespace must be the
 // same configured controller namespace for every API and lifecycle replica.
-// ponytail: one CAS ledger, shard with cross-scope reservations if contention or 512KiB is reached.
+// Higher capacity requires coordinating reservations across shards.
 type Store struct {
 	Client    client.Client
 	Reader    client.Reader
@@ -79,13 +79,19 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 			if uid != entry.UID || uid == "" {
 				return fmt.Errorf("invalid quota ledger UID")
 			}
+		}
+		// Reuse exact-UID probes only within this CAS attempt. A retry starts
+		// with a fresh ledger and fresh authoritative observations.
+		probed := map[string]bool{}
+		verify := func(entry Entry) (bool, error) {
+			if occupied, ok := probed[entry.UID]; ok {
+				return occupied, nil
+			}
 			occupied, err := live(ctx, entry)
-			if err != nil {
-				return fmt.Errorf("verify quota reservation: %w", err)
+			if err == nil {
+				probed[entry.UID] = occupied
 			}
-			if !occupied {
-				delete(state.Entries, uid)
-			}
+			return occupied, err
 		}
 		legacy, err := bootstrap(ctx, state.Entries)
 		if err != nil {
@@ -96,7 +102,7 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 				return fmt.Errorf("legacy session has no UID")
 			}
 			if entry.UID != candidate.UID {
-				occupied, err := live(ctx, entry)
+				occupied, err := verify(entry)
 				if err != nil {
 					return fmt.Errorf("verify legacy quota reservation: %w", err)
 				}
@@ -108,7 +114,7 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 				}
 			}
 		}
-		occupied, err := live(ctx, candidate)
+		occupied, err := verify(candidate)
 		if err != nil {
 			return fmt.Errorf("verify quota candidate: %w", err)
 		}
@@ -123,9 +129,26 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 			for scope, limit := range limits {
 				var count int32
 				for _, entry := range state.Entries {
-					for _, existing := range entry.Scopes {
-						if existing == scope {
-							count++
+					if slices.Contains(entry.Scopes, scope) {
+						count++
+					}
+				}
+				// Unchecked records remain occupied. Only a saturated scope
+				// needs authoritative reads to recover terminal reservations.
+				if count >= limit {
+					for uid, entry := range state.Entries {
+						if !slices.Contains(entry.Scopes, scope) {
+							continue
+						}
+						occupied, err := verify(entry)
+						if err != nil {
+							return fmt.Errorf("verify quota reservation: %w", err)
+						}
+						if !occupied {
+							delete(state.Entries, uid)
+							count--
+						}
+						if count < limit {
 							break
 						}
 					}
@@ -141,7 +164,24 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 			return fmt.Errorf("encode quota ledger: %w", err)
 		}
 		if len(encoded) > maxLedgerBytes {
-			return fmt.Errorf("quota ledger capacity reached")
+			// Unrelated terminal entries must not permanently exhaust storage.
+			// Global pruning is exceptional and still requires exact-UID proof.
+			for uid, entry := range state.Entries {
+				occupied, err := verify(entry)
+				if err != nil {
+					return fmt.Errorf("verify quota capacity reservation: %w", err)
+				}
+				if !occupied {
+					delete(state.Entries, uid)
+				}
+			}
+			encoded, err = json.Marshal(state)
+			if err != nil {
+				return fmt.Errorf("encode pruned quota ledger: %w", err)
+			}
+			if len(encoded) > maxLedgerBytes {
+				return fmt.Errorf("quota ledger capacity reached")
+			}
 		}
 		cm.Data = map[string]string{"ledger": string(encoded)}
 		if getErr != nil {
