@@ -408,22 +408,13 @@ func validateIdentityProviderFields(
 		} else if idp.Spec.Disabled {
 			errs = append(errs, field.Invalid(namePath, idpName, "referenced IdentityProvider is disabled"))
 		} else if idpIssuer != "" {
-			// If both name and issuer are set, verify they match the IDP's issuer or authority
-			// Normalize for comparison (remove trailing slashes)
-			issuerNorm := strings.TrimRight(idpIssuer, "/")
-			idpIssuerNorm := strings.TrimRight(idp.Spec.Issuer, "/")
-			idpAuthorityNorm := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
-
-			// Match if issuer matches Spec.Issuer (when set) OR OIDC.Authority (as fallback)
-			// This mirrors the runtime behavior in identity_provider_loader.go
-			issuerMatch := (idp.Spec.Issuer != "" && idpIssuerNorm == issuerNorm) ||
-				(idpAuthorityNorm == issuerNorm)
-
-			if !issuerMatch {
-				expectedIssuer := idp.Spec.Issuer
-				if expectedIssuer == "" {
-					expectedIssuer = idp.Spec.OIDC.Authority
-				}
+			// Use the same effective issuer as authentication: authority is only
+			// a fallback when the provider has no explicit issuer.
+			expectedIssuer := idp.Spec.Issuer
+			if expectedIssuer == "" {
+				expectedIssuer = idp.Spec.OIDC.Authority
+			}
+			if strings.TrimRight(idpIssuer, "/") != strings.TrimRight(expectedIssuer, "/") {
 				errs = append(errs, field.Invalid(issuerPath, idpIssuer, fmt.Sprintf("issuer does not match IdentityProvider %s (expected %s)", idpName, expectedIssuer)))
 			}
 		}
@@ -1797,6 +1788,8 @@ func validateGoTemplateSyntax(templateStr string) error {
 	// This ensures template functions like yamlQuote, default, etc. are recognized
 	// Use sprig.FuncMap() (not TxtFuncMap) to match runtime template rendering behavior
 	funcMap := sprig.FuncMap()
+	delete(funcMap, "env")
+	delete(funcMap, "expandenv")
 
 	// Add custom breakglass template functions that are used at runtime.
 	// These are stubs - we only need them to parse, not execute correctly.
@@ -1817,10 +1810,10 @@ func validateGoTemplateSyntax(templateStr string) error {
 	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
 
 	// Parse the template - this validates syntax
-	_, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)
+	tmpl, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	return ValidateTemplateOutput(tmpl)
 }

@@ -683,7 +683,7 @@ func (p *ClientProvider) getRESTConfigFromOIDC(ctx context.Context, cc *breakgla
 	// Track OIDC-related secrets for cache invalidation on secret changes.
 	// This allows the Secret watcher to evict cached REST configs when
 	// refresh tokens, client secrets, subject tokens, or CAs are rotated.
-	p.trackOIDCSecretsLocked(cacheKey(cc.Namespace, cc.Name), cc)
+	p.trackOIDCSecretsLocked(cacheKey(cc.Namespace, cc.Name), cc, p.oidcProvider.ResolvedSecretRefs(cc.Namespace, cc.Name)...)
 
 	return cfg, err // err is nil or ErrDegradedAuth (valid config with degraded auth)
 }
@@ -728,9 +728,10 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 // hold p.mu as a write lock. The function cannot self-lock because its only
 // production caller (getRESTConfigFromOIDC) already holds p.mu, and sync.Mutex
 // is not re-entrant.
-func (p *ClientProvider) trackOIDCSecretsLocked(clusterKey string, cc *breakglassv1alpha1.ClusterConfig) {
+func (p *ClientProvider) trackOIDCSecretsLocked(clusterKey string, cc *breakglassv1alpha1.ClusterConfig, effectiveRefs ...breakglassv1alpha1.SecretKeyReference) {
 	// Collect all secret references from OIDC configs
 	var secretRefs []breakglassv1alpha1.SecretKeyReference
+	secretRefs = append(secretRefs, effectiveRefs...)
 
 	if cc.Spec.OIDCAuth != nil {
 		if cc.Spec.OIDCAuth.ClientSecretRef != nil {

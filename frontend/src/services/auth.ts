@@ -1019,14 +1019,17 @@ export default class AuthService {
       return loadedUser;
     }
 
-    const originalRefreshToken = loadedUser.refresh_token;
     delete loadedUser.refresh_token;
     try {
       await manager.storeUser(loadedUser);
       warn("AuthService", "Removed refresh token from persisted OIDC user state");
     } catch (error) {
-      loadedUser.refresh_token = originalRefreshToken;
-      logError("AuthService", "Failed to persist sanitized OIDC user; using loaded user", { error });
+      logError("AuthService", "Failed to persist sanitized OIDC user; clearing persisted user", { error });
+      try {
+        await manager.removeUser();
+      } catch (cleanupError) {
+        logError("AuthService", "Failed to clear persisted OIDC user after sanitization failure", { cleanupError });
+      }
     }
     return loadedUser;
   }

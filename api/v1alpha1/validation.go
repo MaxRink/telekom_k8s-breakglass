@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -813,9 +814,6 @@ func ValidateDebugPodTemplate(template *DebugPodTemplate) *ValidationResult {
 		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
 		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.TemplateString, specPath.Child("templateString"))...)
 
-		// Dry-run render for templates with Go directives to catch execution issues early
-		result.Warnings = append(result.Warnings, tryRenderTemplateString(template.Spec.TemplateString, nil)...)
-
 		return result
 	}
 
@@ -885,25 +883,6 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		if template.Spec.WorkloadType != "" {
 			result.Warnings = append(result.Warnings, warnTemplateStringWorkloadMismatch(template.Spec.PodTemplateString, template.Spec.WorkloadType)...)
 		}
-
-		// Dry-run render for templates with Go directives.
-		// Populate Vars from ExtraDeployVariables defaults if available.
-		dryRunVars := map[string]string{}
-		for _, v := range template.Spec.ExtraDeployVariables {
-			if v.Default != nil {
-				// Extract string value from *apiextensionsv1.JSON
-				raw := string(v.Default.Raw)
-				// JSON strings are quoted, strip quotes for template vars
-				if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-					raw = raw[1 : len(raw)-1]
-				}
-				dryRunVars[v.Name] = raw
-			} else {
-				// Variable has no default; use placeholder so template doesn't fail
-				dryRunVars[v.Name] = "PLACEHOLDER"
-			}
-		}
-		result.Warnings = append(result.Warnings, tryRenderTemplateString(template.Spec.PodTemplateString, dryRunVars)...)
 	}
 
 	// Validate podOverridesTemplate syntax if present
@@ -1062,7 +1041,9 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 
 	// Build function map matching the runtime renderer
 	funcMap := sprig.FuncMap()
-	funcMap["yamlQuote"] = func(s string) string { return "\"" + s + "\"" }
+	delete(funcMap, "env")
+	delete(funcMap, "expandenv")
+	funcMap["yamlQuote"] = strconv.Quote
 	funcMap["toYaml"] = func(v interface{}) string { return "" }
 	funcMap["fromYaml"] = func(s string) map[string]interface{} { return nil }
 	funcMap["resourceQuantity"] = func(s string) string { return s }
@@ -1093,7 +1074,7 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 		padding := strings.Repeat(" ", spaces)
 		return "\n" + padding + strings.ReplaceAll(s, "\n", "\n"+padding)
 	}
-	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
+	funcMap["yamlSafe"] = func(v interface{}) string { return strconv.Quote(fmt.Sprint(v)) }
 
 	// Parse template
 	tmpl, err := template.New("dry-run").Funcs(funcMap).Parse(templateStr)
@@ -1103,7 +1084,7 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 	}
 
 	// Execute template with sample context
-	var buf bytes.Buffer
+	var buf cappedTemplateBuffer
 	if err := tmpl.Execute(&buf, ctxMap); err != nil {
 		return []string{fmt.Sprintf("dry-run render warning: template execution failed with sample data: %v", err)}
 	}
@@ -1129,6 +1110,19 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 	}
 
 	return warnings
+}
+
+const maxTemplateOutputBytes = 1 << 20
+
+type cappedTemplateBuffer struct {
+	bytes.Buffer
+}
+
+func (b *cappedTemplateBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > maxTemplateOutputBytes {
+		return 0, fmt.Errorf("rendered template exceeds %d bytes", maxTemplateOutputBytes)
+	}
+	return b.Buffer.Write(p)
 }
 
 // validateTemplateStringFormat validates the first YAML document in a templateString
