@@ -184,7 +184,7 @@ func newDebugSessionWatchCommand() *cobra.Command {
 								return err
 							}
 						} else {
-							_, _ = fmt.Fprintf(rt.Writer(), "%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, s.State)
+							output.WriteDebugSessionWatchLine(rt.Writer(), s)
 						}
 					}
 				}

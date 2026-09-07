@@ -576,52 +576,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		}
 		// Collect approver groups
 		groups := esc.Spec.Approvers.Groups
-		if len(groups) == 0 {
-			log.Debugw("Escalation has no approver groups; updating group sync status", "escalation", esc.Name)
-			updated := esc.DeepCopy()
-			changed := updateNoApproverGroupsCondition(updated)
-			clearCachedMembers := false
-			if len(updated.Status.ApproverGroupMembers) > 0 {
-				updated.Status.ApproverGroupMembers = nil
-				changed = true
-				clearCachedMembers = true
-			}
-			if len(updated.Status.IDPGroupMemberships) > 0 {
-				updated.Status.IDPGroupMemberships = nil
-				changed = true
-				clearCachedMembers = true
-			}
-			if changed {
-				var err error
-				markEscalationStatusObserved(updated)
-				if clearCachedMembers {
-					err = u.patchStatus(ctx, updated)
-				} else {
-					err = u.applyStatus(ctx, updated)
-				}
-				if err != nil {
-					log.Errorw("Failed updating escalation group sync condition", "escalation", esc.Name, "error", err)
-				}
-			}
-			continue
-		}
-		log.Debugw("Processing escalation with approver groups", "escalation", esc.Name, "groupCount", len(groups))
-
-		updated := esc.DeepCopy()
-		if updated.Status.ApproverGroupMembers == nil {
-			updated.Status.ApproverGroupMembers = map[string][]string{}
-		}
-
-		prunedCachedMembers := pruneUnconfiguredApproverGroupStatus(updated, groups)
-		changed := prunedCachedMembers
-		if updated.Status.ApproverGroupMembers == nil {
-			updated.Status.ApproverGroupMembers = map[string][]string{}
-		}
-
-		var emptyGroups []string
-		var missingGroups []string
-		syncErrorCount := 0
-		var syncStatus string
+		privacyGroups := notificationPrivacyGroups(&esc)
 
 		// Determine which IDPs to use for group resolution
 		// If allowedIdentityProvidersForApprovers is explicitly set, use those IDPs
@@ -650,6 +605,61 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			}
 		}
 
+		if len(groups) == 0 {
+			log.Debugw("Escalation has no approver groups; updating group sync status", "escalation", esc.Name)
+			updated := esc.DeepCopy()
+			changed := updateNoApproverGroupsCondition(updated)
+			clearCachedMembers := false
+			if len(updated.Status.ApproverGroupMembers) > 0 {
+				updated.Status.ApproverGroupMembers = nil
+				changed = true
+				clearCachedMembers = true
+			}
+			if len(idpsToUse) > 0 && len(privacyGroups) > 0 {
+				privacyReport := u.fetchGroupMembersFromMultipleIDPsReport(ctx, &esc, idpsToUse, privacyGroups, log)
+				if !equalIDPHierarchy(privacyReport.hierarchy, updated.Status.IDPGroupMemberships) {
+					updated.Status.IDPGroupMemberships = privacyReport.hierarchy
+					changed = true
+				}
+			} else if len(updated.Status.IDPGroupMemberships) > 0 {
+				updated.Status.IDPGroupMemberships = nil
+				changed = true
+				clearCachedMembers = true
+			}
+			if changed {
+				var err error
+				markEscalationStatusObserved(updated)
+				if clearCachedMembers {
+					err = u.patchStatus(ctx, updated)
+				} else {
+					err = u.applyStatus(ctx, updated)
+				}
+				if err != nil {
+					log.Errorw("Failed updating escalation group sync condition", "escalation", esc.Name, "error", err)
+				}
+			}
+			continue
+		}
+		log.Debugw("Processing escalation with approver groups", "escalation", esc.Name, "groupCount", len(groups))
+
+		updated := esc.DeepCopy()
+		if updated.Status.ApproverGroupMembers == nil {
+			updated.Status.ApproverGroupMembers = map[string][]string{}
+		}
+
+		privacyOnlyGroups := groupsNotIn(privacyGroups, groups)
+		snapshotGroups := append(append([]string(nil), groups...), privacyOnlyGroups...)
+		prunedCachedMembers := pruneUnconfiguredGroupStatus(updated, groups, snapshotGroups)
+		changed := prunedCachedMembers
+		if updated.Status.ApproverGroupMembers == nil {
+			updated.Status.ApproverGroupMembers = map[string][]string{}
+		}
+
+		var emptyGroups []string
+		var missingGroups []string
+		syncErrorCount := 0
+		var syncStatus string
+
 		if len(idpsToUse) > 0 {
 			// Multi-IDP mode: Use multi-IDP group sync with IDP hierarchy storage
 			log.Debugw("Using multi-IDP group sync", "escalation", esc.Name, "idps", idpsToUse)
@@ -662,6 +672,10 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				log,
 			)
 			hierarchy := syncReport.hierarchy
+			if len(privacyOnlyGroups) > 0 {
+				privacyReport := u.fetchGroupMembersFromMultipleIDPsReport(ctx, &esc, idpsToUse, privacyOnlyGroups, log)
+				hierarchy = mergeIDPGroupMemberships(hierarchy, privacyReport.hierarchy)
+			}
 			syncStatus = syncReport.syncStatus
 			syncErrors := syncReport.syncErrors
 			syncErrorCount = len(syncErrors)
@@ -706,6 +720,9 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		} else {
 			// Legacy single-resolver mode for backward compatibility
 			log.Debugw("Using legacy single resolver mode", "escalation", esc.Name)
+			if len(privacyOnlyGroups) > 0 && pruneUnconfiguredGroupStatus(updated, groups, groups) {
+				changed = true
+			}
 
 			resolvedGroupCount := 0
 			failedGroupCount := 0
@@ -871,14 +888,25 @@ func markEscalationStatusObserved(escalation *breakglassv1alpha1.BreakglassEscal
 }
 
 func pruneUnconfiguredApproverGroupStatus(escalation *breakglassv1alpha1.BreakglassEscalation, configuredGroups []string) bool {
-	configured := make(map[string]struct{}, len(configuredGroups))
-	for _, group := range configuredGroups {
-		configured[group] = struct{}{}
+	return pruneUnconfiguredGroupStatus(escalation, configuredGroups, configuredGroups)
+}
+
+func pruneUnconfiguredGroupStatus(
+	escalation *breakglassv1alpha1.BreakglassEscalation,
+	configuredApproverGroups, configuredHierarchyGroups []string,
+) bool {
+	configuredApprovers := make(map[string]struct{}, len(configuredApproverGroups))
+	for _, group := range configuredApproverGroups {
+		configuredApprovers[group] = struct{}{}
+	}
+	configuredHierarchy := make(map[string]struct{}, len(configuredHierarchyGroups))
+	for _, group := range configuredHierarchyGroups {
+		configuredHierarchy[group] = struct{}{}
 	}
 
 	changed := false
 	for group := range escalation.Status.ApproverGroupMembers {
-		if _, ok := configured[group]; !ok {
+		if _, ok := configuredApprovers[group]; !ok {
 			delete(escalation.Status.ApproverGroupMembers, group)
 			changed = true
 		}
@@ -886,7 +914,7 @@ func pruneUnconfiguredApproverGroupStatus(escalation *breakglassv1alpha1.Breakgl
 
 	for idp, groupMembers := range escalation.Status.IDPGroupMemberships {
 		for group := range groupMembers {
-			if _, ok := configured[group]; !ok {
+			if _, ok := configuredHierarchy[group]; !ok {
 				delete(groupMembers, group)
 				changed = true
 			}
@@ -905,6 +933,68 @@ func pruneUnconfiguredApproverGroupStatus(escalation *breakglassv1alpha1.Breakgl
 	}
 
 	return changed
+}
+
+func notificationPrivacyGroups(escalation *breakglassv1alpha1.BreakglassEscalation) []string {
+	configuredApproverGroups := make(map[string]struct{}, len(escalation.Spec.Approvers.Groups))
+	for _, group := range escalation.Spec.Approvers.Groups {
+		configuredApproverGroups[group] = struct{}{}
+	}
+	explicitUsers := make(map[string]struct{}, len(escalation.Spec.Approvers.Users))
+	for _, user := range escalation.Spec.Approvers.Users {
+		explicitUsers[user] = struct{}{}
+	}
+
+	groups := make([]string, 0)
+	seen := make(map[string]struct{})
+	add := func(group string) {
+		if _, ok := seen[group]; ok {
+			return
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	if exclusions := escalation.Spec.NotificationExclusions; exclusions != nil {
+		for _, group := range exclusions.Groups {
+			add(group)
+		}
+	}
+	for _, item := range escalation.Spec.Approvers.HiddenFromUI {
+		if _, configured := configuredApproverGroups[item]; configured {
+			continue
+		}
+		if _, explicit := explicitUsers[item]; explicit {
+			continue
+		}
+		add(item)
+	}
+	return groups
+}
+
+func groupsNotIn(groups, excluded []string) []string {
+	excludedSet := make(map[string]struct{}, len(excluded))
+	for _, group := range excluded {
+		excludedSet[group] = struct{}{}
+	}
+	result := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if _, excluded := excludedSet[group]; !excluded {
+			result = append(result, group)
+		}
+	}
+	return result
+}
+
+func mergeIDPGroupMemberships(base, extra map[string]map[string][]string) map[string]map[string][]string {
+	for idp, groups := range extra {
+		if base[idp] == nil {
+			base[idp] = make(map[string][]string)
+		}
+		for group, members := range groups {
+			base[idp][group] = members
+		}
+	}
+	return base
 }
 
 type groupSyncReport struct {

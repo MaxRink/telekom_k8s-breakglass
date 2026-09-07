@@ -931,66 +931,74 @@ func setupOIDCTLSJWKSServer(t *testing.T) (*httptest.Server, string) {
 	return srv, string(caPEM)
 }
 
-func TestGetJWKSForIssuer_EvictsCachedJWKSWhenLiveIDPBecomesInsecure(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+func TestGetJWKSForIssuer_EvictsCachedJWKSWhenLiveIDPTrustChanges(t *testing.T) {
+	for _, change := range []string{"authority", "ca", "insecure", "keycloak"} {
+		t.Run(change, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
 
-	srv, caPEM := setupOIDCTLSJWKSServer(t)
-	issuer := srv.URL
-	loader := &mutableIdentityProviderByIssuerLoader{
-		cfg: &config.IdentityProviderConfig{
-			Name:                 "secure-idp",
-			Issuer:               issuer,
-			Authority:            issuer,
-			ClientID:             "breakglass-ui",
-			ExpectedAudience:     "breakglass-ui",
-			CertificateAuthority: caPEM,
-		},
+			srv, caPEM := setupOIDCTLSJWKSServer(t)
+			issuer := srv.URL
+			loader := &mutableIdentityProviderByIssuerLoader{
+				cfg: &config.IdentityProviderConfig{
+					Name:                 "secure-idp",
+					Issuer:               issuer,
+					Authority:            issuer,
+					ClientID:             "breakglass-ui",
+					ExpectedAudience:     "breakglass-ui",
+					CertificateAuthority: caPEM,
+				},
+			}
+			auth := &AuthHandler{
+				jwksCache:   make(map[string]*list.Element),
+				jwksLRUList: list.New(),
+				log:         zaptest.NewLogger(t).Sugar(),
+				idpLoader:   loader,
+				defaultHTTPClient: &http.Client{
+					Transport: defaultOIDCTransport(),
+					Timeout:   defaultOIDCTimeout,
+				},
+			}
+
+			_, audience, idpName, cacheHit, err := auth.getJWKSForIssuer(t.Context(), issuer)
+			require.NoError(t, err)
+			assert.False(t, cacheHit)
+			assert.Equal(t, "breakglass-ui", audience)
+			assert.Equal(t, "secure-idp", idpName)
+
+			auth.jwksMutex.Lock()
+			elem, ok := auth.jwksCache[issuer]
+			require.True(t, ok, "initial JWKS lookup should cache the issuer")
+			entry := elem.Value.(*jwksCacheEntry)
+			entry.audienceRefreshedAt = time.Now().Add(-audienceRefreshInterval - time.Second)
+			entry.audienceAttemptedAt = time.Now().Add(-audienceRefreshFailureBackoff - time.Second)
+			auth.jwksMutex.Unlock()
+
+			changed := *loader.cfg
+			switch change {
+			case "authority":
+				changed.Authority += "/changed"
+			case "ca":
+				changed.CertificateAuthority += "\n"
+			case "insecure":
+				changed.InsecureSkipVerify = true
+			case "keycloak":
+				changed.Keycloak = &config.KeycloakRuntimeConfig{BaseURL: issuer, Realm: "changed"}
+			}
+			loader.setConfig(&changed)
+
+			_, _, _, cacheHit, err = auth.getJWKSForIssuer(t.Context(), issuer)
+			require.Error(t, err)
+			assert.True(t, cacheHit)
+			assert.ErrorIs(t, err, errUnknownIdentityProvider)
+
+			auth.jwksMutex.RLock()
+			_, stillCached := auth.jwksCache[issuer]
+			cacheLen := auth.jwksLRUList.Len()
+			auth.jwksMutex.RUnlock()
+			assert.False(t, stillCached, "changed live IDP endpoint should evict stale JWKS")
+			assert.Equal(t, 0, cacheLen)
+		})
 	}
-	auth := &AuthHandler{
-		jwksCache:   make(map[string]*list.Element),
-		jwksLRUList: list.New(),
-		log:         zaptest.NewLogger(t).Sugar(),
-		idpLoader:   loader,
-		defaultHTTPClient: &http.Client{
-			Transport: defaultOIDCTransport(),
-			Timeout:   defaultOIDCTimeout,
-		},
-	}
-
-	_, audience, idpName, cacheHit, err := auth.getJWKSForIssuer(t.Context(), issuer)
-	require.NoError(t, err)
-	assert.False(t, cacheHit)
-	assert.Equal(t, "breakglass-ui", audience)
-	assert.Equal(t, "secure-idp", idpName)
-
-	auth.jwksMutex.Lock()
-	elem, ok := auth.jwksCache[issuer]
-	require.True(t, ok, "initial JWKS lookup should cache the issuer")
-	entry := elem.Value.(*jwksCacheEntry)
-	entry.audienceRefreshedAt = time.Now().Add(-audienceRefreshInterval - time.Second)
-	entry.audienceAttemptedAt = time.Now().Add(-audienceRefreshFailureBackoff - time.Second)
-	auth.jwksMutex.Unlock()
-
-	loader.setConfig(&config.IdentityProviderConfig{
-		Name:               "insecure-idp",
-		Issuer:             issuer,
-		Authority:          issuer,
-		ClientID:           "breakglass-ui",
-		ExpectedAudience:   "breakglass-ui",
-		InsecureSkipVerify: true,
-	})
-
-	_, _, _, cacheHit, err = auth.getJWKSForIssuer(t.Context(), issuer)
-	require.Error(t, err)
-	assert.True(t, cacheHit)
-	assert.ErrorIs(t, err, errUnknownIdentityProvider)
-
-	auth.jwksMutex.RLock()
-	_, stillCached := auth.jwksCache[issuer]
-	cacheLen := auth.jwksLRUList.Len()
-	auth.jwksMutex.RUnlock()
-	assert.False(t, stillCached, "insecure live IDP config should evict stale JWKS")
-	assert.Equal(t, 0, cacheLen)
 }
 
 func TestGetJWKSForIssuer_InvalidAuthorityRejected(t *testing.T) {
@@ -1276,4 +1284,45 @@ func TestAuthMiddleware_AudienceValidation(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code, "matching audience should be accepted")
 	})
+}
+
+type blockingIdentityProviderLoader struct {
+	started chan struct{}
+	release chan struct{}
+	cfg     *config.IdentityProviderConfig
+}
+
+func (l blockingIdentityProviderLoader) LoadIdentityProviderByIssuer(context.Context, string) (*config.IdentityProviderConfig, error) {
+	close(l.started)
+	<-l.release
+	return l.cfg, nil
+}
+
+func TestGetJWKSForIssuerDoesNotReturnConcurrentlyInvalidatedSnapshot(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprint(replace), func(t *testing.T) {
+			issuer := "https://idp.example.com"
+			loader := blockingIdentityProviderLoader{started: make(chan struct{}), release: make(chan struct{}), cfg: &config.IdentityProviderConfig{
+				Issuer: issuer, Authority: issuer, ExpectedAudience: "test",
+			}}
+			auth := &AuthHandler{jwksCache: make(map[string]*list.Element), jwksLRUList: list.New(), idpLoader: loader, log: zaptest.NewLogger(t).Sugar()}
+			old := auth.jwksLRUList.PushFront(&jwksCacheEntry{issuer: issuer})
+			auth.jwksCache[issuer] = old
+			done := make(chan error, 1)
+			go func() {
+				_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), issuer)
+				done <- err
+			}()
+			<-loader.started
+			auth.jwksMutex.Lock()
+			delete(auth.jwksCache, issuer)
+			auth.jwksLRUList.Remove(old)
+			if replace {
+				auth.jwksCache[issuer] = auth.jwksLRUList.PushFront(&jwksCacheEntry{issuer: issuer})
+			}
+			auth.jwksMutex.Unlock()
+			close(loader.release)
+			assert.ErrorIs(t, <-done, errUnknownIdentityProvider)
+		})
+	}
 }
