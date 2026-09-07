@@ -1441,7 +1441,7 @@ func TestAuditKafkaSecretNamespaceValidationDoesNotReadInvalidNamespaces(t *test
 	assert.Empty(t, counting.gets)
 }
 
-func TestAuditConfigReconcile_EmptyTLSNamespaceFailsAndDoesNotReload(t *testing.T) {
+func TestAuditConfigReconcile_EmptyTLSNamespaceExcludedFromReload(t *testing.T) {
 	config := &breakglassv1alpha1.AuditConfig{ObjectMeta: metav1.ObjectMeta{Name: "empty-tls-namespace"}, Spec: breakglassv1alpha1.AuditConfigSpec{
 		Enabled: true,
 		Sinks: []breakglassv1alpha1.AuditSinkConfig{{Name: "kafka", Type: breakglassv1alpha1.AuditSinkTypeKafka, Kafka: &breakglassv1alpha1.KafkaSinkSpec{
@@ -1452,8 +1452,10 @@ func TestAuditConfigReconcile_EmptyTLSNamespaceFailsAndDoesNotReload(t *testing.
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca", Namespace: "controller"}, Data: map[string][]byte{"ca.crt": []byte("ca")}}
 	r, _ := newTestAuditConfigReconciler(t, config, secret)
 	r.SetControllerNamespace("controller")
+	reloadCalled := false
 	var reloaded []*breakglassv1alpha1.AuditConfig
 	r.onReloadMultiple = func(_ context.Context, configs []*breakglassv1alpha1.AuditConfig) error {
+		reloadCalled = true
 		reloaded = configs
 		return nil
 	}
@@ -1461,6 +1463,7 @@ func TestAuditConfigReconcile_EmptyTLSNamespaceFailsAndDoesNotReload(t *testing.
 	require.NoError(t, err)
 	// Aggregation still reloads so an invalid config cannot leave a previously
 	// accepted sink active; the invalid config itself must be absent.
+	assert.True(t, reloadCalled)
 	assert.Empty(t, reloaded)
 	updated := &breakglassv1alpha1.AuditConfig{}
 	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, updated))
