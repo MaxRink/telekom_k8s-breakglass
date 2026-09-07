@@ -200,7 +200,7 @@ describe("SessionApprovalView", () => {
     };
     mockGetSessionByName.mockRejectedValueOnce(axiosError);
 
-    const wrapper = mount(SessionApprovalView, {
+    mount(SessionApprovalView, {
       global: {
         provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
         stubs: {
