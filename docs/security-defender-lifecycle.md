@@ -59,3 +59,11 @@ Deployment records take their UID from the server response to the apply request.
 `TestTrackedApplyRetainsResponseIdentity` covers typed and GVK-bearing unstructured objects, asserting that the original object receives the apply response UID without a fallback GET.
 
 Workload matching tolerates configurable durations for the standard not-ready and unreachable `Exists`/`NoExecute` admission tolerations; unrelated tolerations and executable configuration remain checked. Pod-operation authorization lazily reads one live target Pod snapshot per request and reuses it across recorded references, including failed lookups. Each new request performs a fresh lookup.
+
+## Debug session namespace selection
+
+The request `namespace` field is a deprecated alias for `targetNamespace`; it
+never selects the hub namespace of the DebugSession object. Omit both fields
+to use the template target namespace. Fixed template targets reject a different
+requested namespace. E2E fixtures keep hub resource lookup and cleanup namespaces
+separate from workload targets, and verify both on the creation response.

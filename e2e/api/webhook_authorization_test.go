@@ -545,7 +545,6 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	session, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Debug session webhook authorization test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
