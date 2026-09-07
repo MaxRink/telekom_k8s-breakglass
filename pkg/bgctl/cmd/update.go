@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/terminal"
 	"github.com/telekom/k8s-breakglass/pkg/version"
 )
 
@@ -33,6 +34,7 @@ const (
 	maxArchiveDownloadSize = 600 << 20
 
 	maxUpdateErrorBodyBytes = 4 << 10
+	maxChecksumBodyBytes    = 4 << 10
 
 	defaultUpdateAPIHTTPTimeout      = 30 * time.Second
 	defaultUpdateDownloadHTTPTimeout = 5 * time.Minute
@@ -467,7 +469,7 @@ func readUpdateErrorBody(r io.Reader) string {
 	if truncated {
 		body = body[:maxUpdateErrorBodyBytes]
 	}
-	text := strings.TrimSpace(string(body))
+	text := terminal.SafeText(strings.TrimSpace(string(body)))
 	if truncated {
 		text += "... (truncated)"
 	}
@@ -498,9 +500,12 @@ func verifyChecksum(ctx context.Context, assets []githubAsset, name, filePath st
 		}
 		return fmt.Errorf("refusing update without checksum verification: checksum download failed: %s", resp.Status)
 	}
-	checksumBytes, err := io.ReadAll(resp.Body)
+	checksumBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxChecksumBodyBytes+1))
 	if err != nil {
 		return err
+	}
+	if len(checksumBytes) > maxChecksumBodyBytes {
+		return fmt.Errorf("checksum response exceeds %d bytes", maxChecksumBodyBytes)
 	}
 	expected := strings.Fields(string(checksumBytes))
 	if len(expected) == 0 {
@@ -519,7 +524,7 @@ func verifyChecksum(ctx context.Context, assets []githubAsset, name, filePath st
 	}
 	actual := hex.EncodeToString(h.Sum(nil))
 	if actual != expected[0] {
-		return fmt.Errorf("checksum mismatch: expected %s got %s", expected[0], actual)
+		return fmt.Errorf("checksum mismatch: expected %s got %s", terminal.SafeText(expected[0]), actual)
 	}
 	return nil
 }

@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
 - **Authorization webhook session selection**: Register shared BreakglassSession
   field indexes even when reconcilers are disabled, so approved sessions remain
   discoverable by the SubjectAccessReview path (PR #1297).
