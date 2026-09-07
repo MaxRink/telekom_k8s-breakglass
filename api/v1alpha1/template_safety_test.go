@@ -91,12 +91,13 @@ count: {{ .vars.count | int }}`,
 
 func TestTemplateMutationDisablesTrustedFields(t *testing.T) {
 	for _, source := range []string{
-		`value: {{ set .session "name" .vars.payload }}{{ .session.name }}`,
-		`{{ if .vars.flag }}{{ set .session "name" .vars.payload }}{{ end }}value: {{ .session.name }}`,
-		`{{ with .vars }}{{ set $.session "name" .payload }}{{ end }}value: {{ .session.name }}`,
-		`{{ range .vars.items }}{{ merge $.session . }}{{ end }}value: {{ .session.name }}`,
-		`{{ define "mutate" }}{{ mustMerge .session .vars }}{{ end }}value: {{ .session.name }}`,
-		`{{ define "mutate" }}{{ .session.name }}{{ end }}{{ template "mutate" . }}{{ mergeOverwrite .session .vars }}`,
+		`{{ $ignored := set .session "name" .vars.payload }}value: {{ .session.name }}`,
+		`{{ $ignored := unset .session "name" }}value: {{ .session.name }}`,
+		`{{ $ignored := merge .session .vars }}value: {{ .session.name }}`,
+		`{{ $ignored := mustMerge .session .vars }}value: {{ .session.name }}`,
+		`{{ $ignored := mergeOverwrite .session .vars }}value: {{ .session.name }}`,
+		`{{ $ignored := mustMergeOverwrite .session .vars }}value: {{ .session.name }}`,
+		`{{ if (set .session "name" .vars.payload).name }}value: {{ .session.name }}{{ end }}`,
 	} {
 		if err := validateGoTemplateSyntax(source); err == nil {
 			t.Errorf("accepted trusted field in mutating template: %s", source)

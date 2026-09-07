@@ -88,7 +88,20 @@ func pipeMutates(pipe *parse.PipeNode) bool {
 			if nested, ok := arg.(*parse.PipeNode); ok && pipeMutates(nested) {
 				return true
 			}
+			if chain, ok := arg.(*parse.ChainNode); ok && nodeMutates(chain.Node) {
+				return true
+			}
 		}
+	}
+	return false
+}
+
+func nodeMutates(node parse.Node) bool {
+	switch n := node.(type) {
+	case *parse.PipeNode:
+		return pipeMutates(n)
+	case *parse.ChainNode:
+		return nodeMutates(n.Node)
 	}
 	return false
 }
