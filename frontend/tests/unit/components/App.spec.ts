@@ -13,11 +13,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mount, VueWrapper } from "@vue/test-utils";
+import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import App from "@/App.vue";
 import { AuthKey, BrandingKey } from "@/keys";
 import { useUser } from "@/services/auth";
+
+vi.mock("@/services/multiIDP", () => ({
+  getMultiIDPConfig: vi.fn().mockResolvedValue({ identityProviders: [], escalationIDPMapping: {} }),
+}));
 
 const ScaleTelekomAppShellElement = class extends HTMLElement {};
 
@@ -86,8 +90,10 @@ describe("App — high-contrast and theme toggles", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushPromises();
     wrapper?.unmount();
+    await flushPromises();
     wrapper = null;
     vi.restoreAllMocks();
     localStorage.clear();
