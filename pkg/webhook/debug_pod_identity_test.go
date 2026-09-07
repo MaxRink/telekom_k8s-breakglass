@@ -75,7 +75,6 @@ func TestDebugSessionAccessRequiresLiveTargetPodIdentity(t *testing.T) {
 			allowed, _, _ = wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "spoke", "https://a.example", &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "workloads", Name: "pod"}, zap.NewNop().Sugar())
 			require.False(t, allowed)
 			require.Equal(t, 2*wantFetches, fetches)
-
 		})
 	}
 }
