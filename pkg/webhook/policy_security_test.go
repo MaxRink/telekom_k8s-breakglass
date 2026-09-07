@@ -115,6 +115,8 @@ func TestOverrideApprovalUsesEachRecordedProvider(t *testing.T) {
 		{name: "disallowed provider group", approvers: []string{"shared@example.com"}, providers: []string{"idp-b"}, allowed: []string{"idp-a"}, overrides: groupPolicy},
 		{name: "disallowed provider direct user", approvers: []string{"shared@example.com"}, providers: []string{"idp-b"}, allowed: []string{"idp-a"}, overrides: userPolicy},
 		{name: "allowed provider direct user", approvers: []string{"shared@example.com"}, providers: []string{"idp-b"}, allowed: []string{"idp-b"}, overrides: userPolicy, want: true},
+		{name: "mixed case allowed provider direct user", approvers: []string{"Shared@Example.COM"}, providers: []string{"idp-b"}, allowed: []string{"idp-b"}, overrides: userPolicy, want: true},
+		{name: "mixed case disallowed provider direct user", approvers: []string{"Shared@Example.COM"}, providers: []string{"idp-a"}, allowed: []string{"idp-b"}, overrides: userPolicy},
 		{name: "missing legacy group provenance", approvers: []string{"shared@example.com"}, overrides: groupPolicy},
 		{name: "legacy cannot infer single provider", approvers: []string{"shared@example.com"}, allowed: []string{"idp-b"}, overrides: groupPolicy},
 		{name: "legacy direct user with restriction", approvers: []string{"shared@example.com"}, allowed: []string{"idp-b"}, overrides: userPolicy},
