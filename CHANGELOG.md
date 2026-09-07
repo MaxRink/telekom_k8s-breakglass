@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
+
+
 ### Added
 
 - **DebugSession authoring guidance**: Added provider-neutral documentation for

@@ -38,6 +38,9 @@ type Action struct {
 	// PodSecurityOverrides contains escalation-level overrides for pod security evaluation.
 	// If non-nil, these override the default pod security thresholds/factors.
 	PodSecurityOverrides *breakglassv1alpha1.PodSecurityOverrides
+	// PodSecurityOverrideApproved is set only after the webhook verifies the
+	// escalation's additional approval policy.
+	PodSecurityOverrideApproved bool
 }
 
 // PodSecurityResult contains the outcome of pod security evaluation.
@@ -268,6 +271,9 @@ func (e *Evaluator) evaluatePodSecurity(act Action, rules *breakglassv1alpha1.Po
 			// Continue with normal evaluation - overrides don't apply to this namespace
 			overrides = nil
 		}
+		if overrides != nil && overrides.RequireApproval && !act.PodSecurityOverrideApproved {
+			overrides = nil // Unapproved relaxation must not change normal policy evaluation.
+		}
 	}
 
 	// Detect risk factors
@@ -398,7 +404,8 @@ func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *breakglassv1alpha1.
 	if len(exemptions.PodLabels) > 0 {
 		allMatch := true
 		for k, v := range exemptions.PodLabels {
-			if pod.Labels[k] != v {
+			labelValue, exists := pod.Labels[k]
+			if !exists || labelValue != v {
 				allMatch = false
 				break
 			}
@@ -453,12 +460,12 @@ func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf breakglassv1alpha1.Ris
 	allContainers := allPodContainers(pod)
 
 	for _, c := range allContainers {
+		if effectiveRunAsUser(pod, c) == 0 {
+			factors = append(factors, fmt.Sprintf("runAsRoot:%s", c.Name))
+		}
 		if c.SecurityContext != nil {
 			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
 				factors = append(factors, fmt.Sprintf("privilegedContainer:%s", c.Name))
-			}
-			if c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
-				factors = append(factors, fmt.Sprintf("runAsRoot:%s", c.Name))
 			}
 			// Check capabilities
 			if c.SecurityContext.Capabilities != nil {
@@ -505,12 +512,12 @@ func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.Ri
 	privilegedCount := 0
 	rootCount := 0
 	for _, c := range allContainers {
+		if effectiveRunAsUser(pod, c) == 0 {
+			rootCount++
+		}
 		if c.SecurityContext != nil {
 			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
 				privilegedCount++
-			}
-			if c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
-				rootCount++
 			}
 			// Add capability scores
 			if c.SecurityContext.Capabilities != nil {
@@ -544,6 +551,16 @@ func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.Ri
 	}
 
 	return score
+}
+
+func effectiveRunAsUser(pod *corev1.Pod, container corev1.Container) int64 {
+	if container.SecurityContext != nil && container.SecurityContext.RunAsUser != nil {
+		return *container.SecurityContext.RunAsUser
+	}
+	if pod != nil && pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.RunAsUser != nil {
+		return *pod.Spec.SecurityContext.RunAsUser
+	}
+	return -1
 }
 
 // isHostPathWritable checks if a hostPath volume is mounted as writable by any container.

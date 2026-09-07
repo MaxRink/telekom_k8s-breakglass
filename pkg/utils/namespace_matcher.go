@@ -73,6 +73,18 @@ func (m *NamespaceMatcher) MatchesWithLabels(namespace string, labels map[string
 	return m.matchesSelectorTerms(labels)
 }
 
+func (m *NamespaceMatcher) hasInvalidPattern() bool {
+	if m.filter == nil {
+		return false
+	}
+	for _, pattern := range m.filter.Patterns {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // MatchesAny returns true if the filter is empty (matching all namespaces by convention).
 // This is useful for allow-lists where an empty filter means "allow all".
 func (m *NamespaceMatcher) MatchesAny() bool {
@@ -194,7 +206,13 @@ func NewNamespaceAllowDenyMatcher(allow, deny *breakglassv1alpha1.NamespaceFilte
 // IsAllowed checks if a namespace is allowed based on allow/deny filters.
 // Uses only namespace name for matching (no labels).
 func (m *NamespaceAllowDenyMatcher) IsAllowed(namespace string) bool {
+	if m.allow.hasInvalidPattern() {
+		return false
+	}
 	// Check deny first (deny takes precedence if matched)
+	if m.deny.hasInvalidPattern() {
+		return false
+	}
 	if m.deny.Matches(namespace) {
 		return false
 	}
@@ -210,7 +228,13 @@ func (m *NamespaceAllowDenyMatcher) IsAllowed(namespace string) bool {
 
 // IsAllowedWithLabels checks if a namespace with labels is allowed.
 func (m *NamespaceAllowDenyMatcher) IsAllowedWithLabels(namespace string, labels map[string]string) bool {
+	if m.allow.hasInvalidPattern() {
+		return false
+	}
 	// Check deny first (deny takes precedence if matched)
+	if m.deny.hasInvalidPattern() {
+		return false
+	}
 	if m.deny.MatchesWithLabels(namespace, labels) {
 		return false
 	}

@@ -20,6 +20,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -887,7 +888,6 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 				return nil
 			}).WithObjects(objs...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
-
 			wc := &WebhookController{
 				log:          logger.Sugar(),
 				escalManager: escalMgr,
@@ -2361,6 +2361,9 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 
 			objects := make([]client.Object, 0, len(tc.escalations))
 			for _, esc := range tc.escalations {
+				if esc.UID == "" {
+					esc.UID = types.UID("uid-" + esc.Name)
+				}
 				objects = append(objects, esc)
 			}
 
@@ -2371,6 +2374,18 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 				return nil
 			}).WithObjects(objects...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
+			for i := range tc.sessions {
+				for j := range tc.sessions[i].OwnerReferences {
+					for _, esc := range tc.escalations {
+						if tc.sessions[i].OwnerReferences[j].Name == esc.Name {
+							tc.sessions[i].OwnerReferences[j].UID = esc.UID
+							tc.sessions[i].OwnerReferences[j].APIVersion = breakglassv1alpha1.GroupVersion.String()
+							controller := true
+							tc.sessions[i].OwnerReferences[j].Controller = &controller
+						}
+					}
+				}
+			}
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
@@ -2432,6 +2447,37 @@ func TestGetPodSecurityOverridesFromSessions_NilEscalManager(t *testing.T) {
 
 	if overrides != nil {
 		t.Errorf("expected nil overrides when escalManager is nil, got %+v", overrides)
+	}
+}
+
+func TestPodSecurityOverrideApprovalRequiresListedUser(t *testing.T) {
+	overrides := &breakglassv1alpha1.PodSecurityOverrides{
+		RequireApproval: true,
+		Approvers:       &breakglassv1alpha1.PodSecurityApprovers{Users: []string{"security@example.com"}},
+	}
+	session := breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{Approvers: []string{"operator@example.com"}}}
+	wc := &WebhookController{}
+	if wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("unexpected approval from an unlisted user")
+	}
+	session.Status.Approvers = []string{"security@example.com"}
+	if !wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("expected listed user approval")
+	}
+	overrides.Approvers = &breakglassv1alpha1.PodSecurityApprovers{Groups: []string{"security-team"}}
+	wc.escalManager = &escalation.EscalationManager{}
+	session.Status.ApproverIdentityProviders = []string{"idp-a"}
+	wc.approverResolverFetchFn = func(context.Context, string) (breakglass.GroupMemberResolver, error) {
+		return policyMemberResolver{members: []string{"other@example.com"}}, nil
+	}
+	if wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("unexpected approval from an unrelated group")
+	}
+	wc.approverResolverFetchFn = func(context.Context, string) (breakglass.GroupMemberResolver, error) {
+		return policyMemberResolver{members: []string{"security@example.com"}}, nil
+	}
+	if !wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("expected approval from configured group member")
 	}
 }
 
