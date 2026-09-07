@@ -592,6 +592,36 @@ func TestRestrictedNotificationPrivacyFilters(t *testing.T) {
 	}
 }
 
+func TestRestrictedNotificationPrivacySnapshotFiltersAndSendsVisibleRecipient(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForApprovers: []string{"allowed"},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Groups: []string{"team"},
+			},
+			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{Groups: []string{"private"}},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{IDPGroupMemberships: map[string]map[string][]string{
+			"allowed": {"private": {"private@example.com"}},
+		}},
+	}
+	sender := &FakeMailSender{}
+	controller := &BreakglassSessionController{log: zap.NewNop().Sugar(), mail: sender}
+	approvers := []string{"private@example.com", "visible@example.com"}
+	groups := map[string][]string{
+		"team":    {"visible@example.com"},
+		"private": {"private@example.com"},
+	}
+
+	filtered, suppressed := controller.filterExcludedNotificationRecipients(controller.log, approvers, groups, esc)
+	require.False(t, suppressed)
+	assert.Equal(t, []string{"visible@example.com"}, filtered)
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", filtered, groups, esc)
+
+	assert.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{"visible@example.com"}, sender.LastRecivers)
+}
+
 func TestRestrictedNotificationMembershipPreservesOrderAndExactIdentity(t *testing.T) {
 	esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{AllowedIdentityProvidersForApprovers: []string{"first", "second"}}, Status: breakglassv1alpha1.BreakglassEscalationStatus{IDPGroupMemberships: map[string]map[string][]string{
 		"first":  {"team": {"b@example.com", "a@example.com", "b@example.com"}},

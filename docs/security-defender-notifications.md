@@ -44,6 +44,11 @@ otherwise all request emails are suppressed. A successful empty lookup from the
 default provider cannot establish that a restricted-provider group is empty.
 Explicitly configured hidden users still require no group lookup.
 
+The escalation status updater refreshes exclusion-only and hidden-only groups in
+the same allowed-provider hierarchy used by request filtering. These privacy
+snapshots are kept separate from `approverGroupMembers` and do not affect the
+approver-group readiness condition.
+
 Each eligible recipient receives at most one request email. Duplicate membership
 records do not duplicate a group badge, and an explicit user entry does not send
 a second email when the same recipient is already mapped to an approver group.
