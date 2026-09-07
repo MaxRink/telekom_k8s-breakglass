@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
   documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
   Node 24 release line required by the existing dependency graph (including
