@@ -74,7 +74,7 @@ type countingAuditClient struct {
 }
 
 func (c *countingAuditClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
-	c.gets = append(c.gets, types.NamespacedName{Namespace: key.Namespace, Name: key.Name})
+	c.gets = append(c.gets, types.NamespacedName(key))
 	return c.Client.Get(ctx, key, obj, opts...)
 }
 
@@ -1452,11 +1452,16 @@ func TestAuditConfigReconcile_EmptyTLSNamespaceFailsAndDoesNotReload(t *testing.
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca", Namespace: "controller"}, Data: map[string][]byte{"ca.crt": []byte("ca")}}
 	r, _ := newTestAuditConfigReconciler(t, config, secret)
 	r.SetControllerNamespace("controller")
-	reloaded := false
-	r.onReloadMultiple = func(context.Context, []*breakglassv1alpha1.AuditConfig) error { reloaded = true; return nil }
+	var reloaded []*breakglassv1alpha1.AuditConfig
+	r.onReloadMultiple = func(_ context.Context, configs []*breakglassv1alpha1.AuditConfig) error {
+		reloaded = configs
+		return nil
+	}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: config.Name}})
 	require.NoError(t, err)
-	require.False(t, reloaded)
+	// Aggregation still reloads so an invalid config cannot leave a previously
+	// accepted sink active; the invalid config itself must be absent.
+	assert.Empty(t, reloaded)
 	updated := &breakglassv1alpha1.AuditConfig{}
 	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, updated))
 	condition := apimeta.FindStatusCondition(updated.Status.Conditions, "Ready")
