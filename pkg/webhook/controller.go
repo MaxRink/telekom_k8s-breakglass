@@ -515,7 +515,11 @@ func (wc *WebhookController) resolveApproverProvider(ctx context.Context, provid
 	// called by the caller after this lock is released.
 	wc.approverResolverMu.Lock()
 	defer wc.approverResolverMu.Unlock()
-	idp, err := config.NewIdentityProviderLoader(wc.escalManager.Client).LoadIdentityProviderByName(ctx, provider)
+	log := wc.log
+	if log == nil {
+		log = zap.NewNop().Sugar()
+	}
+	idp, err := config.NewIdentityProviderLoader(wc.escalManager.Client).WithLogger(log).LoadIdentityProviderByName(ctx, provider)
 	if err != nil {
 		delete(wc.approverResolvers, provider)
 		return nil, fmt.Errorf("load approver identity provider %q: %w", provider, err)
@@ -527,7 +531,7 @@ func (wc *WebhookController) resolveApproverProvider(ctx context.Context, provid
 	if cached, ok := wc.approverResolvers[provider]; ok && cached.config == key {
 		return cached.resolver, nil
 	}
-	resolver := escalation.SetupResolver(idp, zap.NewNop().Sugar())
+	resolver := escalation.SetupResolver(idp, log)
 	if wc.approverResolvers == nil {
 		wc.approverResolvers = make(map[string]cachedApproverResolver)
 	}

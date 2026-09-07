@@ -17,6 +17,8 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,7 +36,7 @@ func approverResolverProvider(name string) (*breakglassv1alpha1.IdentityProvider
 }
 
 func TestApproverResolverReusesProductionMembershipCache(t *testing.T) {
-	var tokens, searches, members atomic.Int32
+	var tokens, searches, members, details atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -44,6 +46,9 @@ func TestApproverResolverReusesProductionMembershipCache(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/groups/group-id/members"):
 			members.Add(1)
 			fmt.Fprint(w, `[{"id":"user","username":"security","email":"security@example.com"}]`)
+		case strings.HasSuffix(r.URL.Path, "/groups/group-id"):
+			details.Add(1)
+			fmt.Fprint(w, `{"id":"group-id","name":"security-team","subGroups":[]}`)
 		case strings.HasSuffix(r.URL.Path, "/groups"):
 			searches.Add(1)
 			fmt.Fprint(w, `[{"id":"group-id","name":"security-team"}]`)
@@ -56,7 +61,8 @@ func TestApproverResolverReusesProductionMembershipCache(t *testing.T) {
 	idp.Spec.Keycloak.BaseURL = server.URL
 	idp.Spec.Keycloak.CertificateAuthority = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
 	kube := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(idp, secret).Build()
-	controller := &WebhookController{escalManager: &escalation.EscalationManager{Client: kube}}
+	core, observed := observer.New(zap.DebugLevel)
+	controller := &WebhookController{log: zap.New(core).Sugar(), escalManager: &escalation.EscalationManager{Client: kube}}
 	first, err := controller.resolveApproverProvider(context.Background(), idp.Name)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
@@ -70,6 +76,10 @@ func TestApproverResolverReusesProductionMembershipCache(t *testing.T) {
 	require.EqualValues(t, 1, tokens.Load())
 	require.EqualValues(t, 1, searches.Load())
 	require.EqualValues(t, 1, members.Load())
+	require.EqualValues(t, 1, details.Load())
+	require.NotEmpty(t, observed.FilterMessage("Loading specific IdentityProvider resource").All())
+	require.Len(t, observed.FilterMessage("Keycloak group sync enabled").All(), 1)
+	require.NotEmpty(t, observed.FilterMessage("Keycloak cache hit for group").All())
 }
 
 func TestApproverResolverReloadsIdentityAndCredentials(t *testing.T) {
