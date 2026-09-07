@@ -1119,7 +1119,7 @@ func (c *listErrorClient) List(ctx context.Context, list client.ObjectList, opts
 	return fmt.Errorf("simulated API error")
 }
 
-// TestCheckDebugSessionAccess tests the checkDebugSessionAccess helper function
+// TestCheckDebugSessionAccess tests the issuer-aware debug-session access helper.
 func TestCheckDebugSessionAccess(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	now := metav1.Now()

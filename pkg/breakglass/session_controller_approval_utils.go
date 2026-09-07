@@ -1182,21 +1182,6 @@ func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
 	return predicates
 }
 
-func userHasApprovedSession(session breakglassv1alpha1.BreakglassSession, email string) bool {
-	if email == "" {
-		return false
-	}
-	if strings.EqualFold(session.Status.Approver, email) {
-		return true
-	}
-	for _, approver := range session.Status.Approvers {
-		if strings.EqualFold(approver, email) {
-			return true
-		}
-	}
-	return false
-}
-
 func userHasApprovedSessionForProvider(session breakglassv1alpha1.BreakglassSession, email, provider string, legacyAllowed bool) bool {
 	for i, approver := range session.Status.Approvers {
 		storedProvider := ""
