@@ -198,36 +198,21 @@ Authorization selection normally uses the indexed shared cache. If that cache
 has not observed a newly approved session yet, the selection path refreshes
 from the live API reader before deciding that no session exists.
 
-### Authentication Methods
+### Transport authentication
 
-#### Bearer Token (Recommended)
+The built-in SAR HTTP handler does not authenticate bearer tokens or client
+certificates. Adding a token or certificate to the API server's webhook
+kubeconfig alone does not protect the receiver. TLS server verification still
+protects the API server's connection to its configured webhook endpoint.
 
-```yaml
-users:
-  - name: kube-apiserver
-    user:
-      token: <secure-bearer-token>
-```
-
-Generate a secure token:
-
-```bash
-# Generate random token
-openssl rand -base64 32
-
-# Or use JWT with appropriate claims
-# (implementation-specific)
-```
-
-#### Client Certificates
-
-```yaml
-users:
-  - name: kube-apiserver
-    user:
-      client-certificate-data: <base64-client-cert>
-      client-key-data: <base64-client-key>
-```
+If mutual TLS or bearer authentication is required, configure a gateway,
+reverse proxy, or dedicated listener that actually validates those credentials
+before forwarding to Breakglass. Restrict direct access so callers cannot
+bypass that component. Protect both the `/breakglass/webhook/authorize/` and
+`/api/breakglass/webhook/authorize/` route prefixes, including ingress routes.
+The supplied SAR identities are trusted only within that caller/network
+boundary; rate limiting is not authentication. See the
+[SAR security model](security-best-practices.md#sar-authorization-webhook-design-decision).
 
 ## Hub Cluster Configuration
 
@@ -313,9 +298,9 @@ The webhook evaluates requests in this order:
 
 ### Authentication
 
-- Rotate webhook tokens regularly
-- Use strong credentials
-- Grant minimal required permissions
+- Validate caller credentials at the gateway or proxy when configured; the built-in SAR handler does not validate them.
+- Rotate credentials used by that validating component.
+- Restrict direct listener access and both SAR route aliases to trusted callers.
 
 ### Availability
 
