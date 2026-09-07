@@ -29,6 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
+	nodehelper "k8s.io/component-helpers/scheduling/corev1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -39,7 +40,9 @@ import (
 
 // KubectlDebugHandler handles kubectl-debug mode operations
 type KubectlDebugHandler struct {
+	identity   debugSessionReadIdentity
 	client     ctrlclient.Client
+	apiReader  ctrlclient.Reader
 	ccProvider ClientProviderInterface
 }
 
@@ -63,7 +66,11 @@ func (h *KubectlDebugHandler) deleteOrphanedPod(ctx context.Context, targetClien
 	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
 	defer cancel()
 
-	if err := targetClient.Delete(deleteCtx, pod); err != nil && !apierrors.IsNotFound(err) {
+	deleteOpts := &ctrlclient.DeleteOptions{}
+	if pod.UID != "" {
+		deleteOpts.Preconditions = &metav1.Preconditions{UID: &pod.UID}
+	}
+	if err := targetClient.Delete(deleteCtx, pod, deleteOpts); err != nil && !apierrors.IsNotFound(err) {
 		log.Errorw("Failed to delete orphaned debug pod after status update failure; "+
 			"the pod is not tracked in the session status and will not be cleaned up automatically",
 			"pod", pod.Name,
@@ -138,18 +145,58 @@ func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderI
 	}
 }
 
+// withIdentity binds every final live check and status retry to the authenticated principal.
+func (h *KubectlDebugHandler) withIdentity(identity debugSessionReadIdentity) *KubectlDebugHandler {
+	h.identity = identity
+	return h
+}
+
+func (h *KubectlDebugHandler) operationIdentity(user string) debugSessionReadIdentity {
+	identity := h.identity
+	if identity.username == "" {
+		identity.username = user
+	}
+	return identity
+}
+
+// WithAPIReader supplies live hub reads for mutation authorization and status CAS.
+func (h *KubectlDebugHandler) WithAPIReader(reader ctrlclient.Reader) *KubectlDebugHandler {
+	h.apiReader = reader
+	return h
+}
+
+func (h *KubectlDebugHandler) reader() ctrlclient.Reader {
+	if h.apiReader != nil {
+		return h.apiReader
+	}
+	return h.client
+}
+
 func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetry(
 	ctx context.Context,
 	ds *breakglassv1alpha1.DebugSession,
 	mutate func(*breakglassv1alpha1.DebugSessionStatus),
+) error {
+	return h.patchDebugSessionStatusWithRetryState(ctx, ds, mutate, false, "")
+}
+
+func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetryState(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	mutate func(*breakglassv1alpha1.DebugSessionStatus),
+	requireActive bool,
+	user string,
 ) error {
 	var patchedStatus breakglassv1alpha1.DebugSessionStatus
 	var patchedResourceVersion string
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &breakglassv1alpha1.DebugSession{}
-		if err := h.client.Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
+		if err := h.reader().Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
 			return err
+		}
+		if requireActive && (current.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(current, time.Now()) || !sessionParticipantCanOperate(current, h.operationIdentity(user))) {
+			return kubectlDebugPolicyErrorf("debug session is no longer active")
 		}
 
 		base := current.DeepCopy()
@@ -171,6 +218,35 @@ func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetry(
 	ds.Status = patchedStatus
 	ds.ResourceVersion = patchedResourceVersion
 	return nil
+}
+
+func (h *KubectlDebugHandler) requireActiveSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, user string) error {
+	current := &breakglassv1alpha1.DebugSession{}
+	if err := h.reader().Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
+		return fmt.Errorf("refresh debug session: %w", err)
+	}
+	if current.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(current, time.Now()) {
+		return kubectlDebugPolicyErrorf("debug session is no longer active")
+	}
+	if !sessionParticipantCanOperate(current, h.operationIdentity(user)) {
+		return kubectlDebugPolicyErrorf("user is no longer allowed to operate this session")
+	}
+	return nil
+}
+
+func sessionParticipantCanOperate(ds *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if identity.username == "" {
+		return false
+	}
+	if debugSessionIdentityMatchesProvider(identity, ds.Spec.IdentityProviderName, ds.Spec.IdentityProviderIssuer, ds.Spec.RequestedBy, ds.Spec.RequestedByEmail) {
+		return true
+	}
+	for _, p := range ds.Status.Participants {
+		if debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) && p.LeftAt == nil && (p.Role == breakglassv1alpha1.ParticipantRoleOwner || p.Role == breakglassv1alpha1.ParticipantRoleParticipant) {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureKubectlDebugStatus(status *breakglassv1alpha1.DebugSessionStatus) *breakglassv1alpha1.KubectlDebugStatus {
@@ -367,6 +443,9 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, ephemeralContainer)
 
 	// Update the pod using SubResource for ephemeral containers
+	if err := h.requireActiveSession(ctx, ds, user); err != nil {
+		return err
+	}
 	if err := targetClient.SubResource("ephemeralcontainers").Update(ctx, pod); err != nil {
 		return fmt.Errorf("failed to inject ephemeral container: %w", err)
 	}
@@ -387,7 +466,9 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		Ready:     true,
 	}
 
-	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	trackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
+	defer cancel()
+	err = h.patchDebugSessionStatusWithRetryState(trackCtx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		alreadyTracked := false
 		for _, existing := range kubectlStatus.EphemeralContainersInjected {
@@ -402,8 +483,18 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 			kubectlStatus.EphemeralContainersInjected = append(kubectlStatus.EphemeralContainersInjected, injectedContainer)
 		}
 
-		addAllowedPodIfMissing(status, allowedPod)
-	})
+		if status.State == breakglassv1alpha1.DebugSessionStateActive {
+			addAllowedPodIfMissing(status, allowedPod)
+		}
+	}, false, user)
+	if err != nil {
+		return err
+	}
+	if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(ds, time.Now()) || !sessionParticipantCanOperate(ds, h.operationIdentity(user)) {
+		zap.S().Warnw("Ephemeral container injected during session revocation; injection evidence retained", "session", ds.Name, "pod", podName, "container", containerName)
+		return kubectlDebugPolicyErrorf("session access was revoked during injection; the injected container is recorded and requires pod teardown")
+	}
+	return nil
 }
 
 // CreatePodCopy creates a debug copy of a pod
@@ -507,6 +598,9 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	copyPod.UID = ""
 
 	// Create the copy pod using Create (not SSA) because each pod copy must be unique
+	if err := h.requireActiveSession(ctx, ds, user); err != nil {
+		return nil, err
+	}
 	if err := targetClient.Create(ctx, copyPod); err != nil {
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
 	}
@@ -538,7 +632,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		Ready:     false, // Will be updated by reconciler
 	}
 
-	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	if err := h.patchDebugSessionStatusWithRetryState(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		alreadyTracked := false
 		for _, existing := range kubectlStatus.CopiedPods {
@@ -552,7 +646,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		}
 
 		addAllowedPodIfMissing(status, allowedPod)
-	}); err != nil {
+	}, true, user); err != nil {
 		// The pod exists on the spoke but is absent from the status lists that
 		// cleanup iterates, so it would never be reclaimed. Delete it so
 		// create+track is atomic-or-cleaned-up.
@@ -580,8 +674,8 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		return nil, kubectlDebugRequestErrorf("node debug is not enabled for this template")
 	}
 
-	// Validate node selector if configured
-	if len(nd.NodeSelector) > 0 {
+	// Validate the requested node against both node-debug and resolved session policy.
+	if len(nd.NodeSelector) > 0 || ds.Spec.ResolvedSchedulingConstraints != nil {
 		// Get target cluster client
 		targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 		if err != nil {
@@ -598,6 +692,33 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		for k, v := range nd.NodeSelector {
 			if nodeVal, exists := node.Labels[k]; !exists || nodeVal != v {
 				return nil, kubectlDebugPolicyErrorf("node %s does not match required selector %s=%s", nodeName, k, v)
+			}
+		}
+		if sc := ds.Spec.ResolvedSchedulingConstraints; sc != nil {
+			for k, v := range sc.NodeSelector {
+				nodeVal, exists := node.Labels[k]
+				if !exists || nodeVal != v {
+					return nil, kubectlDebugPolicyErrorf("node %s does not match resolved selector %s=%s", nodeName, k, v)
+				}
+			}
+			if sc.RequiredNodeAffinity != nil {
+				matches, err := nodehelper.MatchNodeSelectorTerms(node, sc.RequiredNodeAffinity)
+				if err != nil {
+					return nil, fmt.Errorf("evaluate required node affinity: %w", err)
+				}
+				if !matches {
+					return nil, kubectlDebugPolicyErrorf("node %s does not match required node affinity", nodeName)
+				}
+			}
+			for _, denied := range sc.DeniedNodes {
+				if matchPattern(denied, nodeName) {
+					return nil, kubectlDebugPolicyErrorf("node %s is denied by scheduling policy", nodeName)
+				}
+			}
+			for k, denied := range sc.DeniedNodeLabels {
+				if value, ok := node.Labels[k]; ok && (denied == "*" || value == denied) {
+					return nil, kubectlDebugPolicyErrorf("node %s is denied by label policy", nodeName)
+				}
 			}
 		}
 	}
@@ -694,6 +815,9 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 
 	// Create the pod using Create (not SSA) because each debug pod must be unique
+	if err := h.requireActiveSession(ctx, ds, user); err != nil {
+		return nil, err
+	}
 	if err := targetClient.Create(ctx, debugPod); err != nil {
 		return nil, fmt.Errorf("failed to create node debug pod: %w", err)
 	}
@@ -712,10 +836,10 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		Namespace:  namespace,
 	}
 
-	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	if err := h.patchDebugSessionStatusWithRetryState(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		addAllowedPodIfMissing(status, allowedPod)
 		addDeployedResourceIfMissing(status, deployedResource)
-	}); err != nil {
+	}, true, user); err != nil {
 		// This pod is privileged with hostPath "/" mounted read-write. Leaving it
 		// untracked means it outlives its session with no cleanup path at all, so
 		// the create must be rolled back.

@@ -79,7 +79,7 @@ func TestFindActiveSession(t *testing.T) {
 	}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(activeSession, otherSession, expiredSession).Build()
-	handler := NewKubectlDebugHandler(client, &mockClientProvider{})
+	handler := NewKubectlDebugHandler(client, &mockClientProvider{}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
 
 	// Test finding the session (specific cluster)
 	found, err := handler.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
@@ -110,13 +110,13 @@ func TestFindActiveSession(t *testing.T) {
 	// FindActiveSession should filter it out
 	// Create a client with ONLY expired session to valid
 	clientExpired := fake.NewClientBuilder().WithScheme(scheme).WithObjects(expiredSession).Build()
-	handlerExpired := NewKubectlDebugHandler(clientExpired, &mockClientProvider{})
+	handlerExpired := NewKubectlDebugHandler(clientExpired, &mockClientProvider{}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
 	found, err = handlerExpired.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 
 	clientLeft := fake.NewClientBuilder().WithScheme(scheme).WithObjects(leftParticipantSession).Build()
-	handlerLeft := NewKubectlDebugHandler(clientLeft, &mockClientProvider{})
+	handlerLeft := NewKubectlDebugHandler(clientLeft, &mockClientProvider{}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
 	found, err = handlerLeft.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	assert.Nil(t, found)

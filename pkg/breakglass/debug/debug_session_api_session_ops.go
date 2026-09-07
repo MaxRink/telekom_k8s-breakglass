@@ -712,13 +712,13 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	participantIndex := -1
 	participants := append([]breakglassv1alpha1.DebugSessionParticipant(nil), session.Status.Participants...)
 	for i := range participants {
-		if debugSessionIdentityMatchesProvider(identity, participants[i].IdentityProviderName, participants[i].IdentityProviderIssuer, participants[i].User, participants[i].Email) {
+		if participants[i].LeftAt == nil && debugSessionIdentityMatchesProvider(identity, participants[i].IdentityProviderName, participants[i].IdentityProviderIssuer, participants[i].User, participants[i].Email) {
 			participantIndex = i
 			break
 		}
 	}
 
-	if participantIndex == -1 {
+	if participantIndex == -1 || participants[participantIndex].LeftAt != nil {
 		apiresponses.RespondNotFoundSimple(ctx, "user is not a participant in this session")
 		return
 	}
