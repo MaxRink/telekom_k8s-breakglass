@@ -435,11 +435,11 @@ func TestTrackOIDCSecrets_RefreshAutoToNoneClearsFallback(t *testing.T) {
 }
 
 func TestOIDCGetRESTConfig_DirectTransitionClearsInheritedFallback(t *testing.T) {
-	var issuer string
-	var clientCredentialSecrets []string
+	clientCredentialSecrets := make(chan string, 4)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "openid-configuration") {
+			issuer := "https://" + r.Host
 			_, _ = fmt.Fprintf(w, `{"issuer":%q,"token_endpoint":%q}`, issuer, issuer+"/token")
 			return
 		}
@@ -452,14 +452,14 @@ func TestOIDCGetRESTConfig_DirectTransitionClearsInheritedFallback(t *testing.T)
 		case "refresh_token":
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 		case "client_credentials":
-			clientCredentialSecrets = append(clientCredentialSecrets, r.FormValue("client_secret"))
+			clientCredentialSecrets <- r.FormValue("client_secret")
 			_, _ = fmt.Fprint(w, `{"access_token":"fallback-token","expires_in":3600,"token_type":"Bearer"}`)
 		default:
 			http.Error(w, `{"error":"unsupported_grant_type"}`, http.StatusBadRequest)
 		}
 	}))
 	defer server.Close()
-	issuer = server.URL
+	issuer := server.URL
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
@@ -496,7 +496,12 @@ func TestOIDCGetRESTConfig_DirectTransitionClearsInheritedFallback(t *testing.T)
 
 	_, err := provider.GetRESTConfig(context.Background(), cc)
 	require.NoError(t, err)
-	require.Equal(t, []string{"old-sa-secret"}, clientCredentialSecrets)
+	select {
+	case secret := <-clientCredentialSecrets:
+		require.Equal(t, "old-sa-secret", secret)
+	default:
+		t.Fatal("inherited configuration did not use its fallback credential")
+	}
 
 	key := tokenCacheKey(cc.Namespace, cc.Name)
 	provider.mu.Lock()
@@ -513,7 +518,11 @@ func TestOIDCGetRESTConfig_DirectTransitionClearsInheritedFallback(t *testing.T)
 	_, err = provider.GetRESTConfig(context.Background(), cc)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrRefreshTokenExpired)
-	require.Equal(t, []string{"old-sa-secret"}, clientCredentialSecrets, "direct OIDC config must not reuse inherited fallback credentials")
+	select {
+	case secret := <-clientCredentialSecrets:
+		t.Fatalf("direct OIDC configuration reused a fallback credential: %q", secret)
+	default:
+	}
 }
 
 func TestGetAcrossAllNamespaces_DoesNotMatchSimilarNames(t *testing.T) {

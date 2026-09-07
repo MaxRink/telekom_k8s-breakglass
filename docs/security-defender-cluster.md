@@ -8,7 +8,7 @@ OIDC discovery and token grant requests use a client that refuses HTTP redirects
 
 ## OIDC Secret rotation
 
-When a `ClusterConfig` inherits OIDC settings from an `IdentityProvider` and omits an explicit client secret, the controller may use the IdentityProvider's Keycloak service-account Secret as fallback credentials. That Secret is included in the cache dependency index, so updates and deletes evict cached REST configuration and token state. Eviction is local cache invalidation; it does not revoke tokens at the identity provider.
+When a `ClusterConfig` inherits OIDC settings from an `IdentityProvider` and omits an explicit client secret, the controller may use the IdentityProvider's Keycloak service-account Secret as fallback credentials. That Secret is included in the cache dependency index, so updates and deletes evict cached REST configuration and token state. Eviction is local cache invalidation; it does not revoke tokens at the identity provider. Inherited fallback credentials are also cleared before resolving current settings, so changing to direct OIDC does not retain a previous provider's service-account fallback.
 
 ## Issuer binding
 
