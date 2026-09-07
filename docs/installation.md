@@ -655,6 +655,7 @@ breakglass-controller \
 breakglass-controller \
   --enable-frontend=false \
   --enable-api=false \
+  --enable-controllers=false \
   --enable-cleanup=false \
   --enable-webhooks=true \
   --webhook-bind-address=0.0.0.0:9443

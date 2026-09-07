@@ -87,6 +87,7 @@ func main() {
 //	breakglass-controller \
 //	  --enable-frontend=false \
 //	  --enable-api=false \
+//	  --enable-controllers=false \
 //	  --enable-cleanup=false \
 //	  --webhooks-metrics-bind-address=0.0.0.0:8083
 //
@@ -103,6 +104,7 @@ func main() {
 //	Runs only the frontend web UI without webhooks, API, or SAR.
 //	breakglass-controller \
 //	  --enable-api=false \
+//	  --enable-controllers=false \
 //	  --enable-webhooks=false \
 //	  --enable-cleanup=false
 //
@@ -112,6 +114,7 @@ func main() {
 //	breakglass-controller \
 //	  --enable-frontend=false \
 //	  --enable-api=false \
+//	  --enable-controllers=false \
 //	  --enable-webhooks=false \
 //	  --breakglass-namespace=breakglass-system
 //

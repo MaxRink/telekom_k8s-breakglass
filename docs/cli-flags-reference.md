@@ -10,7 +10,7 @@ The breakglass controller supports 40+ configuration flags that can be set via:
 1. **Command-line arguments**: `breakglass-controller --flag-name=value`
 2. **Environment variables**: `FLAG_NAME=value breakglass-controller`
 
-All flags have sensible defaults and are optional.
+API, controller, and cleanup roles require `--breakglass-namespace` or `BREAKGLASS_NAMESPACE`. Other flags have defaults. The individual flag examples below assume `BREAKGLASS_NAMESPACE` is already set for these roles.
 
 ## Quick Start
 
@@ -44,6 +44,7 @@ breakglass-controller \
 breakglass-controller \
   --enable-frontend=false \
   --enable-api=false \
+  --enable-controllers=false \
   --enable-cleanup=false \
   --enable-webhooks=true
 ```
