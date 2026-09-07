@@ -605,29 +605,31 @@ func TestSessionManager_AuthorizationSelectionDeduplicatesLiveFallback(t *testin
 	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
 
 	var wg sync.WaitGroup
-	results := make(chan []breakglassv1alpha1.BreakglassSession, 2)
-	secondStarted := make(chan struct{})
-	call := func(started chan struct{}) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if started != nil {
-				close(started)
-			}
-			sessions, err := manager.GetClusterUserBreakglassSessions(
-				context.Background(),
-				"tind-workload-01.tst.local-dev",
-				"platform-requester@example.com",
-			)
-			require.NoError(t, err)
-			results <- sessions
-		}()
-	}
-	call(nil)
+	results := make(chan []breakglassv1alpha1.BreakglassSession, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sessions, err := manager.GetClusterUserBreakglassSessions(
+			context.Background(), liveSession.Spec.Cluster, liveSession.Spec.User,
+		)
+		require.NoError(t, err)
+		results <- sessions
+	}()
 	<-started
-	call(secondStarted)
-	<-secondStarted
+	// DoChan registers this waiter synchronously. Starting a goroutine does not
+	// prove it joined the flight before the first live read is released.
+	joined := manager.liveFallbackFlight.DoChan(liveSession.Spec.Cluster+"\x00"+liveSession.Spec.User, func() (interface{}, error) {
+		return nil, nil
+	})
 	close(release)
+	shared := <-joined
+	require.NoError(t, shared.Err)
+	require.True(t, shared.Shared, "the manager's live lookup must share its in-flight result")
+	fallback, ok := shared.Val.(liveFallbackResult)
+	require.True(t, ok)
+	require.True(t, fallback.success)
+	require.Len(t, fallback.sessions, 1)
+	assert.Equal(t, liveSession.Name, fallback.sessions[0].Name)
 	wg.Wait()
 	close(results)
 
