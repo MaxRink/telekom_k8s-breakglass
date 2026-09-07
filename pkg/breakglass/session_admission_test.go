@@ -17,7 +17,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -38,7 +37,7 @@ func TestSessionAdmissionGlobalScopesAndCrashRecovery(t *testing.T) {
 			secondEsc.Namespace = "two"
 			secondEsc.UID = "escalation-two"
 			candidate := func(name, namespace, user, group string, owner *breakglassv1alpha1.BreakglassEscalation) *breakglassv1alpha1.BreakglassSession {
-				return &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID(name), Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Controller: ptr.To(true), Kind: "BreakglassEscalation", Name: owner.Name, UID: owner.UID}}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: user, Cluster: "cluster", GrantedGroup: group}}
+				return &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID(name), Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Controller: ptrBool(true), Kind: "BreakglassEscalation", Name: owner.Name, UID: owner.UID}}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: user, Cluster: "cluster", GrantedGroup: group}}
 			}
 			a := candidate("first", "one", "user", "admin", esc)
 			b := candidate("second", "two", "user", "other", secondEsc)
@@ -111,7 +110,7 @@ func (w failInitialQuotaStatusWriter) Update(ctx context.Context, obj client.Obj
 
 func TestQuotaReservationSurvivesInitialStatusFailure(t *testing.T) {
 	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "escalation", Namespace: "ns", UID: "esc"}}
-	s := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Controller: ptr.To(true), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID}}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"}}
+	s := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Controller: ptrBool(true), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID}}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"}}
 	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).WithObjects(esc, s).Build()
 	faulty := &failInitialQuotaStatusClient{Client: cli, fail: true}
 	sm := NewSessionManagerWithClientAndReader(faulty, cli, WithQuotaNamespace("controller"))
@@ -148,7 +147,7 @@ func TestDurableQuotaLimitPrecedence(t *testing.T) {
 
 func TestQuotaAdmissionPreservesProviderApprovalHistory(t *testing.T) {
 	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "esc"}}
-	s := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Controller: ptr.To(true), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID}}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "subject-a", Cluster: "cluster", GrantedGroup: "admin", IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending}}
+	s := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Controller: ptrBool(true), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID}}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "subject-a", Cluster: "cluster", GrantedGroup: "admin", IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending}}
 	recordApprover(&s.Status, "same@example.com", "idp-a")
 	idp := &breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "idp-a"}}
 	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(s).WithObjects(esc, idp, s).Build()
@@ -176,7 +175,7 @@ func TestQuotaAdmissionPreservesProviderApprovalHistory(t *testing.T) {
 }
 
 func TestQuotaRequiresUnambiguousControllingEscalation(t *testing.T) {
-	valid := metav1.OwnerReference{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: "esc", UID: "esc", Controller: ptr.To(true)}
+	valid := metav1.OwnerReference{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: "esc", UID: "esc", Controller: ptrBool(true)}
 	other := valid
 	other.Name, other.UID = "other", "other"
 	for _, tc := range []struct {
@@ -189,15 +188,15 @@ func TestQuotaRequiresUnambiguousControllingEscalation(t *testing.T) {
 		{"two forward", []metav1.OwnerReference{valid, other}, false},
 		{"two reverse", []metav1.OwnerReference{other, valid}, false},
 		{"noncontroller", []metav1.OwnerReference{{APIVersion: valid.APIVersion, Kind: valid.Kind, Name: valid.Name, UID: valid.UID}}, false},
-		{"wrong API", []metav1.OwnerReference{{APIVersion: "other/v1", Kind: valid.Kind, Name: valid.Name, UID: valid.UID, Controller: ptr.To(true)}}, false},
-		{"missing UID", []metav1.OwnerReference{{APIVersion: valid.APIVersion, Kind: valid.Kind, Name: valid.Name, Controller: ptr.To(true)}}, false},
-		{"different controller", []metav1.OwnerReference{valid, {Kind: "Other", Name: "other", UID: "other", Controller: ptr.To(true)}}, false},
+		{"wrong API", []metav1.OwnerReference{{APIVersion: "other/v1", Kind: valid.Kind, Name: valid.Name, UID: valid.UID, Controller: ptrBool(true)}}, false},
+		{"missing UID", []metav1.OwnerReference{{APIVersion: valid.APIVersion, Kind: valid.Kind, Name: valid.Name, Controller: ptrBool(true)}}, false},
+		{"different controller", []metav1.OwnerReference{valid, {Kind: "Other", Name: "other", UID: "other", Controller: ptrBool(true)}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "esc"}}
 			alternative := esc.DeepCopy()
 			alternative.Name, alternative.UID = "other", "other"
-			alternative.Spec.SessionLimitsOverride = &breakglassv1alpha1.SessionLimitsOverride{MaxActiveSessionsTotal: ptr.To(int32(0))}
+			alternative.Spec.SessionLimitsOverride = &breakglassv1alpha1.SessionLimitsOverride{MaxActiveSessionsTotal: ptrInt32(0)}
 			session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", OwnerReferences: tc.owners, Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}}}
 			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(esc, alternative, session).Build()
 			sm := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
@@ -222,7 +221,7 @@ func TestQuotaRequiresUnambiguousControllingEscalation(t *testing.T) {
 
 func TestQuotaRejectsRecreatedEscalation(t *testing.T) {
 	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "replacement"}}
-	session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: "old", Controller: ptr.To(true)}}}}
+	session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: "old", Controller: ptrBool(true)}}}}
 	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(esc, session).Build()
 	sm := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
 	require.ErrorContains(t, sm.reserveSession(t.Context(), session), "escalation UID changed")
@@ -233,7 +232,7 @@ func TestQuotaRejectsRecreatedEscalation(t *testing.T) {
 
 func TestQuotaMalformedLegacyOwnerRetainsRecordedReservation(t *testing.T) {
 	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "esc"}}
-	owner := metav1.OwnerReference{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: ptr.To(true)}
+	owner := metav1.OwnerReference{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: ptrBool(true)}
 	legacy := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "ns", UID: "legacy"}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "legacy"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending}}
 	candidate := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "candidate", Namespace: "ns", UID: "candidate", OwnerReferences: []metav1.OwnerReference{owner}, Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "candidate"}}
 	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(legacy).WithObjects(esc, legacy, candidate).Build()
@@ -278,7 +277,7 @@ func (r *replacedRecoveryEscalationReader) Get(ctx context.Context, key client.O
 }
 func TestQuotaRecoveryRechecksEscalationUIDBeforeTimeout(t *testing.T) {
 	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "esc"}}
-	session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: ptr.To(true)}}}}
+	session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: ptrBool(true)}}}}
 	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(esc, session).Build()
 	reader := &replacedRecoveryEscalationReader{Reader: cli}
 	sm := NewSessionManagerWithClientAndReader(cli, reader, WithQuotaNamespace("controller"))
