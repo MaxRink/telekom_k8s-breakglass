@@ -17,3 +17,13 @@ The spoke must propagate `identity.t-caas.telekom.com/issuer` in SubjectAccessRe
 ## Concurrent transitions
 
 Status apply configurations retain the original caller resource version through the final Kubernetes API mutation. A competing update produces a conflict rather than overwriting newer status. Manual SSA status converters also retain all new provenance fields; CRD generation is required on upgrade so the API server preserves them.
+
+## Admission diagnostics and constraint snapshots
+
+Adding an ephemeral container requires exactly one nonempty issuer extra; missing,
+empty, or multiple issuer values are rejected before session lookup. Requests that
+add no ephemeral container still require valid issuer provenance and an active
+session, as before.
+Resolved debug constraints are independent snapshots in both API responses and
+session status, including when no binding constraints are configured. Changes to
+a resolved snapshot do not change the source template or binding.

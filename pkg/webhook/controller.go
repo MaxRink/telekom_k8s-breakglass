@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -245,7 +246,21 @@ type PodFetchFunction func(ctx context.Context, clusterName, namespace, name str
 // NamespaceLabelsFetchFunction is the signature for functions that fetch namespace labels from a cluster.
 type NamespaceLabelsFetchFunction func(ctx context.Context, clusterName, namespace string) (map[string]string, error)
 
+type approverResolverConfig struct {
+	name, issuer, authority, providerType string
+	keycloak                              config.KeycloakRuntimeConfig
+	hasKeycloak                           bool
+}
+
+type cachedApproverResolver struct {
+	config   approverResolverConfig
+	resolver breakglass.GroupMemberResolver
+}
+
 type WebhookController struct {
+	approverResolverMu sync.Mutex
+	approverResolvers  map[string]cachedApproverResolver
+
 	log                     *zap.SugaredLogger
 	config                  config.Config
 	sesManager              *breakglass.SessionManager
@@ -495,11 +510,29 @@ func (wc *WebhookController) resolveApproverProvider(ctx context.Context, provid
 	if provider == "" || wc.escalManager == nil || wc.escalManager.Client == nil {
 		return nil, fmt.Errorf("approver identity provider lookup unavailable")
 	}
+	// Serialize fresh configuration reads with publication so a slower old read
+	// cannot overwrite a resolver constructed from newer credentials. Members is
+	// called by the caller after this lock is released.
+	wc.approverResolverMu.Lock()
+	defer wc.approverResolverMu.Unlock()
 	idp, err := config.NewIdentityProviderLoader(wc.escalManager.Client).LoadIdentityProviderByName(ctx, provider)
 	if err != nil {
+		delete(wc.approverResolvers, provider)
 		return nil, fmt.Errorf("load approver identity provider %q: %w", provider, err)
 	}
-	return escalation.SetupResolver(idp, zap.NewNop().Sugar()), nil
+	key := approverResolverConfig{name: idp.Name, issuer: idp.Issuer, authority: idp.Authority, providerType: idp.Type, hasKeycloak: idp.Keycloak != nil}
+	if idp.Keycloak != nil {
+		key.keycloak = *idp.Keycloak
+	}
+	if cached, ok := wc.approverResolvers[provider]; ok && cached.config == key {
+		return cached.resolver, nil
+	}
+	resolver := escalation.SetupResolver(idp, zap.NewNop().Sugar())
+	if wc.approverResolvers == nil {
+		wc.approverResolvers = make(map[string]cachedApproverResolver)
+	}
+	wc.approverResolvers[provider] = cachedApproverResolver{config: key, resolver: resolver}
+	return resolver, nil
 }
 
 // getClusterConfigAcrossNamespaces performs a ClusterConfig lookup across all namespaces

@@ -55,3 +55,5 @@ must be recreated using the corrected configuration. Mandatory restrictions are
 never silently ignored.
 
 Deployment records take their UID from the server response to the apply request. The controller uses the supported typed or unstructured Apply API and retains that response directly, avoiding a second name lookup that could observe a replacement.
+
+`TestTrackedApplyRetainsResponseIdentity` covers typed and GVK-bearing unstructured objects, asserting that the original object receives the apply response UID without a fallback GET.

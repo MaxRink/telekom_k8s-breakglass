@@ -952,7 +952,7 @@ func hasDuplicateClusterConfigName(clusterConfigs []breakglassv1alpha1.ClusterCo
 // mergeConstraints merges template and binding constraints
 func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *breakglassv1alpha1.DebugSessionConstraints, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionConstraints {
 	if binding == nil {
-		return templateConstraints
+		return templateConstraints.DeepCopy()
 	}
 	return mergeDebugSessionConstraints(templateConstraints, binding.Spec.Constraints)
 }
