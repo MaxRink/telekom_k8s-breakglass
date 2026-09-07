@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
 - Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
 
 - Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
@@ -51,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence when mutation is not required.
 
 ### Changed
+
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
 
 - Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
 
