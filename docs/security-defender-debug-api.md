@@ -34,3 +34,10 @@ template permissions. Existing requester and participant read access is unchange
 The session-creation E2E check compares the hub DebugSession namespace with its
 selected ClusterConfig namespace, independently of the fixture namespace, while
 asserting the template's spoke target namespace separately.
+
+Fixture guidance follows the same boundary: omit the deprecated API `namespace`
+field when exercising a template's default target, so the returned hub
+`DebugSession` namespace remains the ClusterConfig namespace while its target is
+`breakglass-debug`. Helm scheduling fixtures use exact denied node names such as
+`control-plane-1` and `etcd-1`; wildcard matching belongs in denied label
+selectors.

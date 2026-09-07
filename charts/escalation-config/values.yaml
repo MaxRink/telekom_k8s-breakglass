@@ -397,7 +397,7 @@ debugSessionBindings: []
   #         whenUnsatisfiable: ScheduleAnyway
   #     # Block specific nodes
   #     deniedNodes:
-  #       - "control-plane-*"
+  #       - "control-plane-1"
   #     deniedNodeLabels:
   #       node-role.kubernetes.io/control-plane: "*"
   #   
