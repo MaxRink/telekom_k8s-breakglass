@@ -110,6 +110,10 @@ type AuxiliaryResourceStatus struct {
 	// namespace is where the resource was created.
 	Namespace string `json:"namespace,omitempty"`
 
+	// uid is the immutable identity of the deployed resource.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// created indicates if the resource was successfully created.
 	Created bool `json:"created,omitempty"`
 
@@ -156,6 +160,10 @@ type AdditionalResourceRef struct {
 	// namespace is where the resource was created.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// uid is the immutable identity of the deployed resource.
+	// +optional
+	UID string `json:"uid,omitempty"`
 
 	// ready indicates if the resource has reached its desired state (computed via kstatus).
 	// +optional

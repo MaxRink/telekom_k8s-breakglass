@@ -507,6 +507,9 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 	}
 
 	// Validate schedulingOptions if specified
+	if spec.SchedulingConstraints != nil {
+		result.Errors = append(result.Errors, validateSchedulingConstraints(spec.SchedulingConstraints, specPath.Child("schedulingConstraints"))...)
+	}
 	if spec.SchedulingOptions != nil {
 		result.Errors = append(result.Errors, validateSchedulingOptions(spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
 	}

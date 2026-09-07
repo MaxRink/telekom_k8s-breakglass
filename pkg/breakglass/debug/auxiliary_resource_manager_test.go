@@ -1160,12 +1160,14 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 	cm1 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-1",
+			UID:       "fixture-config-1",
 			Namespace: "debug-ns",
 		},
 	}
 	cm2 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-2",
+			UID:       "fixture-config-2",
 			Namespace: "debug-ns",
 		},
 	}
@@ -1181,6 +1183,7 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
+			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
@@ -1195,12 +1198,14 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "config-1",
+					UID:          "fixture-config-1",
 					Namespace:    "debug-ns",
 					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
 							ResourceName: "config-2",
+							UID:          "fixture-config-2",
 							Namespace:    "debug-ns",
 						},
 					},
@@ -1733,6 +1738,7 @@ func TestCheckAuxiliaryResourcesReadiness_RechecksAdditionalResourcesWhenPrimary
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
+			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
@@ -1745,12 +1751,14 @@ func TestCheckAuxiliaryResourcesReadiness_RechecksAdditionalResourcesWhenPrimary
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "primary-cm",
+					UID:          "fixture-primary-cm",
 					Namespace:    "default",
 					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
 							ResourceName: "late-cm",
+							UID:          "fixture-late-cm",
 							Namespace:    "default",
 						},
 					},
@@ -1768,6 +1776,7 @@ func TestCheckAuxiliaryResourcesReadiness_RechecksAdditionalResourcesWhenPrimary
 	require.NoError(t, fakeClient.Create(ctx, &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "late-cm",
+			UID:       "fixture-late-cm",
 			Namespace: "default",
 		},
 	}))
@@ -1845,6 +1854,7 @@ func TestCheckAuxiliaryResourcesReadiness_ConfigMapReady(t *testing.T) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cm",
+			UID:       "fixture-test-cm",
 			Namespace: "default",
 		},
 		Data: map[string]string{
@@ -1861,6 +1871,7 @@ func TestCheckAuxiliaryResourcesReadiness_ConfigMapReady(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
+			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
@@ -1872,6 +1883,7 @@ func TestCheckAuxiliaryResourcesReadiness_ConfigMapReady(t *testing.T) {
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "test-cm",
+					UID:          "fixture-test-cm",
 					Namespace:    "default",
 				},
 			},
@@ -1914,6 +1926,7 @@ func TestCheckAuxiliaryResourcesReadiness_ResourceNotFound(t *testing.T) {
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "missing-cm",
+					UID:          "original-missing-cm",
 					Namespace:    "default",
 				},
 			},
@@ -1939,6 +1952,7 @@ func TestCheckAuxiliaryResourcesReadiness_MixedStates(t *testing.T) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ready-cm",
+			UID:       "fixture-ready-cm",
 			Namespace: "default",
 		},
 	}
@@ -1952,6 +1966,7 @@ func TestCheckAuxiliaryResourcesReadiness_MixedStates(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
+			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
@@ -1963,6 +1978,7 @@ func TestCheckAuxiliaryResourcesReadiness_MixedStates(t *testing.T) {
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "ready-cm",
+					UID:          "fixture-ready-cm",
 					Namespace:    "default",
 				},
 				{
@@ -1972,6 +1988,7 @@ func TestCheckAuxiliaryResourcesReadiness_MixedStates(t *testing.T) {
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "missing-cm",
+					UID:          "fixture-missing-cm",
 					Namespace:    "default",
 				},
 			},
@@ -2467,6 +2484,7 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 	cm1 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-1",
+			UID:       "fixture-config-1",
 			Namespace: "debug-ns",
 		},
 	}
@@ -2482,6 +2500,7 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
+			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
@@ -2496,18 +2515,21 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "config-1",
+					UID:          "fixture-config-1",
 					Namespace:    "debug-ns",
 					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
-							ResourceName: "config-2", // Doesn't exist
+							ResourceName: "config-2",
+							UID:          "fixture-config-2", // Doesn't exist
 							Namespace:    "debug-ns",
 						},
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
-							ResourceName: "config-3", // Doesn't exist
+							ResourceName: "config-3",
+							UID:          "fixture-config-3", // Doesn't exist
 							Namespace:    "debug-ns",
 						},
 					},
@@ -2592,18 +2614,21 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_AllReady(t *te
 	cm1 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-1",
+			UID:       "fixture-config-1",
 			Namespace: "default",
 		},
 	}
 	cm2 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-2",
+			UID:       "fixture-config-2",
 			Namespace: "default",
 		},
 	}
 	cm3 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-3",
+			UID:       "fixture-config-3",
 			Namespace: "default",
 		},
 	}
@@ -2617,6 +2642,7 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_AllReady(t *te
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
+			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
@@ -2628,18 +2654,21 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_AllReady(t *te
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "config-1",
+					UID:          "fixture-config-1",
 					Namespace:    "default",
 					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
 							ResourceName: "config-2",
+							UID:          "fixture-config-2",
 							Namespace:    "default",
 						},
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
 							ResourceName: "config-3",
+							UID:          "fixture-config-3",
 							Namespace:    "default",
 						},
 					},
@@ -2674,6 +2703,7 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_SomeNotReady(t
 	cm1 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-1",
+			UID:       "fixture-config-1",
 			Namespace: "default",
 		},
 	}
@@ -2687,6 +2717,7 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_SomeNotReady(t
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
+			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
@@ -2698,12 +2729,14 @@ func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_SomeNotReady(t
 					Kind:         "ConfigMap",
 					APIVersion:   "v1",
 					ResourceName: "config-1",
+					UID:          "fixture-config-1",
 					Namespace:    "default",
 					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
 							Kind:         "ConfigMap",
 							APIVersion:   "v1",
-							ResourceName: "config-2", // Doesn't exist
+							ResourceName: "config-2",
+							UID:          "fixture-config-2", // Doesn't exist
 							Namespace:    "default",
 						},
 					},

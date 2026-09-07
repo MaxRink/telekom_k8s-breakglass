@@ -49,8 +49,8 @@ spec:
         operator: "Equal"
         value: "allowed"
         effect: "NoSchedule"
-    deniedNodes:
-      - "control-plane-*"
+    deniedNodeLabels:
+      node-role.kubernetes.io/control-plane: "*"
   
   # Scheduling options - users can choose their scheduling preference
   schedulingOptions:
@@ -154,10 +154,10 @@ spec:
           matchLabels:
             app.kubernetes.io/component: database
         topologyKey: kubernetes.io/hostname
-    deniedNodes:
-      - "control-plane-*"
-      - "etcd-*"
+    # Nodes must carry these role labels; use exact deniedNodes for unlabeled nodes.
     deniedNodeLabels:
+      node-role.kubernetes.io/control-plane: "*"
+      node-role.kubernetes.io/etcd: "*"
       node-restriction.kubernetes.io/critical: "*"
   
   # Limited scheduling options for production

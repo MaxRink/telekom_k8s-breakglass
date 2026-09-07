@@ -190,8 +190,8 @@ spec:
   schedulingConstraints:
     nodeSelector:
       node-role.kubernetes.io/worker: ""
-    deniedNodes:
-      - "control-plane-*"
+    deniedNodeLabels:
+      node-role.kubernetes.io/control-plane: "*"
   
   # Scheduling options by environment
   schedulingOptions:

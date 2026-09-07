@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	nodehelper "k8s.io/component-helpers/scheduling/corev1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -66,11 +67,7 @@ func (h *KubectlDebugHandler) deleteOrphanedPod(ctx context.Context, targetClien
 	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
 	defer cancel()
 
-	deleteOpts := &ctrlclient.DeleteOptions{}
-	if pod.UID != "" {
-		deleteOpts.Preconditions = &metav1.Preconditions{UID: &pod.UID}
-	}
-	if err := targetClient.Delete(deleteCtx, pod, deleteOpts); err != nil && !apierrors.IsNotFound(err) {
+	if err := deleteTrackedResource(deleteCtx, targetClient, nil, pod); err != nil && !apierrors.IsNotFound(err) {
 		log.Errorw("Failed to delete orphaned debug pod after status update failure; "+
 			"the pod is not tracked in the session status and will not be cleaned up automatically",
 			"pod", pod.Name,
@@ -258,7 +255,7 @@ func ensureKubectlDebugStatus(status *breakglassv1alpha1.DebugSessionStatus) *br
 
 func addAllowedPodIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref breakglassv1alpha1.AllowedPodRef) {
 	for _, existing := range status.AllowedPods {
-		if existing.Namespace == ref.Namespace && existing.Name == ref.Name {
+		if existing.Namespace == ref.Namespace && existing.Name == ref.Name && existing.UID == ref.UID {
 			return
 		}
 	}
@@ -270,7 +267,7 @@ func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus,
 		if existing.APIVersion == ref.APIVersion &&
 			existing.Kind == ref.Kind &&
 			existing.Namespace == ref.Namespace &&
-			existing.Name == ref.Name {
+			existing.Name == ref.Name && existing.UID == ref.UID {
 			return
 		}
 	}
@@ -455,6 +452,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	injectedContainer := breakglassv1alpha1.EphemeralContainerRef{
 		PodName:       podName,
 		Namespace:     namespace,
+		PodUID:        string(pod.UID),
 		ContainerName: containerName,
 		Image:         image,
 		InjectedAt:    now,
@@ -463,6 +461,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: namespace,
 		Name:      podName,
+		UID:       string(pod.UID),
 		Ready:     true,
 	}
 
@@ -474,7 +473,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		for _, existing := range kubectlStatus.EphemeralContainersInjected {
 			if existing.Namespace == injectedContainer.Namespace &&
 				existing.PodName == injectedContainer.PodName &&
-				existing.ContainerName == injectedContainer.ContainerName {
+				existing.ContainerName == injectedContainer.ContainerName && existing.PodUID == injectedContainer.PodUID {
 				alreadyTracked = true
 				break
 			}
@@ -623,12 +622,14 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		OriginalNamespace: originalNamespace,
 		CopyName:          copyName,
 		CopyNamespace:     targetNs,
+		CopyUID:           string(copyPod.UID),
 		CreatedAt:         now,
 		ExpiresAt:         &expiresAt,
 	}
 	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: targetNs,
 		Name:      copyName,
+		UID:       string(copyPod.UID),
 		Ready:     false, // Will be updated by reconciler
 	}
 
@@ -636,7 +637,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		alreadyTracked := false
 		for _, existing := range kubectlStatus.CopiedPods {
-			if existing.CopyNamespace == copiedPod.CopyNamespace && existing.CopyName == copiedPod.CopyName {
+			if existing.CopyNamespace == copiedPod.CopyNamespace && existing.CopyName == copiedPod.CopyName && existing.CopyUID == copiedPod.CopyUID {
 				alreadyTracked = true
 				break
 			}
@@ -646,6 +647,10 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		}
 
 		addAllowedPodIfMissing(status, allowedPod)
+		addDeployedResourceIfMissing(status, breakglassv1alpha1.DeployedResourceRef{
+			APIVersion: "v1", Kind: "Pod", Name: copyName, Namespace: targetNs,
+			UID: string(copyPod.UID), Source: "debug-pod",
+		})
 	}, true, user); err != nil {
 		// The pod exists on the spoke but is absent from the status lists that
 		// cleanup iterates, so it would never be reclaimed. Delete it so
@@ -826,6 +831,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: namespace,
 		Name:      podName,
+		UID:       string(debugPod.UID),
 		NodeName:  nodeName,
 		Ready:     false, // Will be updated by reconciler
 	}
@@ -834,6 +840,8 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		Kind:       "Pod",
 		Name:       podName,
 		Namespace:  namespace,
+		UID:        string(debugPod.UID),
+		Source:     "debug-pod",
 	}
 
 	if err := h.patchDebugSessionStatusWithRetryState(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
@@ -878,9 +886,11 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      cp.CopyName,
 				Namespace: cp.CopyNamespace,
+				UID:       types.UID(cp.CopyUID),
 			},
 		}
-		if err := targetClient.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
+		pod.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
+		if err := deleteTrackedResource(ctx, targetClient, ds, pod); err != nil && !apierrors.IsNotFound(err) {
 			remainingCopiedPods = append(remainingCopiedPods, cp)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue

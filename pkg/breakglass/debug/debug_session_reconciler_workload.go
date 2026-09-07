@@ -8,7 +8,6 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -145,7 +144,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 		if rq != nil {
 			gvk := rq.GetObjectKind().GroupVersionKind()
-			if err := utils.ApplyObject(ctx, targetClient, rq); err != nil {
+			if err := applyTrackedResource(ctx, targetClient, rq); err != nil {
 				return fmt.Errorf("failed to apply resource quota: %w", err)
 			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
@@ -154,6 +153,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Kind:       gvk.Kind,
 				Name:       rq.Name,
 				Namespace:  rq.Namespace,
+				UID:        string(rq.GetUID()),
 				Source:     "debug-resourcequota",
 			})
 		}
@@ -167,7 +167,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 		if pdb != nil {
 			gvk := pdb.GetObjectKind().GroupVersionKind()
-			if err := utils.ApplyObject(ctx, targetClient, pdb); err != nil {
+			if err := applyTrackedResource(ctx, targetClient, pdb); err != nil {
 				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
 			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
@@ -176,6 +176,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Kind:       gvk.Kind,
 				Name:       pdb.Name,
 				Namespace:  pdb.Namespace,
+				UID:        string(pdb.GetUID()),
 				Source:     "debug-pdb",
 			})
 		}
@@ -214,7 +215,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
-	if err := utils.ApplyObject(ctx, targetClient, workload); err != nil {
+	if err := applyTrackedResource(ctx, targetClient, workload); err != nil {
 		return fmt.Errorf("failed to apply workload: %w", err)
 	}
 	log.Infow("Debug workload applied", "name", workload.GetName())
@@ -225,6 +226,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		Kind:       gvk.Kind,
 		Name:       workload.GetName(),
 		Namespace:  targetNs,
+		UID:        string(workload.GetUID()),
 		Source:     "debug-pod",
 	})
 
@@ -527,8 +529,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 
 	// Deploy using Server-Side Apply for idempotency
 	obj.SetManagedFields(nil)
-	//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
-	if err := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); err != nil {
+	if err := applyTrackedResource(ctx, targetClient, obj); err != nil {
 		return fmt.Errorf("SSA apply failed: %w", err)
 	}
 
@@ -538,6 +539,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		APIVersion:   obj.GetAPIVersion(),
 		ResourceName: obj.GetName(),
 		Namespace:    obj.GetNamespace(),
+		UID:          string(obj.GetUID()),
 		Source:       "podTemplateString",
 		Created:      true,
 	}
@@ -551,6 +553,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Kind:       obj.GetKind(),
 		Name:       obj.GetName(),
 		Namespace:  obj.GetNamespace(),
+		UID:        string(obj.GetUID()),
 		Source:     "pod-template",
 	})
 

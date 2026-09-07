@@ -1222,6 +1222,9 @@ func validateSchedulingOptions(opts *SchedulingOptions, fieldPath *field.Path) f
 
 	for i, opt := range opts.Options {
 		optPath := fieldPath.Child("options").Index(i)
+		if opt.SchedulingConstraints != nil {
+			errs = append(errs, validateSchedulingConstraints(opt.SchedulingConstraints, optPath.Child("schedulingConstraints"))...)
+		}
 
 		// Validate name is set
 		if opt.Name == "" {
@@ -1251,6 +1254,19 @@ func validateSchedulingOptions(opts *SchedulingOptions, fieldPath *field.Path) f
 			"only one option can be marked as default"))
 	}
 
+	return errs
+}
+
+func validateSchedulingConstraints(constraints *SchedulingConstraints, path *field.Path) field.ErrorList {
+	if constraints == nil {
+		return nil
+	}
+	var errs field.ErrorList
+	for i, node := range constraints.DeniedNodes {
+		if strings.ContainsAny(node, "*?[") {
+			errs = append(errs, field.Invalid(path.Child("deniedNodes").Index(i), node, "glob patterns are unsupported; use an exact node name or deniedNodeLabels"))
+		}
+	}
 	return errs
 }
 

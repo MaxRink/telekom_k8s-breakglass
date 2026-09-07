@@ -292,6 +292,10 @@ type PodTemplateResourceStatus struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
+	// uid is the immutable identity of the deployed resource.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// source identifies where this resource came from.
 	// Either "podTemplateString" or "debugPodTemplate:<name>".
 	// +optional
@@ -463,6 +467,10 @@ type AllowedPodRef struct {
 	// +required
 	Name string `json:"name"`
 
+	// uid is the immutable identity of the authorized pod.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// nodeName is the node the pod is running on.
 	// +optional
 	NodeName string `json:"nodeName,omitempty"`
@@ -521,6 +529,10 @@ type EphemeralContainerRef struct {
 	// +required
 	Namespace string `json:"namespace"`
 
+	// podUID is the immutable identity of the pod receiving the container.
+	// +optional
+	PodUID string `json:"podUID,omitempty"`
+
 	// containerName is the name of the ephemeral container.
 	// +required
 	ContainerName string `json:"containerName"`
@@ -555,6 +567,10 @@ type CopiedPodRef struct {
 	// copyNamespace is the copied pod's namespace.
 	// +required
 	CopyNamespace string `json:"copyNamespace"`
+
+	// copyUID is the immutable identity of the copied pod.
+	// +optional
+	CopyUID string `json:"copyUID,omitempty"`
 
 	// createdAt is when the copy was created.
 	// +required

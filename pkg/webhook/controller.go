@@ -310,7 +310,11 @@ func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Contex
 		// Check if the pod is in the allowed pods list
 		podAllowed := false
 		for _, ap := range ds.Status.AllowedPods {
-			if ap.Namespace == ra.Namespace && ap.Name == ra.Name {
+			if ap.Namespace != ra.Namespace || ap.Name != ra.Name || ap.UID == "" {
+				continue
+			}
+			pod, err := wc.fetchPodFromCluster(ctx, clusterName, ra.Namespace, ra.Name)
+			if err == nil && pod != nil && string(pod.UID) == ap.UID {
 				podAllowed = true
 				break
 			}

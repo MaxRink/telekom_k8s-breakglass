@@ -141,7 +141,7 @@ func TestDefenderLateInjectionRetainsEvidenceAfterTerminationAndCancellation(t *
 	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive}}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
 	mutations := 0
-	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"}}).WithInterceptorFuncs(interceptor.Funcs{
+	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default", UID: types.UID("injected-pod-uid")}}).WithInterceptorFuncs(interceptor.Funcs{
 		SubResourceUpdate: func(_ context.Context, _ ctrlclient.Client, _ string, _ ctrlclient.Object, _ ...ctrlclient.SubResourceUpdateOption) error {
 			mutations++
 			current := &breakglassv1alpha1.DebugSession{}
@@ -164,6 +164,7 @@ func TestDefenderLateInjectionRetainsEvidenceAfterTerminationAndCancellation(t *
 	require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, current.Status.State)
 	require.NotNil(t, current.Status.KubectlDebugStatus)
 	require.Len(t, current.Status.KubectlDebugStatus.EphemeralContainersInjected, 1)
+	require.Equal(t, "injected-pod-uid", current.Status.KubectlDebugStatus.EphemeralContainersInjected[0].PodUID)
 	require.Empty(t, current.Status.AllowedPods)
 }
 

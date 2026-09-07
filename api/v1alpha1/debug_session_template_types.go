@@ -844,8 +844,8 @@ type SchedulingConstraints struct {
 	// +optional
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
 
-	// deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-	// Evaluated as glob patterns.
+	// deniedNodes is a list of exact node names that MUST NOT run debug pods.
+	// Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
 	// +optional
 	DeniedNodes []string `json:"deniedNodes,omitempty"`
 
@@ -1306,6 +1306,9 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 	}
 
 	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingConstraints != nil {
+		allErrs = append(allErrs, validateSchedulingConstraints(template.Spec.SchedulingConstraints, specPath.Child("schedulingConstraints"))...)
+	}
 	if template.Spec.SchedulingOptions != nil {
 		allErrs = append(allErrs, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
 	}
