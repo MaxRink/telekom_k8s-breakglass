@@ -2,7 +2,11 @@ package cluster
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +18,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -279,6 +284,79 @@ func TestInvalidateSecret_EvictsTrackedEntries(t *testing.T) {
 func TestIsSecretTracked_FalseForUnknownSecret(t *testing.T) {
 	provider := NewClientProvider(fake.NewClientBuilder().Build(), zaptest.NewLogger(t).Sugar())
 	assert.False(t, provider.IsSecretTracked("default", "missing"))
+}
+
+func TestTrackOIDCSecrets_TracksImplicitKeycloakSecret(t *testing.T) {
+	for _, mode := range []string{"inherited", "refresh fallback", "explicit override"} {
+		t.Run(mode, func(t *testing.T) {
+			var issuer string
+			grants := make(chan string, 10)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "openid-configuration") {
+					_, _ = fmt.Fprintf(w, `{"token_endpoint":%q}`, issuer+"/token")
+					return
+				}
+				if err := r.ParseForm(); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if r.Form.Get("grant_type") == "refresh_token" {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+					return
+				}
+				grants <- r.Form.Get("client_secret")
+				_, _ = w.Write([]byte(`{"access_token":"access","expires_in":3600,"token_type":"Bearer"}`))
+			}))
+			defer server.Close()
+			issuer = server.URL
+			scheme := runtime.NewScheme()
+			require.NoError(t, clientgoscheme.AddToScheme(scheme))
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			idp := &breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "shared-idp"}, Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC:     breakglassv1alpha1.OIDCConfig{Authority: issuer, ClientID: "client"},
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{ClientID: "service", ClientSecretRef: breakglassv1alpha1.SecretKeyReference{Name: "keycloak-secret", Namespace: "identity", Key: "value"}},
+			}}
+			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret", Namespace: "identity"}, Data: map[string][]byte{"value": []byte("inherited-secret")}}
+			explicit := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "explicit-secret", Namespace: "workloads"}, Data: map[string][]byte{"value": []byte("explicit-secret")}}
+			refresh := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "refresh", Namespace: "workloads"}, Data: map[string][]byte{"token": []byte("expired-refresh")}}
+			ref := &breakglassv1alpha1.OIDCFromIdentityProviderConfig{Name: idp.Name, Server: issuer, InsecureSkipTLSVerify: true}
+			if mode == "refresh fallback" {
+				ref.FallbackPolicy = breakglassv1alpha1.FallbackPolicyAuto
+				ref.RefreshTokenSecretRef = &breakglassv1alpha1.SecretKeyReference{Name: "refresh", Namespace: "workloads", Key: "token"}
+			}
+			if mode == "explicit override" {
+				ref.ClientSecretRef = &breakglassv1alpha1.SecretKeyReference{Name: explicit.Name, Namespace: explicit.Namespace, Key: "value"}
+			}
+			cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "workloads"}, Spec: breakglassv1alpha1.ClusterConfigSpec{AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC, OIDCFromIdentityProvider: ref}}
+			provider := NewClientProvider(fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp, secret, explicit, refresh, cc).Build(), zaptest.NewLogger(t).Sugar())
+			_, err := provider.GetRESTConfig(context.Background(), "workloads/cluster")
+			require.NoError(t, err)
+			expected := "inherited-secret"
+			if mode == "explicit override" {
+				expected = "explicit-secret"
+			}
+			select {
+			case actual := <-grants:
+				require.Equal(t, expected, actual)
+			default:
+				t.Fatal("real credential resolution did not obtain a token")
+			}
+			require.Equal(t, mode != "explicit override", provider.IsOIDCSecretTracked("identity", "keycloak-secret"))
+			require.NotNil(t, provider.rest["workloads/cluster"])
+			require.NotNil(t, provider.oidcProvider.tokens["workloads/cluster"])
+			provider.InvalidateOIDCSecrets("identity", "keycloak-secret")
+			if mode == "explicit override" {
+				require.NotNil(t, provider.rest["workloads/cluster"])
+				require.NotNil(t, provider.oidcProvider.tokens["workloads/cluster"])
+			} else {
+				require.Nil(t, provider.rest["workloads/cluster"])
+				require.Nil(t, provider.oidcProvider.tokens["workloads/cluster"])
+			}
+		})
+	}
 }
 
 func TestGetAcrossAllNamespaces_DoesNotMatchSimilarNames(t *testing.T) {

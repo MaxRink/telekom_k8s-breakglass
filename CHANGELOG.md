@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
+  redirects, preserve explicit issuer bindings, and invalidate cluster credentials
+  when an inherited IdentityProvider client Secret changes. An escalation with an
+  updated specification remains unavailable until its Ready condition reflects
+  the current generation.
+
 - **Authorization webhook session selection**: Register shared BreakglassSession
   field indexes even when reconcilers are disabled, so approved sessions remain
   discoverable by the SubjectAccessReview path (PR #1297).

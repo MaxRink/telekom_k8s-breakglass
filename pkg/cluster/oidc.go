@@ -86,7 +86,10 @@ type OIDCTokenProvider struct {
 	// keyed by tokenCacheKey(namespace, clusterName). Used instead of
 	// overwriting the primary OIDCAuthConfig.ClientID.
 	fallbackCreds map[string]*fallbackCredentials
-	fallbackMu    sync.RWMutex
+	// resolvedSecretRefs records effective inherited credential references from
+	// the same IdentityProvider snapshot used to build an OIDC config.
+	resolvedSecretRefs map[string][]breakglassv1alpha1.SecretKeyReference
+	fallbackMu         sync.RWMutex
 }
 
 // cachedToken stores a token with its expiry time and refresh token
@@ -128,13 +131,14 @@ func readOIDCResponseBody(body io.Reader) ([]byte, error) {
 // NewOIDCTokenProvider creates a new OIDC token provider
 func NewOIDCTokenProvider(k8s client.Client, log *zap.SugaredLogger) *OIDCTokenProvider {
 	return &OIDCTokenProvider{
-		k8s:           k8s,
-		log:           log.Named("oidc-token-provider"),
-		tokens:        make(map[string]*cachedToken),
-		httpClients:   make(map[string]*http.Client),
-		tofuCAs:       make(map[string][]byte),
-		issuerTOFUCAs: make(map[string][]byte),
-		fallbackCreds: make(map[string]*fallbackCredentials),
+		k8s:                k8s,
+		log:                log.Named("oidc-token-provider"),
+		tokens:             make(map[string]*cachedToken),
+		httpClients:        make(map[string]*http.Client),
+		tofuCAs:            make(map[string][]byte),
+		issuerTOFUCAs:      make(map[string][]byte),
+		fallbackCreds:      make(map[string]*fallbackCredentials),
+		resolvedSecretRefs: make(map[string][]breakglassv1alpha1.SecretKeyReference),
 	}
 }
 
@@ -156,6 +160,11 @@ func tokenCacheKey(namespace, name string) string {
 // The returned config uses WrapTransport to inject fresh tokens on each request,
 // allowing the config to be cached while tokens are refreshed dynamically.
 func (p *OIDCTokenProvider) GetRESTConfig(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (*rest.Config, error) {
+	key := tokenCacheKey(cc.Namespace, cc.Name)
+	p.fallbackMu.Lock()
+	delete(p.resolvedSecretRefs, key)
+	p.fallbackMu.Unlock()
+
 	var oidc *breakglassv1alpha1.OIDCAuthConfig
 
 	// Resolve OIDC configuration from either direct config or IdentityProvider reference
@@ -264,6 +273,11 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 	if idp.Spec.Disabled {
 		return nil, fmt.Errorf("IdentityProvider %q is disabled", ref.Name)
 	}
+	cacheKey := tokenCacheKey(cc.Namespace, cc.Name)
+	p.fallbackMu.Lock()
+	delete(p.fallbackCreds, cacheKey)
+	delete(p.resolvedSecretRefs, cacheKey)
+	p.fallbackMu.Unlock()
 
 	// Determine clientID - use override from ref, or fall back to IdentityProvider
 	clientID := ref.ClientID
@@ -321,12 +335,12 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 			p.log.Debugw("Storing IDP Keycloak SA credentials for potential fallback",
 				"cluster", cc.Name, "identityProvider", ref.Name,
 				"fallbackPolicy", string(ref.FallbackPolicy))
-			cacheKey := tokenCacheKey(cc.Namespace, cc.Name)
 			p.fallbackMu.Lock()
 			p.fallbackCreds[cacheKey] = &fallbackCredentials{
 				clientID:        idp.Spec.Keycloak.ClientID,
 				clientSecretRef: &idp.Spec.Keycloak.ClientSecretRef,
 			}
+			p.resolvedSecretRefs[cacheKey] = []breakglassv1alpha1.SecretKeyReference{idp.Spec.Keycloak.ClientSecretRef}
 			p.fallbackMu.Unlock()
 		}
 	} else if oidc.ClientSecretRef == nil && idp.Spec.Keycloak != nil {
@@ -335,6 +349,9 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 			"cluster", cc.Name, "identityProvider", ref.Name)
 		oidc.ClientID = idp.Spec.Keycloak.ClientID
 		oidc.ClientSecretRef = &idp.Spec.Keycloak.ClientSecretRef
+		p.fallbackMu.Lock()
+		p.resolvedSecretRefs[cacheKey] = []breakglassv1alpha1.SecretKeyReference{idp.Spec.Keycloak.ClientSecretRef}
+		p.fallbackMu.Unlock()
 	}
 
 	// Validate: at least one auth method must be available
@@ -353,6 +370,17 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 		"fallbackPolicy", string(oidc.FallbackPolicy))
 
 	return oidc, nil
+}
+
+// ResolvedSecretRefs returns effective inherited Secret references captured
+// while resolving this cluster's IdentityProvider. It avoids a second API read
+// after the OIDC config has been built.
+func (p *OIDCTokenProvider) ResolvedSecretRefs(namespace, clusterName string) []breakglassv1alpha1.SecretKeyReference {
+	key := tokenCacheKey(namespace, clusterName)
+	p.fallbackMu.RLock()
+	refs := append([]breakglassv1alpha1.SecretKeyReference(nil), p.resolvedSecretRefs[key]...)
+	p.fallbackMu.RUnlock()
+	return refs
 }
 
 // getToken retrieves a valid token, refreshing if necessary using refresh tokens when available.
@@ -1260,6 +1288,11 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *breakglassv1alpha1.OIDCAu
 	client := &http.Client{
 		Transport: transport,
 		Timeout:   30 * time.Second,
+		// OIDC discovery and token grants must never replay credentials to a
+		// redirect target, even when the endpoint returns 307/308.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 	if cacheKey != "" {
 		p.httpMu.Lock()
@@ -1699,6 +1732,7 @@ func (p *OIDCTokenProvider) Invalidate(namespace, clusterName string) {
 	p.mu.Unlock()
 	p.fallbackMu.Lock()
 	delete(p.fallbackCreds, cacheKey)
+	delete(p.resolvedSecretRefs, cacheKey)
 	p.fallbackMu.Unlock()
 }
 
@@ -1709,5 +1743,6 @@ func (p *OIDCTokenProvider) InvalidateAll() {
 	p.mu.Unlock()
 	p.fallbackMu.Lock()
 	p.fallbackCreds = make(map[string]*fallbackCredentials)
+	p.resolvedSecretRefs = make(map[string][]breakglassv1alpha1.SecretKeyReference)
 	p.fallbackMu.Unlock()
 }
