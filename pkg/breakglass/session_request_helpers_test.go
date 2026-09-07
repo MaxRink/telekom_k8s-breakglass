@@ -551,8 +551,9 @@ func TestRestrictedNotificationPrivacyFilters(t *testing.T) {
 				status   map[string]map[string][]string
 				snapshot map[string][]string
 				want     []string
+				suppress bool
 			}{
-				{name: "unknown suppresses despite default successful empty"},
+				{name: "unknown suppresses despite default successful empty", suppress: true},
 				{name: "scoped excludes member", status: map[string]map[string][]string{"allowed": {"secret": {"private@example.com"}}}, want: []string{"visible@example.com"}},
 				{name: "scoped empty permits recipients", status: map[string]map[string][]string{"allowed": {"secret": nil}}, want: []string{"private@example.com", "visible@example.com"}},
 				{name: "request snapshot remains authoritative", snapshot: map[string][]string{"secret": {"private@example.com"}}, want: []string{"visible@example.com"}},
@@ -573,12 +574,14 @@ func TestRestrictedNotificationPrivacyFilters(t *testing.T) {
 					// candidate collection need not have resolved it.
 					candidates := []string{"private@example.com", "visible@example.com"}
 					var got []string
+					var suppressed bool
 					if filter == "excluded" {
-						got, _ = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+						got, suppressed = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
 					} else {
-						got, _ = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+						got, suppressed = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
 					}
 					assert.Equal(t, tc.want, got)
+					assert.Equal(t, tc.suppress, suppressed)
 					assert.False(t, resolver.called)
 				})
 			}
