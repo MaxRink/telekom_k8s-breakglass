@@ -718,7 +718,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	if participantIndex == -1 || participants[participantIndex].LeftAt != nil {
+	if participantIndex == -1 {
 		apiresponses.RespondNotFoundSimple(ctx, "user is not a participant in this session")
 		return
 	}

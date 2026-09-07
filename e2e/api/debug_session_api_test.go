@@ -1004,8 +1004,6 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	cleanup.Add(binding)
 	require.NoError(t, cli.Create(ctx, binding))
 
-	namespace := helpers.GetTestNamespace()
-
 	// Create test context for authenticated API clients
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, helpers.GetTestNamespace())
 	requesterToken := tc.OIDCProvider().GetToken(t, ctx, helpers.TestUsers.DebugSessionRequester.Username, helpers.TestUsers.DebugSessionRequester.Password)

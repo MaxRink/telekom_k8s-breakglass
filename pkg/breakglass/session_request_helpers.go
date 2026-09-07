@@ -37,7 +37,7 @@ func (wc *BreakglassSessionController) validateClusterIdentityProvider(c *gin.Co
 		if apierrors.IsNotFound(err) {
 			return true
 		}
-		apiresponses.RespondInternalError(c, "resolve cluster identity provider policy", err, nil)
+		apiresponses.RespondInternalError(c, "resolve cluster identity provider policy", err, wc.log)
 		return false
 	}
 	if cc == nil || len(cc.Spec.IdentityProviderRefs) == 0 {
