@@ -12,8 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
   debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
   signing keys when identity-provider trust settings change.
+
 - Reject unsupported audit namespace selector exclusions before replacing active
   sinks; migrate these exclusions to namespace patterns before upgrading.
+
+- Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
+
+- Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
 
 ### Added
 
@@ -54,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
+
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
   documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
   Node 24 release line required by the existing dependency graph (including
@@ -62,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 
 - **Authorization webhook session selection**: Register shared BreakglassSession
   field indexes even when reconcilers are disabled, so approved sessions remain
