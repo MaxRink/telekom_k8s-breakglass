@@ -434,6 +434,88 @@ func TestTrackOIDCSecrets_RefreshAutoToNoneClearsFallback(t *testing.T) {
 	require.Nil(t, provider.rest["workloads/cluster"])
 }
 
+func TestOIDCGetRESTConfig_DirectTransitionClearsInheritedFallback(t *testing.T) {
+	var issuer string
+	var clientCredentialSecrets []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "openid-configuration") {
+			_, _ = fmt.Fprintf(w, `{"issuer":%q,"token_endpoint":%q}`, issuer, issuer+"/token")
+			return
+		}
+		if r.URL.Path != "/token" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = r.ParseForm()
+		switch r.FormValue("grant_type") {
+		case "refresh_token":
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+		case "client_credentials":
+			clientCredentialSecrets = append(clientCredentialSecrets, r.FormValue("client_secret"))
+			_, _ = fmt.Fprint(w, `{"access_token":"fallback-token","expires_in":3600,"token_type":"Bearer"}`)
+		default:
+			http.Error(w, `{"error":"unsupported_grant_type"}`, http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	issuer = server.URL
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{Authority: issuer, ClientID: "refresh-client"},
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				ClientID: "service-account",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name: "keycloak-secret", Namespace: "identity", Key: "value",
+				},
+			},
+		},
+	}
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "workloads"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+				Name: "shared-idp", Server: issuer, InsecureSkipTLSVerify: true,
+				RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "refresh", Namespace: "workloads", Key: "token"},
+				FallbackPolicy:        breakglassv1alpha1.FallbackPolicyAuto,
+			},
+		},
+	}
+	objects := []runtime.Object{
+		idp,
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret", Namespace: "identity"}, Data: map[string][]byte{"value": []byte("old-sa-secret")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "refresh", Namespace: "workloads"}, Data: map[string][]byte{"token": []byte("expired-refresh")}},
+	}
+	provider := NewOIDCTokenProvider(fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build(), zaptest.NewLogger(t).Sugar())
+
+	_, err := provider.GetRESTConfig(context.Background(), cc)
+	require.NoError(t, err)
+	require.Equal(t, []string{"old-sa-secret"}, clientCredentialSecrets)
+
+	key := tokenCacheKey(cc.Namespace, cc.Name)
+	provider.mu.Lock()
+	provider.tokens[key].expiresAt = time.Time{}
+	provider.mu.Unlock()
+	cc.Spec.OIDCFromIdentityProvider = nil
+	cc.Spec.OIDCAuth = &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: issuer, ClientID: "direct-client", Server: issuer,
+		InsecureSkipTLSVerify: true,
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "refresh", Namespace: "workloads", Key: "token"},
+		FallbackPolicy:        breakglassv1alpha1.FallbackPolicyAuto,
+	}
+
+	_, err = provider.GetRESTConfig(context.Background(), cc)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrRefreshTokenExpired)
+	require.Equal(t, []string{"old-sa-secret"}, clientCredentialSecrets, "direct OIDC config must not reuse inherited fallback credentials")
+}
+
 func TestGetAcrossAllNamespaces_DoesNotMatchSimilarNames(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)

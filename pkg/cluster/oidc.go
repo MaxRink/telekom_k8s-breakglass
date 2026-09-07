@@ -162,6 +162,7 @@ func tokenCacheKey(namespace, name string) string {
 func (p *OIDCTokenProvider) GetRESTConfig(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (*rest.Config, error) {
 	key := tokenCacheKey(cc.Namespace, cc.Name)
 	p.fallbackMu.Lock()
+	delete(p.fallbackCreds, key)
 	delete(p.resolvedSecretRefs, key)
 	p.fallbackMu.Unlock()
 
