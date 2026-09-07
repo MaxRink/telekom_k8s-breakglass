@@ -1027,7 +1027,7 @@ func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
 	}
 
 	if expectedUID == "" {
-		return readinessResult{failed: true, message: "resource identity is not recorded"}
+		return readinessResult{failed: true, message: "resource identity is not recorded; terminate this legacy debug session and request a new session"}
 	}
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(gvk)

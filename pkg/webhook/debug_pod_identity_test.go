@@ -42,7 +42,6 @@ func TestDebugSessionAccessRequiresLiveTargetPodIdentity(t *testing.T) {
 					{Name: "other", Namespace: "workloads", UID: "unrelated"},
 					{Name: "pod", Namespace: "other", UID: "unrelated"},
 					{Name: "pod", Namespace: "workloads", UID: "stale"},
-					{Name: "pod", Namespace: "workloads", UID: "stale"},
 				}, session.Status.AllowedPods...)
 			}
 			fetches := 0

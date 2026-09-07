@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestIdentityProviderOIDCConfig verifies OIDC configuration structure
@@ -869,4 +871,38 @@ func TestIdentityProvider_ValidateCreate_KeycloakWithoutGroupSyncProvider(t *tes
 	}
 	_, err := idp.ValidateCreate(context.Background(), idp)
 	require.Error(t, err, "expected error when keycloak provided without groupSyncProvider set")
+}
+
+func TestIdentityProviderDuplicateIssuerReportsEffectiveField(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, AddToScheme(scheme))
+	existing := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "existing"}, Spec: IdentityProviderSpec{Issuer: "https://issuer.example.com"}}
+	oldClient := webhookClient
+	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	t.Cleanup(func() { webhookClient = oldClient })
+	for _, explicit := range []bool{false, true} {
+		name := "authority"
+		path := "spec.oidc.authority"
+		if explicit {
+			name = "issuer"
+			path = "spec.issuer"
+		}
+		t.Run(name, func(t *testing.T) {
+			candidate := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "candidate"}, Spec: IdentityProviderSpec{OIDC: OIDCConfig{Authority: existing.Spec.Issuer, ClientID: "client"}}}
+			if explicit {
+				candidate.Spec.Issuer = existing.Spec.Issuer
+			}
+			_, err := candidate.ValidateCreate(context.Background(), candidate)
+			require.Error(t, err)
+			status := &apierrors.StatusError{}
+			require.ErrorAs(t, err, &status)
+			var duplicateFields []string
+			for _, cause := range status.ErrStatus.Details.Causes {
+				if cause.Type == metav1.CauseTypeFieldValueDuplicate {
+					duplicateFields = append(duplicateFields, cause.Field)
+				}
+			}
+			require.Equal(t, []string{path}, duplicateFields)
+		})
+	}
 }

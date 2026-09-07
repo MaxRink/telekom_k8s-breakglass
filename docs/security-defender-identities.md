@@ -27,3 +27,12 @@ session, as before.
 Resolved debug constraints are independent snapshots in both API responses and
 session status, including when no binding constraints are configured. Changes to
 a resolved snapshot do not change the source template or binding.
+
+The debug webhook E2E fixture forwards the issuer from the API-authenticated token,
+including configured Keycloak host overrides. It verifies matching issuer access
+and missing/wrong issuer denial separately from pod, participant, and session-state
+restrictions.
+
+Cluster identity-policy lookup failures are logged before returning an internal
+error. Issuer uniqueness errors identify `spec.issuer` when explicitly configured,
+or `spec.oidc.authority` when authority supplies the effective issuer.

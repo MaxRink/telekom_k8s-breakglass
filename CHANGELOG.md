@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
+
+- Explain how to recover legacy debug sessions whose auxiliary resource UIDs were not recorded.
+
 - Reuse each provider/group membership result within one pod-security approval decision, including failed lookups, while retrying on later decisions.
 
 - Accept configured Kubernetes default node-condition toleration durations when checking debug workload identity, and reuse one live Pod lookup per authorization request while retaining UID checks.
