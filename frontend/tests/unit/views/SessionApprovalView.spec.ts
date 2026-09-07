@@ -165,7 +165,7 @@ describe("SessionApprovalView", () => {
   it("redirects after 401 load failure when component remains mounted", async () => {
     mockGetSessionByName.mockRejectedValue({ response: { status: 401 } });
 
-    const wrapper = mount(SessionApprovalView, {
+    mount(SessionApprovalView, {
       global: {
         provide: {
           [AuthKey as symbol]: {
@@ -240,7 +240,12 @@ describe("SessionApprovalView", () => {
     await wrapper.find('[data-testid="approve"]').trigger("click");
     await flushPromises();
 
-    expect(handleAxiosError).toHaveBeenCalledWith("SessionApprovalView", axiosError, "Failed to approve session", false);
+    expect(handleAxiosError).toHaveBeenCalledWith(
+      "SessionApprovalView",
+      axiosError,
+      "Failed to approve session",
+      false,
+    );
     expect(handleAxiosError).toHaveBeenCalledTimes(1);
     expect(pushError).toHaveBeenCalledTimes(1);
     expect(pushError).toHaveBeenCalledWith("error", undefined, undefined);
@@ -310,7 +315,11 @@ describe("SessionApprovalView", () => {
   it("uses the normalized fallback message for an unexpected load failure", async () => {
     const axiosError = { response: { status: 418 } };
     mockGetSessionByName.mockRejectedValueOnce(axiosError);
-    vi.mocked(handleAxiosError).mockReturnValueOnce({ message: "normalized load failure", status: 418, cid: "cid-load" });
+    vi.mocked(handleAxiosError).mockReturnValueOnce({
+      message: "normalized load failure",
+      status: 418,
+      cid: "cid-load",
+    });
 
     const wrapper = mount(SessionApprovalView, {
       global: {
