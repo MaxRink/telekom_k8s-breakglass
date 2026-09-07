@@ -156,14 +156,30 @@ func TestRespondKubectlDebugOperationError(t *testing.T) {
 }
 
 func TestRespondKubectlDebugOperationErrorDoesNotExposeBackendForbidden(t *testing.T) {
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-	err := fmt.Errorf("backend secret-marker: %w", apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "debug", errors.New("denied")))
-
-	respondKubectlDebugOperationError(ctx, err, "operation failed")
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.NotContains(t, w.Body.String(), "secret-marker")
+	backend := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "debug", errors.New("secret-marker"))
+	for _, tc := range []struct {
+		name          string
+		err           error
+		status        int
+		code, message string
+	}{
+		{name: "typed policy denial", err: fmt.Errorf("outer secret-marker: %w", kubectlDebugPolicyErrorf("policy context: %w", backend)), status: http.StatusForbidden, code: "FORBIDDEN", message: "debug operation is not allowed"},
+		{name: "raw backend forbidden", err: backend, status: http.StatusInternalServerError, code: "INTERNAL_ERROR", message: "operation failed"},
+		{name: "wrapped backend forbidden", err: fmt.Errorf("backend context: %w", backend), status: http.StatusInternalServerError, code: "INTERNAL_ERROR", message: "operation failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			respondKubectlDebugOperationError(ctx, tc.err, "operation failed")
+			assert.Equal(t, tc.status, w.Code)
+			assertErrorResponse(t, w, tc.code)
+			var body map[string]interface{}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, tc.message, body["error"])
+			assert.NotContains(t, w.Body.String(), "secret-marker")
+			assert.NotContains(t, w.Body.String(), "backend context")
+		})
+	}
 }
 
 func setupAuthenticatedDebugSessionRouterWithObjects(t *testing.T, username string, objects ...client.Object) *gin.Engine {
