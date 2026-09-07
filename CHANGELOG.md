@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
 - Scope session request emails to the matched escalation, suppress notifications
   when hidden or excluded group membership is unresolved, and remove hidden group
   names from email content.
