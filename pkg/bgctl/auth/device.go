@@ -77,17 +77,23 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 	if err != nil {
 		return nil, err
 	}
+	for name, raw := range map[string]string{
+		"verification URL":          deviceResp.VerificationURI,
+		"complete verification URL": deviceResp.VerificationURIComplete,
+	} {
+		if raw == "" {
+			continue
+		}
+		if err := validateBrowserURLFor(raw, allowHTTP); err != nil {
+			return nil, fmt.Errorf("invalid %s: %w", name, err)
+		}
+	}
 
 	verificationURL := deviceResp.VerificationURIComplete
 	if verificationURL == "" {
 		verificationURL = deviceResp.VerificationURI
 	}
 
-	if verificationURL != "" {
-		if err := validateBrowserURLFor(verificationURL, allowHTTP); err != nil {
-			return nil, fmt.Errorf("invalid verification URL: %w", err)
-		}
-	}
 	fmt.Printf("Visit %s and enter code: %s\n", sanitizeTerminalText(deviceResp.VerificationURI), sanitizeTerminalText(deviceResp.UserCode))
 	if verificationURL != "" && !strings.EqualFold(os.Getenv("BGCTL_NO_BROWSER"), "true") {
 		_ = openBrowserFor(verificationURL, allowHTTP)
