@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Validate both device-login verification URLs before displaying or opening them.
+
 - Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
 
 - Clear inherited OIDC fallback credentials when resolving new settings, including
