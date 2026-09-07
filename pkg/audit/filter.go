@@ -271,23 +271,26 @@ func matchesPattern(patterns []string, value string) bool {
 }
 
 func (f EventFilterConfig) namespaceFilterAllowed(namespace string, namespaceLabels map[string]string) bool {
-	if namespaceFilterMatches(f.excludeNamespaceMatcher, namespace, namespaceLabels) {
+	if namespaceFilterMatches(f.excludeNamespaceMatcher, namespace, namespaceLabels, true) {
 		return false
 	}
 	if f.includeNamespaceMatcher == nil {
 		return true
 	}
-	return namespaceFilterMatches(f.includeNamespaceMatcher, namespace, namespaceLabels)
+	return namespaceFilterMatches(f.includeNamespaceMatcher, namespace, namespaceLabels, false)
 }
 
-func namespaceFilterMatches(matcher *utils.NamespaceMatcher, namespace string, namespaceLabels map[string]string) bool {
+func namespaceFilterMatches(matcher *utils.NamespaceMatcher, namespace string, namespaceLabels map[string]string, missingLabelsMatch bool) bool {
 	if matcher == nil {
 		return false
 	}
 	if namespaceLabels != nil {
 		return matcher.MatchesWithLabels(namespace, namespaceLabels)
 	}
-	return matcher.Matches(namespace)
+	if matcher.Matches(namespace) {
+		return true
+	}
+	return missingLabelsMatch && matcher.RequiresNamespaceLabels()
 }
 
 func eventSeverity(event *Event) Severity {

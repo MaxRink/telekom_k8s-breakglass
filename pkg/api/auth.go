@@ -85,6 +85,32 @@ type jwksCacheEntry struct {
 	audienceAttemptedAt time.Time
 	jwks                keyfunc.Keyfunc
 	cancel              context.CancelFunc // stops the background refresh goroutine
+	configIdentity      jwksConfigIdentity
+}
+
+type jwksConfigIdentity struct {
+	authority            string
+	certificateAuthority string
+	insecureSkipVerify   bool
+	keycloakBaseURL      string
+	keycloakRealm        string
+	keycloakCA           string
+	keycloakInsecure     bool
+}
+
+func jwksIdentity(cfg *config.IdentityProviderConfig) jwksConfigIdentity {
+	identity := jwksConfigIdentity{
+		authority:            cfg.Authority,
+		certificateAuthority: cfg.CertificateAuthority,
+		insecureSkipVerify:   cfg.InsecureSkipVerify,
+	}
+	if cfg.Keycloak != nil {
+		identity.keycloakBaseURL = cfg.Keycloak.BaseURL
+		identity.keycloakRealm = cfg.Keycloak.Realm
+		identity.keycloakCA = cfg.Keycloak.CertificateAuthority
+		identity.keycloakInsecure = cfg.Keycloak.InsecureSkipVerify
+	}
+	return identity
 }
 
 // audienceRefreshInterval controls how often expectedAudience is re-read from
@@ -276,6 +302,15 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 					a.jwksLRUList.Remove(currentElem)
 					return nil, err
 				}
+				if currentEntry.configIdentity != jwksIdentity(idpCfg) {
+					if currentEntry.cancel != nil {
+						currentEntry.cancel()
+					}
+					a.jwksFetchLimiter.Delete(issuer)
+					delete(a.jwksCache, issuer)
+					a.jwksLRUList.Remove(currentElem)
+					return nil, errUnknownIdentityProvider
+				}
 
 				currentEntry.expectedAudience = idpCfg.ExpectedAudience
 				currentEntry.idpName = idpCfg.Name
@@ -287,7 +322,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 				currentElem, stillCached := a.jwksCache[issuer]
 				if !stillCached || currentElem != cachedElem {
 					a.jwksMutex.Unlock()
-					return cachedJWKS, cachedAudience, cachedIDPName, true, nil
+					return nil, "", "", true, errUnknownIdentityProvider
 				}
 				currentEntry := currentElem.Value.(*jwksCacheEntry)
 				refreshedAudience := currentEntry.expectedAudience
@@ -507,7 +542,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 
 	// Add new entry at front (most recently used)
 	now := time.Now()
-	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: now, audienceAttemptedAt: now, jwks: k, cancel: entryCancel}
+	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: now, audienceAttemptedAt: now, jwks: k, cancel: entryCancel, configIdentity: jwksIdentity(idpCfg)}
 	elem := a.jwksLRUList.PushFront(entry)
 	a.jwksCache[issuer] = elem
 

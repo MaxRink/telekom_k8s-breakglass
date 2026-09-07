@@ -77,7 +77,10 @@ func validateOIDCProxyPath(proxyPath string) (string, error) {
 
 func isOIDCProxyPathAllowed(path string) bool {
 	for _, prefix := range allowedOIDCProxyPathPrefixes {
-		if strings.HasPrefix(path, prefix) {
+		if strings.HasSuffix(prefix, "/") && strings.HasPrefix(path, prefix) {
+			return true
+		}
+		if path == prefix {
 			return true
 		}
 	}

@@ -10,6 +10,7 @@ import { reactive, ref } from "vue";
 import SessionApprovalView from "@/views/SessionApprovalView.vue";
 import { AuthKey } from "@/keys";
 import { pushError, pushSuccess } from "@/services/toast";
+import { handleAxiosError } from "@/services/logger";
 
 const mockPush = vi.fn();
 const mockLogin = vi.fn();
@@ -190,6 +191,66 @@ describe("SessionApprovalView", () => {
     expect(mockPush).toHaveBeenCalled();
   });
 
+  it("routes load and approval failures through sanitized Axios logging", async () => {
+    const token = "secret-approval-token";
+    const axiosError = {
+      message: "Request failed",
+      config: { headers: { Authorization: `Bearer ${token}` } },
+      response: { status: 500, data: { error: "Server error" } },
+    };
+    mockGetSessionByName.mockRejectedValueOnce(axiosError);
+
+    mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledWith("SessionApprovalView", axiosError, "Failed to load session", false);
+    expect(pushError).not.toHaveBeenCalled();
+
+    vi.mocked(handleAxiosError).mockClear();
+    mockGetSessionByName.mockResolvedValueOnce(approvalResponse("session-1", "requester@example.com"));
+    mockApproveReview.mockRejectedValueOnce(axiosError);
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: {
+            template: '<button data-testid="approve" @click="$emit(\'approve\')">Approve</button>',
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+    await wrapper.find('[data-testid="approve"]').trigger("click");
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledWith(
+      "SessionApprovalView",
+      axiosError,
+      "Failed to approve session",
+      false,
+    );
+    expect(handleAxiosError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledWith("error", undefined, undefined);
+  });
+
   it("does not approve or reject direct approval links when a required note is empty", async () => {
     mockGetSessionByName.mockResolvedValue({
       data: {
@@ -249,6 +310,64 @@ describe("SessionApprovalView", () => {
     expect(pushError).toHaveBeenCalledTimes(2);
     expect(pushError).toHaveBeenNthCalledWith(1, "Approval note is required for this escalation");
     expect(pushError).toHaveBeenNthCalledWith(2, "Approval note is required for this escalation");
+  });
+
+  it("uses the normalized fallback message for an unexpected load failure", async () => {
+    const axiosError = { response: { status: 418 } };
+    mockGetSessionByName.mockRejectedValueOnce(axiosError);
+    vi.mocked(handleAxiosError).mockReturnValueOnce({
+      message: "normalized load failure",
+      status: 418,
+      cid: "cid-load",
+    });
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledTimes(1);
+    expect(handleAxiosError).toHaveBeenCalledWith("SessionApprovalView", axiosError, "Failed to load session", false);
+    expect(pushError).not.toHaveBeenCalled();
+    expect(wrapper.get('[data-testid="error-details"]').attributes("heading")).toBe("normalized load failure");
+  });
+
+  it("shows one normalized fallback toast for an unexpected rejection failure", async () => {
+    mockGetSessionByName.mockResolvedValueOnce(approvalResponse("session-1", "requester@example.com"));
+    const axiosError = { response: { status: 500, data: { error: "backend detail" } } };
+    mockRejectReview.mockRejectedValueOnce(axiosError);
+    vi.mocked(handleAxiosError).mockReturnValueOnce({ message: "backend detail", status: 500, cid: "cid-1" });
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: { template: '<button data-testid="reject" @click="$emit(\'reject\')">Reject</button>' },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+    await wrapper.find('[data-testid="reject"]').trigger("click");
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledWith("backend detail", 500, "cid-1");
   });
 
   it("reloads session data when navigating between approval links in the same component", async () => {

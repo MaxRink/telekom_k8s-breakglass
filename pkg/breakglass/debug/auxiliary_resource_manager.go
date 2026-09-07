@@ -17,15 +17,12 @@ limitations under the License.
 package debug
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
-	"github.com/Masterminds/sprig/v3"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -267,12 +264,6 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 		return nil
 	}
 
-	// Build maps for efficient lookup
-	defaultEnabled := make(map[string]bool)
-	for name, enabled := range template.AuxiliaryResourceDefaults {
-		defaultEnabled[name] = enabled
-	}
-
 	// Categories that are always required
 	requiredCategories := make(map[string]bool)
 	for _, cat := range template.RequiredAuxiliaryResourceCategories {
@@ -327,7 +318,7 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 		}
 
 		// Check default
-		if defaultEnabled[res.Name] {
+		if template.AuxiliaryResourceDefaults[res.Category] {
 			enabled = append(enabled, res)
 		}
 	}
@@ -459,15 +450,7 @@ func (m *AuxiliaryResourceManager) buildVarsFromSession(
 		vars[name] = extractJSONValue(jsonVal.Raw)
 	}
 
-	// Escape at the boundary: these values are end-user controlled and are
-	// substituted into YAML documents, so they must not be able to inject
-	// sibling keys. See template_vars_sanitize.go.
-	vars, changed := sanitizeTemplateVarsReportingChanges(vars)
-	if len(changed) > 0 {
-		m.log.Warnw("Sanitized YAML-unsafe characters in extraDeployValues before auxiliary template rendering",
-			"session", session.Name, "variables", changed)
-	}
-
+	// Preserve input; the renderer requires serialization at output.
 	return vars
 }
 
@@ -679,25 +662,10 @@ func (m *AuxiliaryResourceManager) deployResource(
 
 // renderTemplate renders a Go template with the given context.
 func (m *AuxiliaryResourceManager) renderTemplate(templateBytes []byte, ctx breakglassv1alpha1.AuxiliaryResourceContext) ([]byte, error) {
-	// Convert context to map for template
-	ctxMap, err := toMap(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert context: %w", err)
+	if len(templateBytes) == 0 {
+		return templateBytes, nil
 	}
-
-	// Parse template with sprig functions
-	tmpl, err := template.New("auxiliary").Funcs(sprig.FuncMap()).Parse(string(templateBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	// Execute template
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, ctxMap); err != nil {
-		return nil, fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return buf.Bytes(), nil
+	return NewTemplateRenderer().RenderTemplateString(string(templateBytes), ctx)
 }
 
 // toMap converts a struct to a map using JSON marshaling.

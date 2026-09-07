@@ -243,25 +243,13 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	})
 
 	t.Run("CC-OIDC-004_OIDCFromIdentityProvider", func(t *testing.T) {
-		// First create an IdentityProvider to reference
-		idpName := helpers.GenerateUniqueName("test-idp")
-		idp := &breakglassv1alpha1.IdentityProvider{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      idpName,
-				Namespace: s.Namespace,
-				Labels:    helpers.E2ETestLabels(),
-			},
-			Spec: breakglassv1alpha1.IdentityProviderSpec{
-				DisplayName: "Test OIDC Provider",
-				Primary:     true,
-				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority:        keycloakIssuer,
-					ClientID:         "breakglass-ui",
-					ExpectedAudience: "breakglass-ui",
-				},
-			},
-		}
-		s.MustCreateResource(idp)
+		// This case checks reference wiring. Reuse the bootstrap IDP because
+		// issuer uniqueness is cluster-wide and its live OIDC configuration is
+		// the one used by the E2E authentication setup.
+		idpName := "breakglass-e2e-idp"
+		var idp breakglassv1alpha1.IdentityProvider
+		require.NoError(t, s.Client.Get(s.Ctx, types.NamespacedName{Name: idpName}, &idp),
+			"bootstrap IdentityProvider must exist")
 
 		// Create ClusterConfig that references the IdentityProvider
 		name := helpers.GenerateUniqueName("cc-oidc-from-idp")

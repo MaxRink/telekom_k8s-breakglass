@@ -494,6 +494,7 @@ func TestBootstrapW003_DeploymentModel(t *testing.T) {
 	for _, arg := range []string{
 		"--config-path=/config/config.yaml",
 		"--pod-namespace=$(POD_NAMESPACE)",
+		"--breakglass-namespace=$(POD_NAMESPACE)",
 		"--metrics-bind-address=:8081",
 		"--health-probe-bind-address=:8082",
 		"--leader-elect-namespace=$(POD_NAMESPACE)",
