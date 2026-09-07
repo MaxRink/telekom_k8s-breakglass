@@ -23,3 +23,9 @@ need a new authenticated approval.
 A configured spoke REST-config lookup failure cannot fall back to a local Kubernetes context during approval group lookup. Explicit nil-provider legacy construction retains the legacy lookup behavior.
 
 Ephemeral-container admission requires an active owner or participant debug-session role. Viewer participants cannot use direct Kubernetes ephemeral-container admission to bypass the REST operation role check.
+
+## Approver membership freshness
+
+Override authorization reuses a resolver only for the same recorded provider and effective group-sync configuration. Each lookup reloads the provider and its Secret credentials before reuse; a failed read denies that lookup, and changed credentials, issuer, endpoint, realm, TLS configuration, timeout, or cache TTL replace the resolver. Provider configuration reads and cache publication are serialized; membership network calls run after that lock is released.
+
+Unchanged providers reuse the configured Keycloak membership cache (`spec.keycloak.cacheTTL`, default 10 minutes) and token cache. Group membership revocation therefore becomes visible when that membership entry expires, rather than requiring a fresh IdP lookup on every SAR. Credential or configuration changes invalidate the resolver on the next successful configuration read. Reads observe the configured Kubernetes client; cache-backed clients remain subject to informer propagation delay.

@@ -32,10 +32,37 @@ func (r policyMemberResolver) Members(_ context.Context, group string) ([]string
 }
 
 func TestOverrideOwnerAndGroupApproval(t *testing.T) {
-	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "current"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{Enabled: true, RequireApproval: true, ExemptFactors: []string{"hostPID"}, MaxAllowedScore: ptr.To(100), Approvers: &breakglassv1alpha1.PodSecurityApprovers{Groups: []string{"security-team"}}}}}
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "current"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{
+				Enabled:         true,
+				RequireApproval: true,
+				ExemptFactors:   []string{"hostPID"},
+				MaxAllowedScore: ptr.To(100),
+				Approvers:       &breakglassv1alpha1.PodSecurityApprovers{Groups: []string{"security-team"}},
+			},
+		},
+	}
 	manager := &escalation.EscalationManager{Client: fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc).Build()}
 	controller := &WebhookController{escalManager: manager}
-	base := breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: "esc", UID: "current", Controller: ptr.To(true)}}}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, Approvers: []string{"security@example.com"}, ApproverIdentityProviders: []string{"idp-a"}}}
+	base := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "ns",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: breakglassv1alpha1.GroupVersion.String(),
+				Kind:       "BreakglassEscalation",
+				Name:       "esc",
+				UID:        "current",
+				Controller: ptr.To(true),
+			}},
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:                     breakglassv1alpha1.SessionStateApproved,
+			Approvers:                 []string{"security@example.com"},
+			ApproverIdentityProviders: []string{"idp-a"},
+		},
+	}
 	for _, tc := range []struct {
 		name     string
 		mutate   func(*breakglassv1alpha1.BreakglassSession)
