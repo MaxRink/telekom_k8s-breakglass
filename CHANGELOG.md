@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
+
+- Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
+
+- Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership; explicit approver email matching is case-insensitive. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
+
+- Session quota reservations persist across replicas and crashes while preserving provider-bound identity and approval history. Debug lifecycle and workload deployment stop on unresolved binding policy.
+
 ### Added
 
 - **DebugSession authoring guidance**: Added provider-neutral documentation for
@@ -287,14 +297,6 @@ non-buggy case:
   no operator is locked out mid-incident.
 
 ### Security
-
-- Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
-
-- Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
-
-- Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership; explicit approver email matching is case-insensitive. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
-
-- Session quota reservations persist across replicas and crashes while preserving provider-bound identity and approval history. Debug lifecycle and workload deployment stop on unresolved binding policy.
 
 - **DebugSession `extraDeployValues` YAML injection**: End-user supplied values are now escaped where they enter the template render context (`buildVarsFromSession`), instead of relying on template authors remembering the opt-in `yamlQuote`/`yamlSafe` helpers — which the auxiliary-resource renderer did not even expose. A value containing a line terminator (LF, CR, CRLF, NEL, U+2028, U+2029) could previously close the scalar it was substituted into and inject **sibling YAML keys**; via `podOverridesTemplate` this let an unprivileged requester set `hostNetwork`, `hostPID` or `hostIPC` on the debug pod, which `applyPodOverridesStruct` applied verbatim. Line terminators are now collapsed to a single space and leading `---`/`...` document markers are defused. Values are escaped rather than rejected, and altered variables are logged. **Upgrade impact**: a template that deliberately relied on a multi-line variable to inject YAML structure will no longer do so — inline structural interpolation must be expressed in the template itself (or via `nindent`), not smuggled through a user-supplied value.
 - **DebugSession approval with an empty approver set**: An absent or empty `approvers` set (`nil`, `{}`, or `users: [] / groups: []`) no longer authorizes every authenticated user to approve or reject a session. The read authorizer already required a configured approver set via `debugSessionApproversConfigured`; the approve/reject path now applies the same predicate, so the two agree. Self-approval remains blocked. **Upgrade impact**: none in practice — `requiresApproval()` uses the same predicate, so sessions with an empty approver set are auto-approved and never enter `PendingApproval`, and both endpoints reject sessions that are not in that state. No session that was approvable before is unapprovable now. Operators who intended four-eyes control must name approvers explicitly; an empty set gates nothing and never did.
