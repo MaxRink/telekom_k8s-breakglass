@@ -21,5 +21,6 @@ Regression checks:
 Run these commands from the repository root:
 
 - `(cd frontend && npm test -- --run tests/unit/auth.spec.ts tests/unit/views/SessionApprovalView.spec.ts)`
+- `(cd frontend && npm test -- --run tests/unit/components/App.spec.ts)`
 - `(cd frontend && node --test mock-api/data.test.mjs)`
 - `(cd frontend && npm run typecheck)`
