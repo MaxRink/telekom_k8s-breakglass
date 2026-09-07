@@ -1018,7 +1018,6 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	session, err := tc.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Join-Leave test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
@@ -1153,7 +1152,6 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	session, err := tc.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Termination test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
