@@ -181,6 +181,15 @@ func TestBindingUsesClusterSelectorRequiresValidNonEmptySelector(t *testing.T) {
 	}
 }
 
+func TestValidateDebugSessionClusterBindingRejectsEmptyClusterSelector(t *testing.T) {
+	result := ValidateDebugSessionClusterBinding(&DebugSessionClusterBinding{Spec: DebugSessionClusterBindingSpec{
+		TemplateRef:     &TemplateReference{Name: "template"},
+		ClusterSelector: &metav1.LabelSelector{},
+	}})
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors.ToAggregate().Error(), "clusterSelector")
+}
+
 func TestDebugSessionClusterBinding_SetCondition(t *testing.T) {
 	binding := &DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{

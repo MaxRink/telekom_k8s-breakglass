@@ -351,26 +351,23 @@ func (l *IdentityProviderLoader) LoadIdentityProviderByIssuer(ctx context.Contex
 		return nil, fmt.Errorf("issuer cannot be empty after normalization")
 	}
 
+	var matched *breakglassv1alpha1.IdentityProvider
 	for i := range idpList.Items {
 		idp := &idpList.Items[i]
-		if !idp.Spec.Disabled && strings.TrimRight(idp.Spec.Issuer, "/") == issuerNorm {
-			l.logger.Debugw("Found IdentityProvider by issuer", "name", idp.Name, "issuer", issuer)
-			return l.convertToRuntimeConfig(ctx, idp)
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		if !idp.Spec.Disabled && strings.TrimRight(effectiveIssuer, "/") == issuerNorm {
+			if matched != nil {
+				return nil, fmt.Errorf("multiple enabled IdentityProviders found for issuer %s: %s and %s", issuer, matched.Name, idp.Name)
+			}
+			matched = idp
 		}
 	}
-
-	// Fallback: if no issuer match, try matching by authority
-	// This handles cases where Spec.Issuer is not set or doesn't match JWT iss claim exactly
-	// Many OIDC providers (including Keycloak) use the realm URL as both authority and issuer
-	l.logger.Debugw("No issuer match found, trying authority fallback", "issuer", issuer)
-	for i := range idpList.Items {
-		idp := &idpList.Items[i]
-		authority := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
-
-		if !idp.Spec.Disabled && authority == issuerNorm {
-			l.logger.Debugw("Found IdentityProvider by authority fallback", "name", idp.Name, "authority", authority, "issuer", issuer)
-			return l.convertToRuntimeConfig(ctx, idp)
-		}
+	if matched != nil {
+		l.logger.Debugw("Found IdentityProvider by issuer", "name", matched.Name, "issuer", issuer)
+		return l.convertToRuntimeConfig(ctx, matched)
 	}
 
 	l.logger.Warnw("No IdentityProvider found for issuer", "issuer", issuer)

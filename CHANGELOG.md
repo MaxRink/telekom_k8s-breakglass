@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject ambiguous normalized IdentityProvider issuers at authentication and
+  duplicate effective issuers at admission. An explicit `spec.issuer` now takes
+  precedence over `oidc.authority`; configure it to match the token issuer.
+- Prevent debug bindings from widening template duration and renewal limits,
+  including the default renewal cap, and ignore legacy empty cluster selectors.
+- Reject nonfinite numeric variables and overflowing extended durations, and
+  avoid disclosing restricted extra-deploy options in validation errors.
+
 - **Authorization webhook session selection**: Register shared BreakglassSession
   field indexes even when reconcilers are disabled, so approved sessions remain
   discoverable by the SubjectAccessReview path (PR #1297).

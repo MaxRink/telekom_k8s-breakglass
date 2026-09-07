@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -413,6 +414,29 @@ func TestValidateExtraDeployValues(t *testing.T) {
 	}
 }
 
+func TestValidateNumberAndSelectHideRestrictedValues(t *testing.T) {
+	numberErrs := validateNumberValue(apiextensionsv1.JSON{Raw: []byte(`"NaN"`)}, &VariableValidation{Min: "1", Max: "10"}, field.NewPath("value"))
+	assert.Len(t, numberErrs, 1)
+
+	selectErrs := validateSelectValue(
+		apiextensionsv1.JSON{Raw: []byte(`"secret"`)},
+		[]SelectOption{{Value: "secret", AllowedGroups: []string{"admins"}}, {Value: "safe"}},
+		[]string{"users"}, true, field.NewPath("value"),
+	)
+	require.Len(t, selectErrs, 1)
+	assert.NotContains(t, selectErrs[0].Detail, "admins")
+
+	unknownErrs := validateSelectValue(apiextensionsv1.JSON{Raw: []byte(`"unknown"`)}, []SelectOption{{Value: "secret", AllowedGroups: []string{"admins"}}, {Value: "safe"}}, []string{"users"}, true, field.NewPath("value"))
+	require.Len(t, unknownErrs, 1)
+	assert.Contains(t, unknownErrs[0].Detail, "safe")
+	assert.NotContains(t, unknownErrs[0].Detail, "secret")
+
+	multiErrs := validateMultiSelectValue(apiextensionsv1.JSON{Raw: []byte(`["unknown"]`)}, []SelectOption{{Value: "secret", AllowedGroups: []string{"admins"}}, {Value: "safe"}}, nil, []string{"users"}, true, field.NewPath("value"))
+	require.Len(t, multiErrs, 1)
+	assert.Contains(t, multiErrs[0].Detail, "safe")
+	assert.NotContains(t, multiErrs[0].Detail, "secret")
+}
+
 func TestValidateBooleanValue(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -691,7 +715,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 			},
 			userGroups: []string{"developer"},
 			wantErrors: 1,
-			errContain: "restricted",
+			errContain: "the selected option is not available to this user",
 		},
 		{
 			name:   "multiSelect option allowedGroups - mixed allowed/restricted",
@@ -708,7 +732,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 			},
 			userGroups: []string{"developer"},
 			wantErrors: 1,
-			errContain: "restricted",
+			errContain: "the selected option is not available to this user",
 		},
 		{
 			name:   "multiSelect - user has access to restricted option",
@@ -769,7 +793,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 			},
 			userGroups: nil,
 			wantErrors: 1,
-			errContain: "gpu",
+			errContain: "the selected option is not available to this user",
 		},
 		{
 			name:   "empty userGroups denied for restricted multiSelect option",
@@ -786,7 +810,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 			},
 			userGroups: []string{},
 			wantErrors: 1,
-			errContain: "privileged",
+			errContain: "the selected option is not available to this user",
 		},
 		{
 			name:   "production environment requires platform team",
@@ -804,7 +828,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 			},
 			userGroups: []string{"platform_reader"},
 			wantErrors: 1,
-			errContain: "production",
+			errContain: "the selected option is not available to this user",
 		},
 		{
 			name:   "hostNetwork requires elevated privileges",
@@ -1046,4 +1070,24 @@ func TestCoerceExtraDeployValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateNumberValueFiniteRegardlessOfBounds(t *testing.T) {
+	for _, validation := range []*VariableValidation{nil, {Min: "1", Max: "10"}} {
+		for _, raw := range []string{`"NaN"`, `"Inf"`, `"-Inf"`} {
+			value := coerceJSONValue(apiextensionsv1.JSON{Raw: []byte(raw)}, InputTypeNumber)
+			errs := validateNumberValue(value, validation, field.NewPath("value"))
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Detail, "finite")
+		}
+		for _, raw := range []string{`5`, `"5"`} {
+			assert.Empty(t, validateNumberValue(apiextensionsv1.JSON{Raw: []byte(raw)}, validation, field.NewPath("value")))
+		}
+	}
+	options := []SelectOption{{Value: "secret", AllowedGroups: []string{"admins"}}, {Value: "safe"}}
+	errs := validateMultiSelectValue(apiextensionsv1.JSON{Raw: []byte(`["secret"]`)}, options, nil, []string{"users"}, true, field.NewPath("value"))
+	require.Len(t, errs, 1)
+	assert.NotContains(t, errs[0].Error(), "admins")
+	assert.NotContains(t, errs[0].Error(), "secret")
+	assert.Empty(t, validateMultiSelectValue(apiextensionsv1.JSON{Raw: []byte(`["safe"]`)}, options, nil, []string{"users"}, true, field.NewPath("value")))
 }

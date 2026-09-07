@@ -880,7 +880,7 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 				"binding", bindingID,
 				"error", err,
 			)
-		} else {
+		} else if !selector.Empty() {
 			selectorString := selector.String()
 			c.log.Debugw("resolveClustersFromBinding: checking clusterSelector",
 				"binding", bindingID,
@@ -951,31 +951,10 @@ func hasDuplicateClusterConfigName(clusterConfigs []breakglassv1alpha1.ClusterCo
 
 // mergeConstraints merges template and binding constraints
 func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *breakglassv1alpha1.DebugSessionConstraints, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionConstraints {
-	if binding == nil || binding.Spec.Constraints == nil {
+	if binding == nil {
 		return templateConstraints
 	}
-
-	// Binding constraints override template constraints
-	merged := &breakglassv1alpha1.DebugSessionConstraints{}
-	if templateConstraints != nil {
-		merged = templateConstraints.DeepCopy()
-	}
-	bc := binding.Spec.Constraints
-
-	if isPositiveDebugSessionDuration(bc.MaxDuration) {
-		merged.MaxDuration = bc.MaxDuration
-	}
-	if isPositiveDebugSessionDuration(bc.DefaultDuration) {
-		merged.DefaultDuration = bc.DefaultDuration
-	}
-	if bc.MaxConcurrentSessions > 0 {
-		merged.MaxConcurrentSessions = bc.MaxConcurrentSessions
-	}
-	if bc.MaxRenewals != nil {
-		merged.MaxRenewals = bc.MaxRenewals
-	}
-
-	return merged
+	return mergeDebugSessionConstraints(templateConstraints, binding.Spec.Constraints)
 }
 
 // getSchedulingConstraintsSummary builds a summary of scheduling constraints
