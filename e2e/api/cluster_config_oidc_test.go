@@ -17,6 +17,7 @@ limitations under the License.
 package api
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -243,13 +244,13 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	})
 
 	t.Run("CC-OIDC-004_OIDCFromIdentityProvider", func(t *testing.T) {
-		// This case checks reference wiring. Reuse the bootstrap IDP because
-		// issuer uniqueness is cluster-wide and its live OIDC configuration is
-		// the one used by the E2E authentication setup.
-		idpName := "breakglass-e2e-idp"
-		var idp breakglassv1alpha1.IdentityProvider
-		require.NoError(t, s.Client.Get(s.Ctx, types.NamespacedName{Name: idpName}, &idp),
-			"bootstrap IdentityProvider must exist")
+		// Single-cluster and multi-cluster setups use different resource names
+		// for the same configured Keycloak issuer. Select the existing provider
+		// by its effective issuer instead of assuming either name.
+		var idpList breakglassv1alpha1.IdentityProviderList
+		require.NoError(t, s.Client.List(s.Ctx, &idpList), "list configured IdentityProviders")
+		idpName, err := selectIdentityProviderByIssuer(idpList.Items, configuredE2EIssuer())
+		require.NoError(t, err, "select configured E2E IdentityProvider")
 
 		// Create ClusterConfig that references the IdentityProvider
 		name := helpers.GenerateUniqueName("cc-oidc-from-idp")
@@ -274,7 +275,7 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		// Verify the ClusterConfig was created with IDP reference
 		var fetched breakglassv1alpha1.ClusterConfig
-		err := s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
+		err = s.Client.Get(s.Ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, &fetched)
 		require.NoError(t, err, "Failed to get OIDC ClusterConfig from IDP")
 
 		require.NotNil(t, fetched.Spec.OIDCFromIdentityProvider)
@@ -482,6 +483,32 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 
 		t.Logf("CC-OIDC-007: Created ClusterConfig with custom OIDC scopes: %s", name)
 	})
+}
+
+// configuredE2EIssuer returns the issuer used by the authentication setup.
+func configuredE2EIssuer() string {
+	if issuer := strings.TrimSpace(os.Getenv("KEYCLOAK_ISSUER_URL")); issuer != "" {
+		return strings.TrimRight(issuer, "/")
+	}
+	return strings.TrimRight(helpers.GetKeycloakInternalURL(), "/") + "/realms/" + helpers.GetKeycloakRealm()
+}
+
+func selectIdentityProviderByIssuer(idps []breakglassv1alpha1.IdentityProvider, issuer string) (string, error) {
+	want := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	var matches []string
+	for _, idp := range idps {
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		if strings.TrimRight(strings.TrimSpace(effectiveIssuer), "/") == want {
+			matches = append(matches, idp.Name)
+		}
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("expected exactly one IdentityProvider for issuer %q, found %d", issuer, len(matches))
+	}
+	return matches[0], nil
 }
 
 // TestClusterConfigOIDCStatusConditions tests that the controller properly sets
