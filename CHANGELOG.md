@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
 - Reject unsupported audit namespace selector exclusions before replacing active
   sinks; migrate these exclusions to namespace patterns before upgrading.
 

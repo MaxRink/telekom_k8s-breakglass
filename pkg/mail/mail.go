@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var errSMTPRecipientRejected = errors.New("SMTP server rejected recipient")
+var errSMTPRecipientCommandFailed = errors.New("SMTP recipient command failed")
 
 type Sender interface {
 	Send(receivers []string, subject, body string) error
@@ -196,7 +196,7 @@ func (s *sender) sendPlainSMTP(receivers []string, subject, body string) error {
 	// Set recipients
 	for _, rcpt := range receivers {
 		if err := client.Rcpt(rcpt); err != nil {
-			return fmt.Errorf("RCPT TO failed: %w", errSMTPRecipientRejected)
+			return fmt.Errorf("RCPT TO failed: %w", errSMTPRecipientCommandFailed)
 		}
 	}
 
