@@ -1892,3 +1892,6 @@ The following test categories are implemented:
 - **Bad case tests**: Invalid inputs, unauthorized access, invalid state transitions
 - **E2E tests**: Template creation, session lifecycle, multi-participant sessions, kubectl-debug operations
 - **Frontend tests**: 478 tests passing (Vitest)
+
+The workload-debug image pins its Alpine packages in `utils/workload-debug/deps.lock`, `Dockerfile`, and `IMAGE-METADATA.yaml`. Refresh all three together when Alpine replaces package revisions; the image behavior workflow verifies the resulting build.
+The node-maintenance image similarly keeps its Alpine flock pin aligned in its Dockerfile and dependency inventory.
