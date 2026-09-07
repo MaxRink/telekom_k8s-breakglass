@@ -24,3 +24,16 @@ groups; failed resolution suppresses notifications. Exclusions apply to members
 even when those members also appear as explicit users or in visible groups.
 
 These rules apply to session request emails and do not change approval rights.
+
+Approver provider restrictions use `allowedIdentityProvidersForApprovers`, falling
+back to legacy `allowedIdentityProviders` only when the role-specific list is
+empty. Restricted groups use `status.idpGroupMemberships` for those providers;
+the aggregate membership map and default provider resolver cannot add recipients.
+Until every allowed provider has a resolved snapshot for a group, that group
+contributes no recipients. A successfully resolved empty group stays empty.
+
+The same provider scope applies to exclusion-only and hidden-only groups. Their
+request snapshot or complete allowed-provider status snapshot must be known;
+otherwise all request emails are suppressed. A successful empty lookup from the
+default provider cannot establish that a restricted-provider group is empty.
+Explicitly configured hidden users still require no group lookup.

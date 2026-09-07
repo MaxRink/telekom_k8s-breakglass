@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Restrict session notification group recipients to the configured approver identity providers; unresolved membership never falls back to another provider, including hidden and excluded groups.
+
 - Scope session request emails to the matched escalation, suppress notifications when hidden or excluded group membership is unresolved, and remove hidden group names from email content.
 
 ### Added

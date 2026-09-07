@@ -738,13 +738,21 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 
 	// Get members of excluded groups
 	excludedGroupMembers := make(map[string]bool)
+	restrictedProviders := len(notificationApproverProviders(escalation)) > 0
 	for _, group := range exclusions.Groups {
-		for _, member := range approversByGroup[group] {
+		members, known := approversByGroup[group]
+		if restrictedProviders && !known {
+			members, known = restrictedNotificationGroupMembers(escalation, group)
+			if !known {
+				return nil
+			}
+		}
+		for _, member := range members {
 			excludedGroupMembers[member] = true
 		}
 	}
 	requestResolvedMemberCount := len(excludedGroupMembers)
-	if len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
+	if !restrictedProviders && len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 		// Use a timeout context to prevent hanging on slow group resolution
 		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 		defer cancel()
@@ -780,7 +788,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 			"totalGroupMemberCount", totalMembersCount,
 			"requestResolvedGroupMemberCount", requestResolvedMemberCount,
 			"uniqueExcludedGroupMemberCount", len(excludedGroupMembers))
-	} else {
+	} else if !restrictedProviders {
 		resolverNil := wc.escalationManager != nil && wc.escalationManager.GetResolver() == nil
 		log.Debugw("Cannot resolve additional excluded group members",
 			"groupCount", len(exclusions.Groups),
@@ -865,13 +873,21 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 
 	// Get members of hidden groups
 	hiddenGroupMembers := make(map[string]bool)
+	restrictedProviders := len(notificationApproverProviders(escalation)) > 0
 	for _, group := range hiddenGroups {
-		for _, member := range approversByGroup[group] {
+		members, known := approversByGroup[group]
+		if restrictedProviders && !known {
+			members, known = restrictedNotificationGroupMembers(escalation, group)
+			if !known {
+				return nil
+			}
+		}
+		for _, member := range members {
 			hiddenGroupMembers[member] = true
 		}
 	}
 	requestResolvedMemberCount := len(hiddenGroupMembers)
-	if wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
+	if !restrictedProviders && wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 		// Use a timeout context to prevent hanging on slow group resolution
 		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 		defer cancel()
@@ -907,7 +923,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 			"totalGroupMemberCount", totalMembersCount,
 			"requestResolvedGroupMemberCount", requestResolvedMemberCount,
 			"uniqueHiddenGroupMemberCount", len(hiddenGroupMembers))
-	} else {
+	} else if !restrictedProviders {
 		log.Warnw("Cannot resolve additional hidden group members - resolver not available",
 			"escalationManagerNil", wc.escalationManager == nil,
 			"resolverNil", wc.escalationManager != nil && wc.escalationManager.GetResolver() == nil,

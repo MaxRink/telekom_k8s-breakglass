@@ -334,18 +334,10 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		var members []string
 		var err error
 
-		// Multi-IDP mode: use deduplicated members from status if available
-		if len(p.Spec.AllowedIdentityProvidersForApprovers) > 0 && p.Status.ApproverGroupMembers != nil {
-			if statusMembers, ok := p.Status.ApproverGroupMembers[group]; ok {
-				members = statusMembers
-				reqLog.Debugw("Using deduplicated members from status (multi-IDP mode)",
-					"group", system.RedactGroupName(group),
-					"escalation", p.Name,
-					"memberCount", len(members))
-			} else {
-				reqLog.Debugw("No members found in status for group (multi-IDP mode)",
-					"group", system.RedactGroupName(group),
-					"escalation", p.Name)
+		if len(notificationApproverProviders(p)) > 0 {
+			var known bool
+			members, known = restrictedNotificationGroupMembers(p, group)
+			if !known {
 				continue
 			}
 		} else {
@@ -878,4 +870,28 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 	// Send separate emails per approver group
 	// Each email shows only the specific group that matched
 	wc.sendOnRequestEmailsByGroup(reqLog, bs, authEmail, username, filteredApprovers, approversByGroup, matchedEsc)
+}
+
+// notificationApproverProviders follows role-specific, then legacy restrictions.
+func notificationApproverProviders(escalation *breakglassv1alpha1.BreakglassEscalation) []string {
+	if len(escalation.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+		return escalation.Spec.AllowedIdentityProvidersForApprovers
+	}
+	return escalation.Spec.AllowedIdentityProviders
+}
+
+// restrictedNotificationGroupMembers never substitutes aggregate/default-provider
+// membership for an unresolved allowed provider. Empty resolved groups are known.
+func restrictedNotificationGroupMembers(escalation *breakglassv1alpha1.BreakglassEscalation, group string) ([]string, bool) {
+	var members []string
+	for _, provider := range notificationApproverProviders(escalation) {
+		providerMembers, known := escalation.Status.IDPGroupMemberships[provider][group]
+		if !known {
+			return nil, false
+		}
+		for _, member := range providerMembers {
+			members = addIfNotPresent(members, member)
+		}
+	}
+	return members, true
 }

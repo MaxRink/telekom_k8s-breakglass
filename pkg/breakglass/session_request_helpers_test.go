@@ -485,3 +485,102 @@ func TestResolveAndAddGroupMembersPreservesResolutionForExclusions(t *testing.T)
 		})
 	}
 }
+
+// A default-provider resolver must never supply restricted-provider recipients.
+type notificationDefaultResolver struct{ called bool }
+
+func (r *notificationDefaultResolver) Members(context.Context, string) ([]string, error) {
+	r.called = true
+	return []string{"outside@example.com"}, nil
+}
+
+func TestRestrictedNotificationProvidersNeverUseDefaultResolver(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, tc := range []struct {
+			name   string
+			status map[string]map[string][]string
+			want   []string
+			known  bool
+		}{
+			{name: "missing map"},
+			{name: "missing provider", status: map[string]map[string][]string{"outside": {"team": {"outside@example.com"}}}},
+			{name: "missing group", status: map[string]map[string][]string{"allowed": {}}},
+			{name: "known empty", status: map[string]map[string][]string{"allowed": {"team": nil}}, known: true},
+			{name: "scoped members", status: map[string]map[string][]string{"allowed": {"team": {"inside@example.com"}}, "outside": {"team": {"outside@example.com"}}}, want: []string{"inside@example.com"}, known: true},
+		} {
+			t.Run(map[bool]string{false: "role", true: "legacy"}[legacy]+"/"+tc.name, func(t *testing.T) {
+				resolver := &notificationDefaultResolver{}
+				ctrl := &BreakglassSessionController{escalationManager: &testEscalationLookup{resolver: resolver}}
+				esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}}}}
+				if legacy {
+					esc.Spec.AllowedIdentityProviders = []string{"allowed"}
+				} else {
+					esc.Spec.AllowedIdentityProvidersForApprovers = []string{"allowed"}
+					// Role-specific restrictions take precedence if an old object
+					// contains both forms despite current admission validation.
+					esc.Spec.AllowedIdentityProviders = []string{"outside"}
+				}
+				esc.Status.IDPGroupMemberships = tc.status
+				// A stale aggregate must not reintroduce another provider.
+				esc.Status.ApproverGroupMembers = map[string][]string{"team": {"outside@example.com"}}
+				result := &escalationResolutionResult{approversByGroup: map[string][]string{}}
+				ctrl.resolveAndAddGroupMembers(context.Background(), esc, result, zap.NewNop().Sugar())
+				assert.False(t, resolver.called)
+				assert.Equal(t, tc.want, result.allApprovers)
+				_, known := result.approversByGroup["team"]
+				assert.Equal(t, tc.known, known)
+				assert.NotContains(t, result.allApprovers, "outside@example.com")
+			})
+		}
+	}
+}
+
+type notificationEmptyDefaultResolver struct{ called bool }
+
+func (r *notificationEmptyDefaultResolver) Members(context.Context, string) ([]string, error) {
+	r.called = true
+	return nil, nil // A successful empty group in the wrong provider is not proof.
+}
+
+func TestRestrictedNotificationPrivacyFilters(t *testing.T) {
+	for _, filter := range []string{"excluded", "hidden"} {
+		for _, legacy := range []bool{false, true} {
+			for _, tc := range []struct {
+				name     string
+				status   map[string]map[string][]string
+				snapshot map[string][]string
+				want     []string
+			}{
+				{name: "unknown suppresses despite default successful empty"},
+				{name: "scoped excludes member", status: map[string]map[string][]string{"allowed": {"secret": {"private@example.com"}}}, want: []string{"visible@example.com"}},
+				{name: "scoped empty permits recipients", status: map[string]map[string][]string{"allowed": {"secret": nil}}, want: []string{"private@example.com", "visible@example.com"}},
+				{name: "request snapshot remains authoritative", snapshot: map[string][]string{"secret": {"private@example.com"}}, want: []string{"visible@example.com"}},
+			} {
+				t.Run(filter+"/"+map[bool]string{false: "role", true: "legacy"}[legacy]+"/"+tc.name, func(t *testing.T) {
+					resolver := &notificationEmptyDefaultResolver{}
+					ctrl := &BreakglassSessionController{escalationManager: &testEscalationLookup{resolver: resolver}}
+					esc := &breakglassv1alpha1.BreakglassEscalation{}
+					if legacy {
+						esc.Spec.AllowedIdentityProviders = []string{"allowed"}
+					} else {
+						esc.Spec.AllowedIdentityProvidersForApprovers = []string{"allowed"}
+					}
+					esc.Status.IDPGroupMemberships = tc.status
+					esc.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{Groups: []string{"secret"}}
+					esc.Spec.Approvers.HiddenFromUI = []string{"secret"}
+					// secret is deliberately not an approver group, so normal
+					// candidate collection need not have resolved it.
+					candidates := []string{"private@example.com", "visible@example.com"}
+					var got []string
+					if filter == "excluded" {
+						got = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+					} else {
+						got = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+					}
+					assert.Equal(t, tc.want, got)
+					assert.False(t, resolver.called)
+				})
+			}
+		}
+	}
+}
