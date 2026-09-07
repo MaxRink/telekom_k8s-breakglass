@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -76,10 +77,13 @@ func (c *DebugSessionController) debugQuotaPolicy(ctx context.Context, s *breakg
 		}
 		// Preserve username/email alias matching used by the API preflight.
 		for _, user := range []string{s.Spec.RequestedBy, s.Spec.RequestedByEmail} {
-			if user == "" || (user == s.Spec.RequestedByEmail && user == s.Spec.RequestedBy && len(entry.Scopes) > 2) {
+			if user == "" {
 				continue
 			}
 			scope := debugQuotaScope("debug-binding-user", string(binding.UID), user)
+			if slices.Contains(entry.Scopes, scope) {
+				continue
+			}
 			entry.Scopes = append(entry.Scopes, scope)
 			if binding.Spec.MaxActiveSessionsPerUser != nil {
 				limits[scope] = *binding.Spec.MaxActiveSessionsPerUser
