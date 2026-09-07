@@ -26,9 +26,7 @@ func TestCreateTempPrivateUsesProtectedOwnerACL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sd.String(); !strings.Contains(got, "D:P") {
-		t.Fatalf("private file DACL is not protected: %q", got)
-	}
+	assertProtectedOwnerACL(t, sd)
 }
 
 func TestPrivateWriteAndReplacement(t *testing.T) {
@@ -46,13 +44,20 @@ func TestPrivateWriteAndReplacement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		user, err := windows.GetCurrentProcessToken().GetTokenUser()
-		if err != nil {
-			t.Fatal(err)
-		}
-		descriptor := sd.String()
-		if !strings.Contains(descriptor, "D:P") || strings.Count(descriptor, "(") != 1 || !strings.Contains(descriptor, user.User.Sid.String()) {
-			t.Fatalf("unexpected ACL: %s", descriptor)
-		}
+		assertProtectedOwnerACL(t, sd)
+	}
+}
+
+// Both initial creation and replacement must exclude inherited/group access.
+// Resolve the actual token SID; the USERNAME environment variable is untrusted.
+func assertProtectedOwnerACL(t *testing.T, sd *windows.SECURITY_DESCRIPTOR) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := sd.String()
+	if !strings.Contains(descriptor, "D:P") || strings.Count(descriptor, "(") != 1 || !strings.Contains(descriptor, user.User.Sid.String()) {
+		t.Fatalf("unexpected ACL: %s", descriptor)
 	}
 }

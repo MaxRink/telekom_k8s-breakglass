@@ -100,6 +100,20 @@ jobs:
           flags: cli
           fail_ci_if_error: false
 
+  windows-privatefile-tests:
+    name: Windows Private File Security
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify native Windows token-file ACLs
+        run: go test ./pkg/bgctl/internal/privatefile -run '^(TestCreateTempPrivateUsesProtectedOwnerACL|TestPrivateWriteAndReplacement)$' -count=1 -v
+
   crd-validation:
     name: CRD Schema & API Server Validation
     runs-on: ubuntu-latest
