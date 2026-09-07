@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
+
 ### Added
 
 - **DebugSession authoring guidance**: Added provider-neutral documentation for
