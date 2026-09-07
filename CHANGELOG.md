@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 
+### Security
+
+- Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
+
 ### Added
 
 - **DebugSession authoring guidance**: Added provider-neutral documentation for
