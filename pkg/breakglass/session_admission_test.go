@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -287,4 +288,79 @@ func TestQuotaRecoveryRechecksEscalationUIDBeforeTimeout(t *testing.T) {
 	require.Empty(t, session.Status.State)
 	require.True(t, session.Status.TimeoutAt.IsZero())
 	require.False(t, IsSessionAccessActive(*session))
+}
+
+// Only List uses the stale informer; durable reads and writes use the live client.
+type staleQuotaPrecheckClient struct {
+	client.Client
+	cache        client.Reader
+	indexedLists int
+}
+
+func (c *staleQuotaPrecheckClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	options := &client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(options)
+	}
+	if options.FieldSelector != nil && !options.FieldSelector.Empty() {
+		c.indexedLists++
+	}
+	return c.cache.List(ctx, list, opts...)
+}
+
+type countedQuotaReader struct {
+	client.Reader
+	lists int
+}
+
+func (r *countedQuotaReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	r.lists++
+	return r.Reader.List(ctx, list, opts...)
+}
+func TestIndexedQuotaPrecheckRequiresDurableAdmission(t *testing.T) {
+	for _, durable := range []bool{false, true} {
+		t.Run(fmt.Sprint(durable), func(t *testing.T) {
+			esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "esc", Namespace: "ns", UID: "esc"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{SessionLimitsOverride: &breakglassv1alpha1.SessionLimitsOverride{MaxActiveSessionsTotal: ptrInt32(1), MaxActiveSessionsPerUser: ptrInt32(1)}}}
+			owner := metav1.OwnerReference{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: ptrBool(true)}
+			existing := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "existing", Namespace: "ns", UID: "existing", OwnerReferences: []metav1.OwnerReference{owner}}, Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "user"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending}}
+			candidate := existing.DeepCopy()
+			candidate.Name, candidate.UID = "candidate", "candidate"
+			candidate.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending}
+			candidate.Spec.GrantedGroup = "different"
+			live := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(existing).WithObjects(esc, existing, candidate).Build()
+			cache := fake.NewClientBuilder().WithScheme(Scheme).
+				WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+					return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+				}).
+				WithIndex(&breakglassv1alpha1.BreakglassSession{}, "status.state", func(obj client.Object) []string {
+					return []string{string(obj.(*breakglassv1alpha1.BreakglassSession).Status.State)}
+				}).Build()
+			cached := &staleQuotaPrecheckClient{Client: live, cache: cache}
+			reader := &countedQuotaReader{Reader: live}
+			sm := NewSessionManagerWithClientAndReader(cached, reader)
+			if durable {
+				WithQuotaNamespace("controller")(sm)
+			}
+			wc := &BreakglassSessionController{sessionManager: sm}
+			userErr := wc.checkUserSessionCount(t.Context(), "user", 1, "test", zap.NewNop().Sugar())
+			totalErr := wc.checkTotalSessionCount(t.Context(), esc, 1, "test", zap.NewNop().Sugar())
+			if durable {
+				require.NoError(t, userErr)
+				require.NoError(t, totalErr)
+				require.Equal(t, 4, cached.indexedLists)
+				require.Zero(t, reader.lists)
+				require.NoError(t, live.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
+				require.ErrorIs(t, sm.admitSession(t.Context(), candidate), quotas.ErrFull)
+				require.Positive(t, reader.lists)
+				require.NoError(t, live.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
+				require.Equal(t, breakglassv1alpha1.SessionStateRejected, candidate.Status.State)
+				require.False(t, IsSessionAccessActive(*candidate))
+			} else {
+				require.ErrorContains(t, userErr, "session limit reached")
+				require.ErrorContains(t, totalErr, "session limit reached")
+				require.Zero(t, cached.indexedLists)
+				require.Equal(t, 2, reader.lists)
+			}
+		})
+	}
 }

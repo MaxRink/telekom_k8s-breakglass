@@ -93,3 +93,8 @@ that the live escalation still has that UID before using its policy. Invalid
 unrecorded legacy ownership blocks bootstrap until corrected; invalid metadata
 never removes an already-recorded UID reservation. Additional noncontrolling
 owners of other resource kinds do not change the escalation quota scope.
+
+When durable admission is enabled, regular-session quota prechecks use indexed
+informer reads as an advisory check. A stale precheck can pass, but the mandatory
+uncached UID reservation gate still rejects excess usage before success or
+activation. Constructors without durable admission retain uncached prechecks.

@@ -251,7 +251,7 @@ func (c *SessionManager) recoverSessionAdmissions(ctx context.Context) error {
 			return fmt.Errorf("resolve recovery escalation: %w", err)
 		}
 		session.Status.State = breakglassv1alpha1.SessionStatePending
-		session.Status.TimeoutAt = metav1.NewTime(time.Now().Add(ParseApprovalTimeout(escalation.Spec, c.getLogger())))
+		session.Status.TimeoutAt = metav1.NewTime(time.Now().UTC().Add(ParseApprovalTimeout(escalation.Spec, c.getLogger())))
 		if err := c.UpdateBreakglassSessionStatus(ctx, *session); err != nil {
 			c.getLogger().Warnw("Session admission status recovery deferred", "session", session.Name, "error", err)
 		}

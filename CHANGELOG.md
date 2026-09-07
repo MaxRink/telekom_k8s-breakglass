@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Use indexed advisory quota prechecks when durable admission is enabled, retaining authoritative enforcement before session success.
+
 - Reuse provider-bound approver group resolvers after reloading provider configuration and credentials; unchanged providers retain the configured membership-cache TTL.
 
 - Reject missing, empty, or multiple issuer extras explicitly when admitting new ephemeral containers; no-op updates remain unaffected. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.

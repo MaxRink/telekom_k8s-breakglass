@@ -519,7 +519,7 @@ GroupOverrideLoop:
 }
 
 // checkUserSessionCount counts active sessions for a user and checks against a limit.
-// Uses an uncached full list so concurrent replica creates are visible.
+// Indexed prechecks are advisory only when durable quota admission is enabled.
 func (wc *BreakglassSessionController) checkUserSessionCount(
 	ctx context.Context,
 	userIdentifier string,
@@ -527,10 +527,15 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 	source string,
 	log *zap.SugaredLogger,
 ) error {
-	// Read the complete population from the API server: indexed informer reads
-	// can lag a just-created session on another replica.
 	all := &breakglassv1alpha1.BreakglassSessionList{}
-	if err := wc.sessionManager.Reader().List(ctx, all); err != nil {
+	var err error
+	if wc.sessionManager.quotaEnabled {
+		// The mandatory durable admission gate catches concurrent/stale-cache usage.
+		all.Items, err = wc.sessionManager.GetUserBreakglassSessions(ctx, userIdentifier)
+	} else {
+		err = wc.sessionManager.Reader().List(ctx, all)
+	}
+	if err != nil {
 		return fmt.Errorf("failed to list sessions for user quota check: %w", err)
 	}
 
@@ -570,9 +575,19 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	source string,
 	log *zap.SugaredLogger,
 ) error {
-	// Read all sessions from the API server so informer lag cannot hide usage.
 	all := &breakglassv1alpha1.BreakglassSessionList{}
-	if err := wc.sessionManager.Reader().List(ctx, all); err != nil {
+	var err error
+	if wc.sessionManager.quotaEnabled {
+		all.Items, err = wc.sessionManager.GetSessionsByStates(ctx, []breakglassv1alpha1.BreakglassSessionState{
+			breakglassv1alpha1.SessionStatePending,
+			breakglassv1alpha1.SessionStateApproved,
+			breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+		})
+	} else {
+		// Without durable admission, informer lag must not hide usage.
+		err = wc.sessionManager.Reader().List(ctx, all)
+	}
+	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
 
