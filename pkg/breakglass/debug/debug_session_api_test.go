@@ -55,7 +55,6 @@ func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, us
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", username)
-			c.Set("legacy_identity_allowed", true) // This fixture models authenticated single-provider mode.
 			if email != "" {
 				c.Set("email", email)
 			}

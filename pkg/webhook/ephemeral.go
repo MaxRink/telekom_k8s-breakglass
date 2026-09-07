@@ -76,10 +76,11 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 		return admission.Denied("cluster identity cannot be determined for ephemeral container validation")
 	}
 
-	issuer := ""
-	if values := req.UserInfo.Extra["identity.t-caas.telekom.com/issuer"]; len(values) == 1 {
-		issuer = values[0]
+	issuers := req.UserInfo.Extra["identity.t-caas.telekom.com/issuer"]
+	if len(issuers) != 1 || issuers[0] == "" {
+		return admission.Denied("exactly one nonempty issuer is required for ephemeral container validation")
 	}
+	issuer := issuers[0]
 	session, err := w.DebugHandler.FindActiveSessionForIssuer(ctx, user, cluster, issuer)
 	if err != nil {
 		w.Log.Errorw("Failed to find active session", "error", err)

@@ -197,7 +197,17 @@ func TestCleanupResourcesRetainsInventoryWhenClusterConfigMissing(t *testing.T) 
 }
 
 func TestTrackedApplyRetainsResponseIdentity(t *testing.T) {
-	for _, obj := range []client.Object{&corev1.Pod{}, &corev1.ResourceQuota{}, &policyv1.PodDisruptionBudget{}, &appsv1.Deployment{}, &appsv1.DaemonSet{}} {
+	for _, obj := range []client.Object{
+		&corev1.Pod{},
+		&corev1.ResourceQuota{},
+		&policyv1.PodDisruptionBudget{},
+		&appsv1.Deployment{},
+		&appsv1.DaemonSet{},
+		&unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+		}},
+	} {
 		t.Run(fmt.Sprintf("%T", obj), func(t *testing.T) {
 			obj.SetName("tracked")
 			obj.SetNamespace("ns")
