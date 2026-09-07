@@ -15,7 +15,9 @@ Existing provider-only cache entries are intentionally not migrated or reused. R
 
 Secret-bearing files use owner-only permissions on POSIX. Windows creates temporary files with a protected DACL granting access only to the process-token user before writing any secret bytes. Windows in-place fallback remains disabled. Windows-specific tests cover initial protection and replacement/readback, but must run on Windows to establish runtime evidence; cross-compilation alone does not establish ACL isolation.
 
-The explicit insecure-TLS and HTTP development settings remain available.
+Both advertised device-login verification URLs are validated before the manual
+instruction is displayed or the selected URL is opened. The explicit
+insecure-TLS and HTTP development settings remain available.
 
 The `Windows Private File Security` CI job runs the native private-file tests on
 `windows-latest`. It checks the protected, single-process-user ACL immediately
