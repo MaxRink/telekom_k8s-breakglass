@@ -14,10 +14,10 @@ ARG CREATED=${BUILD_DATE}
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
       bash=5.3.9-r1 \
-      bind-tools=9.20.26-r0 \
+      bind-tools=9.20.27-r0 \
       ca-certificates=20260611-r0 \
-      curl=8.21.0-r0 \
-      jq=1.8.1-r0 \
+      curl=8.22.0-r0 \
+      jq=1.8.2-r0 \
       openssl=3.5.8-r0 \
       tini=0.19.0-r3 \
     && addgroup -S -g 65532 debug \
