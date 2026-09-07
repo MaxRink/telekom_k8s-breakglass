@@ -712,7 +712,7 @@ func TestPlainSMTPRecipientReplyIsPrivate(t *testing.T) {
 	}, "").(*sender)
 	s.log = zap.New(core).Sugar()
 	err := s.Send([]string{"private-recipient@example.com"}, "subject", "body")
-	require.ErrorIs(t, err, errSMTPRecipientRejected)
+	require.ErrorIs(t, err, errSMTPRecipientCommandFailed)
 	assert.NotContains(t, err.Error(), "private-recipient")
 	for _, entry := range logs.All() {
 		assert.NotContains(t, fmt.Sprint(entry.ContextMap()), "private-recipient")

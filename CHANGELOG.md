@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
 
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
 - Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
 
 - Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
