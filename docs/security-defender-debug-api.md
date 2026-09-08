@@ -36,6 +36,12 @@ selected ClusterConfig namespace, independently of the controller pod or test
 helper namespace, while asserting the template's spoke target namespace
 separately. The resource namespace comes from the selected ClusterConfig.
 
+The API create/get fixture registers the returned DebugSession name and
+namespace (and captures its UID) for cleanup. This prevents the single-cluster
+fixture from leaving a session in `default` when the helper's controller
+namespace is `breakglass-system`, while retaining the existing cleanup skip
+controls.
+
 Fixture guidance follows the same boundary: omit the deprecated API `namespace`
 field when exercising a template's default target, so the returned hub
 `DebugSession` namespace remains the ClusterConfig namespace while its target is
