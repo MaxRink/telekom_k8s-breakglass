@@ -75,6 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quota admission rejects ambiguous escalation ownership and reclaims durable reservations only under quota or storage pressure, reducing unrelated API reads while preserving exact-UID checks.
 - Fail writing-role startup when the durable quota namespace is empty, with actionable flag and environment-variable guidance; read-only instances may omit it.
 - Saturated quota cleanup continues checking other reservations after an unreadable UID while retaining that slot and failing closed when capacity remains unproven.
+- Retry debug-session quota admission after the reconciler advances the resource
+  version, rechecking the original UID and spec; API creation is never repeated
+  and replacement or terminal objects fail closed.
 
 - Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
 

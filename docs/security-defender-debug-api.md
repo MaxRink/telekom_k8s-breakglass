@@ -36,6 +36,11 @@ selected ClusterConfig namespace, independently of the controller pod or test
 helper namespace, while asserting the template's spoke target namespace
 separately. The resource namespace comes from the selected ClusterConfig.
 
+When durable debug-session quota admission races the reconciler, the API retries
+only the bounded admission operation after an uncached read confirms the same
+UID, immutable spec, and non-terminal object. It never repeats the API Create;
+replacement, spec changes, terminal state, and exhausted conflicts fail closed.
+
 Fixture guidance follows the same boundary: omit the deprecated API `namespace`
 field when exercising a template's default target, so the returned hub
 `DebugSession` namespace remains the ClusterConfig namespace while its target is

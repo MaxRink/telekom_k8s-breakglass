@@ -17,6 +17,8 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+var errDebugSessionCandidateChanged = errors.New("debug quota candidate changed")
+
 func debugQuotaScope(parts ...string) string { b, _ := json.Marshal(parts); return string(b) }
 func (c *DebugSessionController) quotaReader() ctrlclient.Reader {
 	if c.apiReader != nil {
@@ -111,7 +113,8 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 		return fmt.Errorf("debug quota candidate changed or is terminal")
 	}
 	if s.ResourceVersion != current.ResourceVersion {
-		return fmt.Errorf("debug quota candidate changed; retry reconciliation")
+		return fmt.Errorf("%w: %w", errDebugSessionCandidateChanged,
+			apierrors.NewConflict(breakglassv1alpha1.GroupVersion.WithResource("debugsessions").GroupResource(), s.Name, errors.New("retry reconciliation")))
 	}
 	if current.Annotations[quotas.AdmissionAnnotation] == "" && current.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		base := current.DeepCopy()
@@ -120,6 +123,9 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 		}
 		current.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
 		if err := c.client.Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			if apierrors.IsConflict(err) {
+				return fmt.Errorf("%w: mark provisional debug session: %w", errDebugSessionCandidateChanged, err)
+			}
 			return fmt.Errorf("mark provisional debug session: %w", err)
 		}
 		s.ResourceVersion = current.ResourceVersion
@@ -194,6 +200,9 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 		}
 		current.Annotations[quotas.AdmissionAnnotation] = quotas.Ready
 		if err := c.client.Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			if apierrors.IsConflict(err) {
+				return fmt.Errorf("%w: complete debug quota admission: %w", errDebugSessionCandidateChanged, err)
+			}
 			return fmt.Errorf("complete debug quota admission: %w", err)
 		}
 	}
