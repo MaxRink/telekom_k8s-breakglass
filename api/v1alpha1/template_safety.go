@@ -16,15 +16,17 @@ import (
 // A conservative context pass also requires serializers to occupy complete YAML
 // scalar positions across text, branches, loops, and named-template calls.
 func ValidateTemplateOutput(tmpl *template.Template) error {
+	mutates := false
 	called := map[string]bool{}
 	for _, definition := range tmpl.Templates() {
 		if definition.Tree != nil {
 			collectTemplateCalls(definition.Tree.Root, called)
+			mutates = mutates || templateSetMutates(definition.Tree.Root)
 		}
 	}
 	for _, definition := range tmpl.Templates() {
 		if definition.Tree != nil {
-			if err := validateOutputList(definition.Tree.Root, definition.Name() == tmpl.Name() && !called[definition.Name()]); err != nil {
+			if err := validateOutputList(definition.Tree.Root, !mutates && definition.Name() == tmpl.Name() && !called[definition.Name()]); err != nil {
 				return err
 			}
 		}
@@ -34,6 +36,74 @@ func ValidateTemplateOutput(tmpl *template.Template) error {
 		return err
 	}
 	return nil
+}
+
+var mutatingTemplateFunctions = map[string]bool{
+	"set": true, "unset": true, "merge": true, "mustMerge": true,
+	"mergeOverwrite": true, "mustMergeOverwrite": true,
+}
+
+func templateSetMutates(list *parse.ListNode) bool {
+	if list == nil {
+		return false
+	}
+	for _, node := range list.Nodes {
+		switch n := node.(type) {
+		case *parse.ActionNode:
+			if pipeMutates(n.Pipe) {
+				return true
+			}
+		case *parse.IfNode:
+			if pipeMutates(n.Pipe) || templateSetMutates(n.List) || templateSetMutates(n.ElseList) {
+				return true
+			}
+		case *parse.WithNode:
+			if pipeMutates(n.Pipe) || templateSetMutates(n.List) || templateSetMutates(n.ElseList) {
+				return true
+			}
+		case *parse.RangeNode:
+			if pipeMutates(n.Pipe) || templateSetMutates(n.List) || templateSetMutates(n.ElseList) {
+				return true
+			}
+		case *parse.TemplateNode:
+			if pipeMutates(n.Pipe) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pipeMutates(pipe *parse.PipeNode) bool {
+	if pipe == nil {
+		return false
+	}
+	for _, cmd := range pipe.Cmds {
+		for i, arg := range cmd.Args {
+			if i == 0 {
+				if id, ok := arg.(*parse.IdentifierNode); ok && mutatingTemplateFunctions[id.Ident] {
+					return true
+				}
+			}
+			if nested, ok := arg.(*parse.PipeNode); ok && pipeMutates(nested) {
+				return true
+			}
+			if chain, ok := arg.(*parse.ChainNode); ok && nodeMutates(chain.Node) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nodeMutates(node parse.Node) bool {
+	switch n := node.(type) {
+	case *parse.PipeNode:
+		return pipeMutates(n)
+	case *parse.ChainNode:
+		return nodeMutates(n.Node)
+	}
+	return false
 }
 
 func validateOutputList(list *parse.ListNode, rootDot bool) error {

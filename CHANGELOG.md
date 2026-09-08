@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Disable trusted raw field output for a complete debug template set when Sprig
+  mutation functions can modify requester-visible maps during rendering.
+
 - Validate both device-login verification URLs before displaying or opening them.
 
 - Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
@@ -91,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
 
 - Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
 
