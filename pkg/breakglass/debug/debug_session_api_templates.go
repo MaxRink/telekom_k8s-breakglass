@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -294,19 +296,47 @@ func filterExtraDeployVariablesForRequester(vars []breakglassv1alpha1.ExtraDeplo
 		filteredVariable := *variable.DeepCopy()
 		if len(filteredVariable.Options) > 0 {
 			filteredOptions := make([]breakglassv1alpha1.SelectOption, 0, len(filteredVariable.Options))
+			visibleValues := make(map[string]bool, len(filteredVariable.Options))
 			for _, option := range filteredVariable.Options {
 				if userHasAnyExactGroup(requester.groups, option.AllowedGroups) {
 					option.AllowedGroups = nil
 					filteredOptions = append(filteredOptions, option)
+					visibleValues[option.Value] = true
 				}
 			}
 			filteredVariable.Options = filteredOptions
+			if filteredVariable.Default != nil && !defaultMatchesVisibleOptions(filteredVariable.Default, visibleValues, filteredVariable.InputType) {
+				filteredVariable.Default = nil
+			}
 		}
 		filteredVariable.AllowedGroups = nil
 		filtered = append(filtered, filteredVariable)
 	}
 
 	return filtered
+}
+
+func defaultMatchesVisibleOptions(defaultValue *apiextensionsv1.JSON, visible map[string]bool, inputType breakglassv1alpha1.ExtraDeployInputType) bool {
+	if defaultValue == nil {
+		return true
+	}
+	if inputType == breakglassv1alpha1.InputTypeMultiSelect {
+		var values []string
+		if json.Unmarshal(defaultValue.Raw, &values) != nil {
+			return false
+		}
+		for _, value := range values {
+			if !visible[value] {
+				return false
+			}
+		}
+		return true
+	}
+	var value string
+	if json.Unmarshal(defaultValue.Raw, &value) != nil {
+		return false
+	}
+	return visible[value]
 }
 
 func (c *DebugSessionAPIController) buildTemplateResponse(

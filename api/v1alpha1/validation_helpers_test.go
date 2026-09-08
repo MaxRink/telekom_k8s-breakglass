@@ -3052,12 +3052,12 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "valid template with variable",
-			template: "Hello {{ .Name }}",
+			template: "name: {{ .Name | yamlQuote }}",
 			wantErr:  false,
 		},
 		{
 			name:     "valid template with sprig function",
-			template: "{{ .Name | default \"unknown\" }}",
+			template: "{{ .Name | default \"unknown\" | yamlQuote }}",
 			wantErr:  false,
 		},
 		{
@@ -3072,7 +3072,7 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "valid range",
-			template: "{{- range .Items }}{{ . }}{{- end }}",
+			template: "{{ range .Items }}\n- {{ . | yamlQuote }}\n{{ end }}",
 			wantErr:  false,
 		},
 		{
@@ -3097,7 +3097,7 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "complex valid template",
-			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .session.name }}\n  labels:\n    {{- range $k, $v := .labels }}\n    {{ $k }}: {{ $v | yamlQuote }}\n    {{- end }}",
+			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .session.name }}\n  labels:\n    {{- range $k, $v := .labels }}\n    {{ $k | yamlQuote }}: {{ $v | yamlQuote }}\n    {{- end }}",
 			wantErr:  false,
 		},
 	}

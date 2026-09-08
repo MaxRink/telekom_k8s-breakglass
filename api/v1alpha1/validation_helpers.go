@@ -1788,6 +1788,8 @@ func validateGoTemplateSyntax(templateStr string) error {
 	// This ensures template functions like yamlQuote, default, etc. are recognized
 	// Use sprig.FuncMap() (not TxtFuncMap) to match runtime template rendering behavior
 	funcMap := sprig.FuncMap()
+	delete(funcMap, "env")
+	delete(funcMap, "expandenv")
 
 	// Add custom breakglass template functions that are used at runtime.
 	// These are stubs - we only need them to parse, not execute correctly.
@@ -1808,10 +1810,10 @@ func validateGoTemplateSyntax(templateStr string) error {
 	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
 
 	// Parse the template - this validates syntax
-	_, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)
+	tmpl, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	return ValidateTemplateOutput(tmpl)
 }
