@@ -209,9 +209,8 @@ func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context
 	return false
 }
 
-// collectApproversFromEscalations performs a single pass over filtered escalations to
-// collect possible groups, find the matched escalation for the requested group,
-// and gather deduplicated approvers from explicit users and resolved group members.
+// collectApproversFromEscalations selects the requested escalation and gathers
+// deduplicated approvers from its explicit users and resolved group members.
 func (wc *BreakglassSessionController) collectApproversFromEscalations(
 	ctx context.Context, possibleEscals []breakglassv1alpha1.BreakglassEscalation,
 	requestedGroup string, reqLog *zap.SugaredLogger,
@@ -226,47 +225,47 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 		"escalationCount", len(possibleEscals),
 		"requestedGroup", system.RedactGroupName(requestedGroup))
 
+	// Select the escalation first. Notification recipients belong to the
+	// requested escalation only; collecting from every eligible escalation can
+	// disclose unrelated escalation requests.
+	for i := range possibleEscals {
+		p := &possibleEscals[i]
+		if !p.IsReady() {
+			continue
+		}
+		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
+		if result.matchedEscalation == nil && p.Spec.EscalatedGroup == requestedGroup {
+			result.matchedEscalation = p
+			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
+		}
+	}
+
 	for i := range possibleEscals {
 		p := &possibleEscals[i]
 		if !p.IsReady() {
 			reqLog.Debugw("Skipping unready escalation during approver resolution", "escalationName", p.Name)
 			continue
 		}
-
-		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
+		if p != result.matchedEscalation {
+			continue
+		}
 		reqLog.Debugw("Processing escalation for approver resolution",
 			"escalationName", p.Name,
 			"escalatedGroup", system.RedactGroupName(p.Spec.EscalatedGroup),
 			"explicitUserCount", len(p.Spec.Approvers.Users),
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
-		// Always check if this is the matched escalation first (needed for deny policies)
-		// Only consider the escalation if it's in a "Ready" state.
-		isMatchedEscalation := p.Spec.EscalatedGroup == requestedGroup && result.matchedEscalation == nil && p.IsReady()
-		if isMatchedEscalation {
-			result.matchedEscalation = p
-			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
-			reqLog.Debugw("Matched escalation found during approver collection",
-				"escalationName", result.matchedEscalation.Name,
-				"escalatedGroup", system.RedactGroupName(result.matchedEscalation.Spec.EscalatedGroup),
-				"denyPolicyCount", len(result.selectedDenyPolicies))
-		}
+		reqLog.Debugw("Matched escalation selected for approver resolution",
+			"escalationName", result.matchedEscalation.Name,
+			"escalatedGroup", system.RedactGroupName(result.matchedEscalation.Spec.EscalatedGroup),
+			"denyPolicyCount", len(result.selectedDenyPolicies))
 
 		// Check total approvers limit before processing this escalation's approvers
 		if len(result.allApprovers) >= MaxTotalApprovers {
-			// If we've already found the matched escalation, break out entirely
-			// to avoid unnecessary work and log spam
-			if result.matchedEscalation != nil {
-				reqLog.Infow("Total approvers limit reached and matched escalation found, stopping",
-					"limit", MaxTotalApprovers,
-					"matchedEscalation", result.matchedEscalation.Name)
-				break
-			}
-			// Otherwise continue looking for the matched escalation (but skip approver resolution)
-			reqLog.Debugw("Total approvers limit reached, skipping approver resolution for escalation",
+			reqLog.Infow("Total approvers limit reached and matched escalation found, stopping",
 				"limit", MaxTotalApprovers,
-				"skippedEscalation", p.Name)
-			continue
+				"matchedEscalation", result.matchedEscalation.Name)
+			break
 		}
 
 		// Add explicit users (deduplicated) - track them under special key
@@ -292,10 +291,7 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 		// Resolve and add group members (deduplicated)
 		wc.resolveAndAddGroupMembers(ctx, p, result, reqLog)
 
-		// Break outer loop if we've reached the maximum total approvers AND
-		// we've already found the matched escalation. If matchedEsc is nil,
-		// let the loop continue — the top-of-loop check will skip approver
-		// resolution but still identify the matched escalation.
+		// Stop once the matched escalation reaches the notification cap.
 		if len(result.allApprovers) >= MaxTotalApprovers && result.matchedEscalation != nil {
 			reqLog.Infow("Maximum total approvers limit reached, stopping escalation processing",
 				"limit", MaxTotalApprovers,
@@ -338,18 +334,10 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		var members []string
 		var err error
 
-		// Multi-IDP mode: use deduplicated members from status if available
-		if len(p.Spec.AllowedIdentityProvidersForApprovers) > 0 && p.Status.ApproverGroupMembers != nil {
-			if statusMembers, ok := p.Status.ApproverGroupMembers[group]; ok {
-				members = statusMembers
-				reqLog.Debugw("Using deduplicated members from status (multi-IDP mode)",
-					"group", system.RedactGroupName(group),
-					"escalation", p.Name,
-					"memberCount", len(members))
-			} else {
-				reqLog.Debugw("No members found in status for group (multi-IDP mode)",
-					"group", system.RedactGroupName(group),
-					"escalation", p.Name)
+		if len(notificationApproverProviders(p)) > 0 {
+			var known bool
+			members, known = restrictedNotificationGroupMembers(p, group)
+			if !known {
 				continue
 			}
 		} else {
@@ -361,10 +349,16 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 					// Continue with other groups even if one fails
 					continue
 				}
+			} else {
+				continue // No authoritative membership was resolved.
 			}
 		}
 
-		// Apply per-group member limit to prevent resource exhaustion
+		// Keep complete membership, including known-empty groups, for exclusions.
+		// Recipient caps below must not make overlapping excluded members visible.
+		result.approversByGroup[group] = members
+
+		// Cap notification candidates; privacy snapshots remain complete.
 		if len(members) > MaxApproverGroupMembers {
 			reqLog.Warnw("Approver group has too many members, truncating",
 				"group", system.RedactGroupName(group),
@@ -410,8 +404,6 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		countBefore := len(result.allApprovers)
 		for _, member := range members {
 			result.allApprovers = addIfNotPresent(result.allApprovers, member)
-			// Track member as belonging to this group
-			result.approversByGroup[group] = addIfNotPresent(result.approversByGroup[group], member)
 		}
 		countAdded := len(result.allApprovers) - countBefore
 		reqLog.Debugw("Added group members to approvers",
@@ -858,24 +850,64 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 		"escalationName", matchedEsc.Name,
 		"preFilterApproverCount", len(allApprovers))
 
-	filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, approversByGroup, matchedEsc)
+	filteredApprovers, exclusionsSuppressed := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, approversByGroup, matchedEsc)
+	if exclusionsSuppressed {
+		reqLog.Warnw("Suppressing session request notifications because excluded-group membership could not be resolved",
+			"escalationName", matchedEsc.Name,
+			"originalApproverCount", len(allApprovers))
+		return
+	}
 	reqLog.Debugw("After filterExcludedNotificationRecipients",
 		"postExcludeApproverCount", len(filteredApprovers),
 		"excludedCount", len(allApprovers)-len(filteredApprovers))
 
-	filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, approversByGroup, matchedEsc)
+	preHiddenApproverCount := len(filteredApprovers)
+	filteredApprovers, hiddenSuppressed := wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, approversByGroup, matchedEsc)
+	if hiddenSuppressed {
+		reqLog.Warnw("Suppressing session request notifications because hidden-group membership could not be resolved",
+			"escalationName", matchedEsc.Name,
+			"originalApproverCount", len(allApprovers))
+		return
+	}
 	reqLog.Debugw("After filterHiddenFromUIRecipients",
 		"postHiddenFilterApproverCount", len(filteredApprovers),
-		"hiddenFilteredOutCount", len(allApprovers)-len(filteredApprovers))
+		"hiddenFilteredOutCount", preHiddenApproverCount-len(filteredApprovers))
 
 	if len(filteredApprovers) == 0 {
-		reqLog.Infow("All approvers excluded from notifications via NotificationExclusions or HiddenFromUI",
+		reqLog.Infow("No approvers remain eligible for session request notifications after configured exclusions and hidden approvers",
 			"escalationName", matchedEsc.Name,
 			"originalApproverCount", len(allApprovers))
 		return
 	}
 
-	// Send separate emails per approver group
-	// Each email shows only the specific group that matched
+	// Send recipient notifications with all matching groups from bounded snapshots.
 	wc.sendOnRequestEmailsByGroup(reqLog, bs, authEmail, username, filteredApprovers, approversByGroup, matchedEsc)
+}
+
+// notificationApproverProviders follows role-specific, then legacy restrictions.
+func notificationApproverProviders(escalation *breakglassv1alpha1.BreakglassEscalation) []string {
+	if len(escalation.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+		return escalation.Spec.AllowedIdentityProvidersForApprovers
+	}
+	return escalation.Spec.AllowedIdentityProviders
+}
+
+// restrictedNotificationGroupMembers never substitutes aggregate/default-provider
+// membership for an unresolved allowed provider. Empty resolved groups are known.
+func restrictedNotificationGroupMembers(escalation *breakglassv1alpha1.BreakglassEscalation, group string) ([]string, bool) {
+	var members []string
+	seen := make(map[string]bool)
+	for _, provider := range notificationApproverProviders(escalation) {
+		providerMembers, known := escalation.Status.IDPGroupMemberships[provider][group]
+		if !known {
+			return nil, false
+		}
+		for _, member := range providerMembers {
+			if !seen[member] {
+				seen[member] = true
+				members = append(members, member)
+			}
+		}
+	}
+	return members, true
 }

@@ -14,29 +14,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Validate both device-login verification URLs before displaying or opening them.
 
-- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
-
-- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
-
-- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
-
-- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
-
-- Clear inherited OIDC fallback credentials when resolving new settings, including
-  transitions to direct OIDC configuration.
-
-- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
-
-- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
-
-- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+- Reject unsupported audit namespace selector exclusions before replacing active
+  sinks; migrate these exclusions to namespace patterns before upgrading.
 
 - Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
   debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
   signing keys when identity-provider trust settings change.
 
-- Reject unsupported audit namespace selector exclusions before replacing active
-  sinks; migrate these exclusions to namespace patterns before upgrading.
+- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+
+- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
+
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
+- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
+
+- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
+
+- Deduplicate notification group badges and avoid a second explicit-user email
+  when that recipient is already covered by an approver group.
+
+- Report unresolved privacy membership as notification suppression separately from
+  the normal case where all recipients were filtered by configuration.
+
+- Bound per-group notification attribution rendering while preserving the full
+  membership snapshot used for privacy exclusions and hidden approver filtering.
+
+- Restrict session notification group recipients to the configured approver
+  identity providers; unresolved membership never falls back to another provider,
+  including hidden and excluded groups.
+
+- Scope session request emails to the matched escalation, suppress notifications
+  when hidden or excluded group membership is unresolved, and remove hidden group
+  names from email content.
 
 - Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
 
@@ -97,14 +116,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
 
-- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
-
 - **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
   redirects, preserve explicit issuer bindings in runtime selection and admission,
   and invalidate cluster credentials
   when an inherited IdentityProvider client Secret changes. An escalation with an
   updated specification remains unavailable until its Ready condition reflects
   the current generation.
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
+- Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
+  restricted session notifications without changing approver readiness.
 
 - Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 

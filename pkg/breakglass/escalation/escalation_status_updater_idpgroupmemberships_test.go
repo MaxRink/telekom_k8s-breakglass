@@ -845,6 +845,32 @@ func TestPruneUnconfiguredApproverGroupStatus(t *testing.T) {
 	}, escalation.Status.IDPGroupMemberships)
 }
 
+func TestPruneUnconfiguredGroupStatusKeepsPrivacyHierarchyOutOfApproverMembers(t *testing.T) {
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"team":    {"approver@example.com"},
+				"private": {"private@example.com"},
+			},
+			IDPGroupMemberships: map[string]map[string][]string{
+				"idp-a": {
+					"team":    {"approver@example.com"},
+					"private": {"private@example.com"},
+				},
+			},
+		},
+	}
+
+	assert.True(t, pruneUnconfiguredGroupStatus(escalation, []string{"team"}, []string{"team", "private"}))
+	assert.Equal(t, map[string][]string{"team": {"approver@example.com"}}, escalation.Status.ApproverGroupMembers)
+	assert.Equal(t, map[string]map[string][]string{
+		"idp-a": {
+			"team":    {"approver@example.com"},
+			"private": {"private@example.com"},
+		},
+	}, escalation.Status.IDPGroupMemberships)
+}
+
 func TestEscalationStatusUpdaterPrunesRemovedApproverGroupsWithStatusUpdate(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer func() {
