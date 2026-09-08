@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -788,6 +789,33 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_InsecureSkipVerify(t *testing.T)
 	require.NotNil(t, transport.TLSClientConfig)
 	assert.True(t, transport.TLSClientConfig.InsecureSkipVerify)
 	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
+	assert.ErrorIs(t, httpClient.CheckRedirect(nil, nil), http.ErrUseLastResponse)
+}
+
+func TestOIDCTokenProvider_HTTPClientDoesNotReplayCredentialsOn308(t *testing.T) {
+	var redirected bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirected = true
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusPermanentRedirect)
+	}))
+	defer source.Close()
+
+	provider := NewOIDCTokenProvider(fake.NewClientBuilder().Build(), zap.NewNop().Sugar())
+	client, err := provider.createOIDCHTTPClient(&breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL:             source.URL,
+		InsecureSkipTLSVerify: true,
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, source.URL, strings.NewReader("client_secret=must-stay-here"))
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusPermanentRedirect, resp.StatusCode)
+	assert.False(t, redirected)
 }
 
 func TestOIDCTokenProvider_CreateOIDCHTTPClient_WithCertificateAuthority(t *testing.T) {

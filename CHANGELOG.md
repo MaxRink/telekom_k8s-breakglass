@@ -7,13 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security
+### Fixed
 
-- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
+
+### Security
 
 - Validate both device-login verification URLs before displaying or opening them.
 
 - Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
 
 - Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
 
@@ -73,6 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
+- **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
+  redirects, preserve explicit issuer bindings in runtime selection and admission,
+  and invalidate cluster credentials
+  when an inherited IdentityProvider client Secret changes. An escalation with an
+  updated specification remains unavailable until its Ready condition reflects
+  the current generation.
 
 - Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 
