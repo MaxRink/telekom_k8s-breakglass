@@ -23,6 +23,8 @@ import (
 
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
+	quotaNamespace string
+	quotaEnabled   bool
 	client.Client
 	reader              client.Reader
 	liveReader          client.Reader
@@ -52,6 +54,11 @@ func (c *SessionManager) getLogger() *zap.SugaredLogger {
 
 // SessionManagerOption configures a SessionManager during construction.
 type SessionManagerOption func(*SessionManager)
+
+// WithQuotaNamespace enables durable admission in the configured controller namespace.
+func WithQuotaNamespace(namespace string) SessionManagerOption {
+	return func(sm *SessionManager) { sm.quotaNamespace = namespace; sm.quotaEnabled = true }
+}
 
 // WithSessionLogger sets a custom logger for the SessionManager.
 // If not provided, the global zap.S() logger is used as fallback.
@@ -651,7 +658,15 @@ func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs b
 
 	// Always fetch current state once to get Namespace, ResourceVersion, and Generation
 	// This avoids duplicate API calls while ensuring kstatus compliance
-	current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
+	var current breakglassv1alpha1.BreakglassSession
+	var err error
+	if c.quotaEnabled && bs.Namespace != "" {
+		// Quota reservations identify namespace/name/UID; do not route their
+		// status updates through a cross-namespace name index.
+		err = c.Reader().Get(ctx, client.ObjectKeyFromObject(&bs), &current)
+	} else {
+		current, err = c.GetBreakglassSessionByName(ctx, bs.Name)
+	}
 	if err != nil {
 		log.Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err)...)
 		return fmt.Errorf("failed to resolve BreakglassSession %s before status update: %w", bs.Name, err)
@@ -660,6 +675,18 @@ func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs b
 		return apierrors.NewConflict(breakglassv1alpha1.GroupVersion.WithResource("breakglasssessions").GroupResource(), bs.Name, fmt.Errorf("stale resource version %q (current %q)", bs.ResourceVersion, current.ResourceVersion))
 	}
 
+	if c.quotaEnabled && !IsSessionTerminalState(bs.Status.State) {
+		if IsSessionTerminalState(current.Status.State) {
+			return fmt.Errorf("refusing to revive terminal session")
+		}
+		if bs.UID != "" && bs.UID != current.UID {
+			return fmt.Errorf("session UID changed")
+		}
+		if err := c.admitSession(ctx, &current); err != nil {
+			return err
+		}
+		bs.ResourceVersion = current.ResourceVersion
+	}
 	// Populate missing fields from current state
 	if bs.Namespace == "" {
 		bs.Namespace = current.Namespace
@@ -669,6 +696,12 @@ func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs b
 	}
 	// Set observedGeneration for kstatus compliance
 	bs.Status.ObservedGeneration = current.Generation
+	if c.quotaEnabled {
+		if bs.ResourceVersion == "" {
+			return fmt.Errorf("quota status update requires resourceVersion")
+		}
+		return c.Client.Status().Update(ctx, &bs)
+	}
 	if err := applyBreakglassSessionStatus(ctx, c, &bs); err != nil {
 		log.Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err)...)
 		return fmt.Errorf("failed to update BreakglassSession status %s/%s: %w", bs.Namespace, bs.Name, err)

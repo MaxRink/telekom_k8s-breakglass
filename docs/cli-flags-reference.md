@@ -10,7 +10,7 @@ The breakglass controller supports 40+ configuration flags that can be set via:
 1. **Command-line arguments**: `breakglass-controller --flag-name=value`
 2. **Environment variables**: `FLAG_NAME=value breakglass-controller`
 
-All flags have sensible defaults and are optional.
+API, controller, and cleanup roles require `--breakglass-namespace` or `BREAKGLASS_NAMESPACE`. Other flags have defaults. The individual flag examples below assume `BREAKGLASS_NAMESPACE` is already set for these roles.
 
 ## Quick Start
 
@@ -22,7 +22,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=true \
-  --enable-webhooks=true
+  --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system
 ```
 
 ### Multi-Replica Deployment
@@ -33,7 +34,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=true \
-  --enable-webhooks=true
+  --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system
 ```
 
 ### Webhook-Only Instance
@@ -42,6 +44,7 @@ breakglass-controller \
 breakglass-controller \
   --enable-frontend=false \
   --enable-api=false \
+  --enable-controllers=false \
   --enable-cleanup=false \
   --enable-webhooks=true
 ```
@@ -715,7 +718,7 @@ The Kubernetes namespace containing breakglass resources (IdentityProvider secre
 | Property | Value |
 |----------|-------|
 | **Type** | `string` |
-| **Default** | `` (cluster-wide lookup) |
+| **Default** | `` (manual runs); the packaged Deployment derives it from `POD_NAMESPACE` |
 | **Environment** | `BREAKGLASS_NAMESPACE` |
 | **Example** | `--breakglass-namespace=breakglass-system` |
 
@@ -726,6 +729,9 @@ breakglass-controller --breakglass-namespace=breakglass-system
 Used for:
 - Finding IdentityProvider resources
 - Locating secret references
+- Storing and enforcing durable session quota reservations in the controller namespace
+
+The packaged Kubernetes Deployment passes its pod namespace through this flag so quota admission and Secret references use the same namespace. Set the flag explicitly for a standalone controller process. Any process with API, controller, or cleanup roles enabled fails during startup when this value is empty or whitespace; the error names both this flag and `BREAKGLASS_NAMESPACE`. Read-only frontend or webhook-only processes may omit it.
 
 #### `--disable-email`
 

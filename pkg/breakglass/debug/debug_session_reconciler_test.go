@@ -2961,7 +2961,7 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		assert.Equal(t, "hybrid-binding", result2.Name)
 	})
 
-	t.Run("does not match cluster without ClusterConfig when using clusterSelector", func(t *testing.T) {
+	t.Run("fails closed without ClusterConfig when using clusterSelector", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-template",
@@ -2989,8 +2989,8 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		ctrl := &DebugSessionController{log: logger, client: fakeClient}
 
 		result, err := ctrl.findBindingForSession(ctx, template, "unknown-cluster")
-		require.NoError(t, err)
-		assert.Nil(t, result) // Can't match via selector without ClusterConfig
+		require.ErrorContains(t, err, "cluster config required to resolve binding selector")
+		assert.Nil(t, result) // Missing labels cannot silently discard binding quotas.
 	})
 }
 

@@ -43,14 +43,13 @@ import (
 	"sync"
 	"time"
 
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 var systemCertPool = x509.SystemCertPool

@@ -129,6 +129,9 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 
 	// Activate scheduled sessions first (before expiry checks)
 	if cr.Manager != nil {
+		if err := cr.Manager.recoverSessionAdmissions(opCtx); err != nil {
+			cr.Log.Warnw("Session admission recovery failed", "error", err)
+		}
 		activator := NewScheduledSessionActivator(cr.Log, cr.Manager).
 			WithMailService(cr.MailService, cr.BrandingName, cr.DisableEmail)
 		if cr.AuditService != nil {

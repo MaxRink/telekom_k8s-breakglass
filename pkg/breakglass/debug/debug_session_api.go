@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -51,10 +53,12 @@ const debugSessionNamePrefix = "debug"
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
-	log        *zap.SugaredLogger
-	client     ctrlclient.Client
-	apiReader  ctrlclient.Reader // Uncached reader for consistent reads
-	ccProvider *cluster.ClientProvider
+	quotaNamespace string
+	quotaEnabled   bool
+	log            *zap.SugaredLogger
+	client         ctrlclient.Client
+	apiReader      ctrlclient.Reader // Uncached reader for consistent reads
+	ccProvider     *cluster.ClientProvider
 	// clusterClients optionally overrides how target-cluster clients are
 	// obtained. When nil, ccProvider is used. Tests set this to evaluate
 	// namespace selectorTerms without a live spoke cluster.
@@ -1321,6 +1325,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// The reconciler continues to use SSA for status updates and lifecycle management,
 	// which is the correct boundary: Create() for API-driven creation, SSA for
 	// controller-driven reconciliation.
+	if c.quotaEnabled {
+		if session.Annotations == nil {
+			session.Annotations = map[string]string{}
+		}
+		session.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
+	}
 	if err := c.client.Create(apiCtx, session); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			apiresponses.RespondConflict(ctx, "session already exists")
@@ -1328,6 +1338,20 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 		reqLog.Errorw("Failed to create debug session", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")
+		return
+	}
+
+	if err := c.admitCreatedDebugSession(apiCtx, session); err != nil {
+		reqLog.Errorw("Failed to admit debug session quota",
+			"namespace", session.Namespace,
+			"name", session.Name,
+			"error", err,
+		)
+		if errors.Is(err, quotas.ErrFull) {
+			apiresponses.RespondConflict(ctx, "debug session quota reached")
+		} else {
+			apiresponses.RespondInternalErrorSimple(ctx, "debug session admission incomplete; retry after reconciliation")
+		}
 		return
 	}
 
@@ -1354,6 +1378,42 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
 	}
 	ctx.JSON(http.StatusCreated, response)
+}
+
+// admitCreatedDebugSession retries only the bounded resource-version race
+// between API creation and the reconciler's concurrent admission. It never
+// retries Create and revalidates the immutable API-authorized session spec.
+func (c *DebugSessionAPIController) admitCreatedDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
+	original := session.DeepCopy()
+	current := session.DeepCopy()
+	for attempt := 0; attempt < 3; attempt++ {
+		quotaController := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(c.reader())
+		if c.quotaEnabled {
+			quotaController.WithQuotaNamespace(c.quotaNamespace)
+		}
+		if err := quotaController.admitDebugSession(ctx, current); err == nil {
+			*session = *current
+			return nil
+		} else if !errors.Is(err, errDebugSessionCandidateChanged) || attempt == 2 {
+			return err
+		}
+
+		fresh := &breakglassv1alpha1.DebugSession{}
+		if err := c.reader().Get(ctx, ctrlclient.ObjectKeyFromObject(original), fresh); err != nil {
+			return fmt.Errorf("reload debug session after admission conflict: %w", err)
+		}
+		if fresh.UID == "" || fresh.UID != original.UID {
+			return fmt.Errorf("debug session changed identity during admission retry")
+		}
+		if debugSessionTerminal(fresh) {
+			return fmt.Errorf("debug session became terminal during admission retry")
+		}
+		if !reflect.DeepEqual(fresh.Spec, original.Spec) {
+			return fmt.Errorf("debug session spec changed during admission retry")
+		}
+		current = fresh
+	}
+	return fmt.Errorf("debug session admission retry exhausted")
 }
 
 func buildDebugSessionName(user, cluster string, now time.Time) string {

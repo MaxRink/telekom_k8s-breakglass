@@ -17,6 +17,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
@@ -590,6 +591,9 @@ func IsSessionTerminalState(state breakglassv1alpha1.BreakglassSessionState) boo
 }
 
 func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
 	if session.Status.State == "" {
 		return false
 	}
@@ -664,6 +668,9 @@ func IsSessionAccessActive(session breakglassv1alpha1.BreakglassSession) bool {
 }
 
 func isSessionTokenValid(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
 	if session.Status.State == "" {
 		return false
 	}

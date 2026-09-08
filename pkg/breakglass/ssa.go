@@ -6,6 +6,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -25,6 +26,12 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 	// Set observedGeneration for kstatus compliance
 	if session.Generation > 0 {
 		session.Status.ObservedGeneration = session.Generation
+	}
+	if session.Annotations[quotas.AdmissionAnnotation] != "" {
+		if session.ResourceVersion == "" {
+			return fmt.Errorf("quota status update requires resourceVersion")
+		}
+		return c.Status().Update(ctx, session)
 	}
 	return ssa.ApplyDebugSessionStatus(ctx, c, session)
 }

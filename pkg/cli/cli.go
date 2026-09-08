@@ -197,6 +197,14 @@ func Parse() *Config {
 	return config
 }
 
+// Validate checks settings required by the enabled runtime roles.
+func (c *Config) Validate() error {
+	if (c.EnableAPI || c.EnableControllers || c.EnableCleanup) && strings.TrimSpace(c.BreakglassNamespace) == "" {
+		return fmt.Errorf("--breakglass-namespace (BREAKGLASS_NAMESPACE) is required when API, controllers, or cleanup is enabled")
+	}
+	return nil
+}
+
 func (c *Config) Print(log *zap.SugaredLogger) {
 	log.Infow("CLI Configuration",
 		// Debug and logging

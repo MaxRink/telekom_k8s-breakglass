@@ -216,6 +216,11 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 			return &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
 		}
 
+		if !IsSessionTerminalState(session.Status.State) {
+			if err := ssa.sessionManager.admitSession(ctx, &current); err != nil {
+				return err
+			}
+		}
 		base := current.DeepCopy()
 		applyScheduledSessionStatusTransition(&current, session)
 		patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
