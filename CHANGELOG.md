@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
+
 ### Security
 
 - Validate both device-login verification URLs before displaying or opening them.
