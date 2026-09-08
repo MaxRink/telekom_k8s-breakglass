@@ -8,10 +8,10 @@ github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Masterminds/sprig/v3 v3.3.0 h1:mQh0Yrg1XPo6vjYXgtf5OtijNAKJRNcTdOOGZe3tPhs=
 github.com/Masterminds/sprig/v3 v3.3.0/go.mod h1:Zy1iXRYNqNLUolqCpL4uhk6SHUMAOSCzdgBfDb35Lz0=
-github.com/MicahParks/jwkset v0.11.1 h1:Gr+6JeYoJ7twqyBGf8MXxj2NSCKPoX8RFMtey3GY9Nw=
-github.com/MicahParks/jwkset v0.11.1/go.mod h1:U2oRhRaLgDCLjtpGL2GseNKGmZtLs/3O7p+OZaL5vo0=
-github.com/MicahParks/keyfunc/v3 v3.8.1 h1:VR3jlEs2wz1xGjvUUwUHeoB+eJ6gUnBrpnIByRrtj6g=
-github.com/MicahParks/keyfunc/v3 v3.8.1/go.mod h1:LcorJ0sz2tZGvgZqIfaeyLkJmM+kxIfRDu8dFY0TAas=
+github.com/MicahParks/jwkset v0.11.3 h1:Phli4RdTDdIdLXZpuO7abkwZyzIk0RDTUPVVBHPRdkQ=
+github.com/MicahParks/jwkset v0.11.3/go.mod h1:U2oRhRaLgDCLjtpGL2GseNKGmZtLs/3O7p+OZaL5vo0=
+github.com/MicahParks/keyfunc/v3 v3.8.2 h1:eydEwk/pBAVrDIpmFfB/gkCcrp++xQ7YYXirrI2zlWE=
+github.com/MicahParks/keyfunc/v3 v3.8.2/go.mod h1:T4snFPe26GwMg45bBAdM5P6qWQyLxZHLwBhxR/9PnCs=
 github.com/Nerzal/gocloak/v13 v13.9.0 h1:YWsJsdM5b0yhM2Ba3MLydiOlujkBry4TtdzfIzSVZhw=
 github.com/Nerzal/gocloak/v13 v13.9.0/go.mod h1:YYuDcXZ7K2zKECyVP7pPqjKxx2AzYSpKDj8d6GuyM10=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
