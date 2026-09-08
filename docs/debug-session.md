@@ -185,6 +185,12 @@ Keep security-sensitive values such as images, commands, mounts, capabilities,
 and host namespaces literal in the administrator-owned template. See [Template
 Context Variables](#template-context-variables) for the full list.
 
+Template output that can be changed during rendering with Sprig mutation
+functions (`set`, `unset`, `merge`, `mustMerge`, `mergeOverwrite`, or
+`mustMergeOverwrite`) must use a scalar serializer such as `yamlQuote`,
+`yamlSafe`, `quote`, or `k8sName`, including for otherwise trusted session and
+target fields. This rule applies to the complete parsed template set.
+
 > **Note:** `template` and `templateString` are mutually exclusive. The webhook will reject DebugPodTemplates with both fields set.
 
 For additive operator-owned documentation supplied through a digest-pinned

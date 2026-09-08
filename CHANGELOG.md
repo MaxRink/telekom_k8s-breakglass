@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Disable trusted raw field output for a complete debug template set when Sprig
+  mutation functions can modify requester-visible maps during rendering.
+
 - Validate both device-login verification URLs before displaying or opening them.
 
 - Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
@@ -118,6 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
 
 - Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
   restricted session notifications without changing approver readiness.

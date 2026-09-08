@@ -88,3 +88,32 @@ count: {{ .vars.count | int }}`,
 		})
 	}
 }
+
+func TestTemplateMutationDisablesTrustedFields(t *testing.T) {
+	for _, source := range []string{
+		`{{ $ignored := set .session "name" .vars.payload }}value: {{ .session.name }}`,
+		`{{ $ignored := unset .session "name" }}value: {{ .session.name }}`,
+		`{{ $ignored := merge .session .vars }}value: {{ .session.name }}`,
+		`{{ $ignored := mustMerge .session .vars }}value: {{ .session.name }}`,
+		`{{ $ignored := mergeOverwrite .session .vars }}value: {{ .session.name }}`,
+		`{{ $ignored := mustMergeOverwrite .session .vars }}value: {{ .session.name }}`,
+		`{{ if (set .session "name" .vars.payload).name }}value: {{ .session.name }}{{ end }}`,
+	} {
+		if err := validateGoTemplateSyntax(source); err == nil {
+			t.Errorf("accepted trusted field in mutating template: %s", source)
+		}
+	}
+}
+
+func TestTemplateMutationSerializationAndTrustedFields(t *testing.T) {
+	for _, source := range []string{
+		`{{ $d := dict }}{{ $_ := set $d "value" .vars.payload }}value: {{ get $d "value" | yamlQuote }}`,
+		`{{ $ignored := merge .session .vars }}value: {{ .session.name | yamlQuote }}`,
+		`{{ define "emit" }}{{ .session.name | yamlQuote }}{{ end }}value: {{ template "emit" . }}`,
+		`value: {{ .session.name }}`,
+	} {
+		if err := validateGoTemplateSyntax(source); err != nil {
+			t.Errorf("rejected safe template: %s: %v", source, err)
+		}
+	}
+}

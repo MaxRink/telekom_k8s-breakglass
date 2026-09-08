@@ -17,10 +17,10 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/system"
@@ -609,11 +609,9 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			log.Debugw("Escalation has no approver groups; updating group sync status", "escalation", esc.Name)
 			updated := esc.DeepCopy()
 			changed := updateNoApproverGroupsCondition(updated)
-			clearCachedMembers := false
 			if len(updated.Status.ApproverGroupMembers) > 0 {
 				updated.Status.ApproverGroupMembers = nil
 				changed = true
-				clearCachedMembers = true
 			}
 			if len(idpsToUse) > 0 && len(privacyGroups) > 0 {
 				privacyReport := u.fetchGroupMembersFromMultipleIDPsReport(ctx, &esc, idpsToUse, privacyGroups, log)
@@ -624,16 +622,9 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			} else if len(updated.Status.IDPGroupMemberships) > 0 {
 				updated.Status.IDPGroupMemberships = nil
 				changed = true
-				clearCachedMembers = true
 			}
 			if changed {
-				var err error
-				markEscalationStatusObserved(updated)
-				if clearCachedMembers {
-					err = u.patchStatus(ctx, updated)
-				} else {
-					err = u.applyStatus(ctx, updated)
-				}
+				err := u.patchStatus(ctx, updated)
 				if err != nil {
 					log.Errorw("Failed updating escalation group sync condition", "escalation", esc.Name, "error", err)
 				}
@@ -649,8 +640,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 
 		privacyOnlyGroups := groupsNotIn(privacyGroups, groups)
 		snapshotGroups := append(append([]string(nil), groups...), privacyOnlyGroups...)
-		prunedCachedMembers := pruneUnconfiguredGroupStatus(updated, groups, snapshotGroups)
-		changed := prunedCachedMembers
+		changed := pruneUnconfiguredGroupStatus(updated, groups, snapshotGroups)
 		if updated.Status.ApproverGroupMembers == nil {
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
@@ -739,7 +729,6 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 						if breakglass.IsGroupNotFound(err) {
 							currentMembers, exists := updated.Status.ApproverGroupMembers[g]
 							updated.Status.ApproverGroupMembers[g] = []string{}
-							prunedCachedMembers = true
 							if !exists || len(currentMembers) > 0 {
 								changed = true
 							}
@@ -797,13 +786,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				updated.Status.IDPGroupMemberships = nil
 			}
 			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
-			markEscalationStatusObserved(updated)
-			var err error
-			if prunedCachedMembers {
-				err = u.patchStatus(ctx, updated)
-			} else {
-				err = u.applyStatus(ctx, updated)
-			}
+			err := u.patchStatus(ctx, updated)
 			if err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
 				// Emit error event
@@ -853,26 +836,24 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 	log.Debugw("Completed escalation status update cycle")
 }
 
-func (u EscalationStatusUpdater) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
-	return ssa.ApplyBreakglassEscalationStatus(ctx, u.K8sClient, escalation)
-}
-
 func (u EscalationStatusUpdater) patchStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
-	current := &breakglassv1alpha1.BreakglassEscalation{}
-	if err := u.K8sClient.Get(ctx, client.ObjectKeyFromObject(escalation), current); err != nil {
-		return err
-	}
-
-	base := current.DeepCopy()
-	copyEscalationGroupSyncStatus(current, escalation)
-	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
-	return u.K8sClient.Status().Patch(ctx, current, patch)
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		current := &breakglassv1alpha1.BreakglassEscalation{}
+		if err := u.K8sClient.Get(ctx, client.ObjectKeyFromObject(escalation), current); err != nil {
+			return err
+		}
+		if current.UID != escalation.UID || current.Generation != escalation.Generation {
+			return fmt.Errorf("escalation %s/%s changed while updating group status", escalation.Namespace, escalation.Name)
+		}
+		base := current.DeepCopy()
+		copyEscalationGroupSyncStatus(current, escalation)
+		return u.K8sClient.Status().Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	})
 }
 
 func copyEscalationGroupSyncStatus(current, desired *breakglassv1alpha1.BreakglassEscalation) {
 	current.Status.ApproverGroupMembers = desired.Status.ApproverGroupMembers
 	current.Status.IDPGroupMemberships = desired.Status.IDPGroupMemberships
-	current.Status.ObservedGeneration = desired.Status.ObservedGeneration
 
 	conditionType := string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved)
 	condition := apimeta.FindStatusCondition(desired.Status.Conditions, conditionType)
@@ -881,10 +862,6 @@ func copyEscalationGroupSyncStatus(current, desired *breakglassv1alpha1.Breakgla
 		return
 	}
 	apimeta.SetStatusCondition(&current.Status.Conditions, *condition)
-}
-
-func markEscalationStatusObserved(escalation *breakglassv1alpha1.BreakglassEscalation) {
-	escalation.Status.ObservedGeneration = escalation.Generation
 }
 
 func pruneUnconfiguredApproverGroupStatus(escalation *breakglassv1alpha1.BreakglassEscalation, configuredGroups []string) bool {
