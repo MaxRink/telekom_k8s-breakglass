@@ -41,6 +41,12 @@ only the bounded admission operation after an uncached read confirms the same
 UID, immutable spec, and non-terminal object. It never repeats the API Create;
 replacement, spec changes, terminal state, and exhausted conflicts fail closed.
 
+The API create/get fixture registers the returned DebugSession name and
+namespace (and captures its UID) for cleanup. This prevents the single-cluster
+fixture from leaving a session in `default` when the helper's controller
+namespace is `breakglass-system`, while retaining the existing cleanup skip
+controls.
+
 Fixture guidance follows the same boundary: omit the deprecated API `namespace`
 field when exercising a template's default target, so the returned hub
 `DebugSession` namespace remains the ClusterConfig namespace while its target is

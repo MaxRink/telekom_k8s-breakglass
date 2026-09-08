@@ -879,7 +879,6 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 	apiClient := NewDebugSessionAPIClient(token)
 	var createdSessionName string
-	namespace := helpers.GetTestNamespace()
 
 	t.Run("CreateDebugSession", func(t *testing.T) {
 		req := DebugSessionCreateRequest{
@@ -902,7 +901,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 		// Add to cleanup - create a reference for later deletion
 		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: createdSessionName, Namespace: namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, UID: session.UID},
 		})
 	})
 
