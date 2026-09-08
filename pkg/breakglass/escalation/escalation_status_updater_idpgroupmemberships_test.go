@@ -152,7 +152,7 @@ func TestEscalationStatusPatchPreservesUnownedConditions(t *testing.T) {
 	updated := &breakglassv1alpha1.BreakglassEscalation{}
 	assert.NoError(t, cli.Get(ctx, client.ObjectKeyFromObject(live), updated))
 
-	assert.Equal(t, int64(7), updated.Status.ObservedGeneration)
+	assert.Equal(t, int64(1), updated.Status.ObservedGeneration) // Group sync preserves validator-owned generation.
 	assert.Equal(t, map[string][]string{
 		"admin": {"alice@example.com"},
 	}, updated.Status.ApproverGroupMembers)
@@ -801,7 +801,7 @@ func TestEmptyApproverGroups(t *testing.T) {
 	// Stale group-member status should be cleared when no approver groups remain.
 	assert.Nil(t, updated.Status.ApproverGroupMembers)
 	assert.Nil(t, updated.Status.IDPGroupMemberships)
-	assert.Equal(t, int64(3), updated.Status.ObservedGeneration)
+	assert.Equal(t, int64(1), updated.Status.ObservedGeneration) // Group sync preserves validator-owned generation.
 	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
 	if assert.NotNil(t, condition) {
 		assert.Equal(t, metav1.ConditionTrue, condition.Status)
@@ -945,7 +945,7 @@ func TestEscalationStatusUpdaterPrunesRemovedApproverGroupsWithStatusUpdate(t *t
 			"admin": {"alice@example.com"},
 		},
 	}, updated.Status.IDPGroupMemberships)
-	assert.Equal(t, int64(4), updated.Status.ObservedGeneration)
+	assert.Equal(t, int64(1), updated.Status.ObservedGeneration) // Group sync preserves validator-owned generation.
 }
 
 func TestEscalationStatusUpdaterDoesNotPersistEmptyApproverGroupMembersAfterFullPrune(t *testing.T) {
@@ -1009,7 +1009,7 @@ func TestEscalationStatusUpdaterDoesNotPersistEmptyApproverGroupMembersAfterFull
 	assert.Equal(t, 1, trackingClient.statusWriter.patches)
 	assert.Nil(t, updated.Status.ApproverGroupMembers)
 	assert.Nil(t, updated.Status.IDPGroupMemberships)
-	assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+	assert.Equal(t, int64(1), updated.Status.ObservedGeneration) // Group sync preserves validator-owned generation.
 	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
 	if assert.NotNil(t, condition) {
 		assert.Equal(t, metav1.ConditionFalse, condition.Status)
