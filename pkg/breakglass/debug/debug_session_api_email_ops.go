@@ -708,6 +708,12 @@ type clusterClientAdapter struct {
 	ccProvider *cluster.ClientProvider
 }
 
+// AdaptClusterClientProvider exposes the same spoke client adapter used by debug
+// API operations to admission webhook setup. A nil provider fails closed.
+func AdaptClusterClientProvider(provider *cluster.ClientProvider) ClientProviderInterface {
+	return &clusterClientAdapter{ccProvider: provider}
+}
+
 func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error) {
 	if a.ccProvider == nil {
 		return nil, fmt.Errorf("cluster client provider is not configured")

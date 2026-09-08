@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -244,19 +246,34 @@ type PodFetchFunction func(ctx context.Context, clusterName, namespace, name str
 // NamespaceLabelsFetchFunction is the signature for functions that fetch namespace labels from a cluster.
 type NamespaceLabelsFetchFunction func(ctx context.Context, clusterName, namespace string) (map[string]string, error)
 
+type approverResolverConfig struct {
+	name, issuer, authority, providerType string
+	keycloak                              config.KeycloakRuntimeConfig
+	hasKeycloak                           bool
+}
+
+type cachedApproverResolver struct {
+	config   approverResolverConfig
+	resolver breakglass.GroupMemberResolver
+}
+
 type WebhookController struct {
-	log                    *zap.SugaredLogger
-	config                 config.Config
-	sesManager             *breakglass.SessionManager
-	escalManager           *escalation.EscalationManager
-	canDoFn                breakglass.CanGroupsDoFunction
-	ccProvider             *cluster.ClientProvider
-	denyEval               *policy.Evaluator
-	podFetchFn             PodFetchFunction             // optional override for testing
-	namespaceLabelsFetchFn NamespaceLabelsFetchFunction // optional override for testing
-	auditService           *audit.Service               // optional audit service for access decision events
-	rateLimiter            *ratelimit.IPRateLimiter     // per-IP rate limiter for SAR requests
-	activityTracker        *ActivityTracker             // optional buffered session activity tracker (#314)
+	approverResolverMu sync.Mutex
+	approverResolvers  map[string]cachedApproverResolver
+
+	log                     *zap.SugaredLogger
+	config                  config.Config
+	sesManager              *breakglass.SessionManager
+	escalManager            *escalation.EscalationManager
+	canDoFn                 breakglass.CanGroupsDoFunction
+	ccProvider              *cluster.ClientProvider
+	denyEval                *policy.Evaluator
+	podFetchFn              PodFetchFunction                                                      // optional override for testing
+	namespaceLabelsFetchFn  NamespaceLabelsFetchFunction                                          // optional override for testing
+	approverResolverFetchFn func(context.Context, string) (breakglass.GroupMemberResolver, error) // optional override for tests
+	auditService            *audit.Service                                                        // optional audit service for access decision events
+	rateLimiter             *ratelimit.IPRateLimiter                                              // per-IP rate limiter for SAR requests
+	activityTracker         *ActivityTracker                                                      // optional buffered session activity tracker (#314)
 }
 
 // checkDebugSessionAccessForIssuer checks if a pod operation is allowed by an active debug session.
@@ -386,7 +403,7 @@ func (wc *WebhookController) getPodSecurityOverridesFromSessions(ctx context.Con
 
 		// Look up escalation via owner references
 		for _, or := range s.OwnerReferences {
-			if or.Kind != "BreakglassEscalation" {
+			if or.Kind != "BreakglassEscalation" || or.APIVersion != breakglassv1alpha1.GroupVersion.String() || or.Controller == nil || !*or.Controller {
 				continue
 			}
 
@@ -398,20 +415,145 @@ func (wc *WebhookController) getPodSecurityOverridesFromSessions(ctx context.Con
 				}
 				continue
 			}
+			if or.UID == "" || esc.UID == "" || or.UID != esc.UID {
+				if reqLog != nil {
+					reqLog.Debugw("Ignoring PodSecurityOverrides for owner reference with mismatched UID",
+						"escalation", or.Name, "session", s.Name, "ownerUID", or.UID, "escalationUID", esc.UID)
+				}
+				continue
+			}
 
 			if esc.Spec.PodSecurityOverrides != nil && esc.Spec.PodSecurityOverrides.Enabled {
+				overrides := esc.Spec.PodSecurityOverrides
+				allowedProviders := esc.Spec.AllowedIdentityProvidersForApprovers
+				if len(allowedProviders) == 0 {
+					allowedProviders = esc.Spec.AllowedIdentityProviders
+				}
+				if overrides.RequireApproval && !wc.podSecurityOverrideApprovalGranted(ctx, s, overrides, allowedProviders...) {
+					if reqLog != nil {
+						reqLog.Debugw("Ignoring PodSecurityOverrides without configured additional approval", "escalation", esc.Name, "session", s.Name)
+					}
+					continue
+				}
 				if reqLog != nil {
 					reqLog.Debugw("Found PodSecurityOverrides from escalation",
 						"escalation", esc.Name, "session", s.Name,
 						"maxAllowedScore", esc.Spec.PodSecurityOverrides.MaxAllowedScore,
 						"exemptFactors", esc.Spec.PodSecurityOverrides.ExemptFactors)
 				}
-				return esc.Spec.PodSecurityOverrides
+				return overrides
 			}
 		}
 	}
 
 	return nil
+}
+
+func (wc *WebhookController) podSecurityOverrideApprovalGranted(ctx context.Context, session breakglassv1alpha1.BreakglassSession, overrides *breakglassv1alpha1.PodSecurityOverrides, allowedProviders ...string) bool {
+	if overrides == nil {
+		return false
+	}
+	if !overrides.RequireApproval {
+		return true
+	}
+	if overrides.Approvers == nil || len(session.Status.Approvers) == 0 {
+		return false
+	}
+
+	// Cache only within this decision so each provider is loaded once and failures
+	// cannot cause repeated credential/client construction for every approval.
+	resolvers := map[string]breakglass.GroupMemberResolver{}
+	membersByProviderGroup := map[struct{ provider, group string }][]string{}
+	for i, approvedBy := range session.Status.Approvers {
+		if approvedBy == "" {
+			continue
+		}
+		provider := ""
+		if i < len(session.Status.ApproverIdentityProviders) {
+			provider = session.Status.ApproverIdentityProviders[i]
+		}
+		if len(allowedProviders) > 0 && !slices.Contains(allowedProviders, provider) {
+			continue
+		}
+		// Explicit identifiers are provider-scoped whenever the escalation restricts
+		// providers. An unknown historical slot cannot satisfy that restriction.
+		for _, user := range overrides.Approvers.Users {
+			if strings.EqualFold(user, approvedBy) {
+				return true
+			}
+		}
+		if provider == "" || len(overrides.Approvers.Groups) == 0 {
+			continue
+		}
+		resolver, loaded := resolvers[provider]
+		if !loaded {
+			var err error
+			resolver, err = wc.resolveApproverProvider(ctx, provider)
+			if err != nil {
+				resolver = nil
+			}
+			resolvers[provider] = resolver
+		}
+		if resolver == nil {
+			continue
+		}
+		for _, group := range overrides.Approvers.Groups {
+			key := struct{ provider, group string }{provider: provider, group: group}
+			members, loaded := membersByProviderGroup[key]
+			if !loaded {
+				var err error
+				members, err = resolver.Members(ctx, group)
+				if err != nil {
+					members = nil
+				}
+				membersByProviderGroup[key] = members
+			}
+			for _, member := range members {
+				if strings.EqualFold(member, approvedBy) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// resolveApproverProvider selects the provider recorded by the authenticated
+// approval operation. Never infer it from the session requester or default IdP.
+func (wc *WebhookController) resolveApproverProvider(ctx context.Context, provider string) (breakglass.GroupMemberResolver, error) {
+	if wc.approverResolverFetchFn != nil {
+		return wc.approverResolverFetchFn(ctx, provider)
+	}
+	if provider == "" || wc.escalManager == nil || wc.escalManager.Client == nil {
+		return nil, fmt.Errorf("approver identity provider lookup unavailable")
+	}
+	// Serialize fresh configuration reads with publication so a slower old read
+	// cannot overwrite a resolver constructed from newer credentials. Members is
+	// called by the caller after this lock is released.
+	wc.approverResolverMu.Lock()
+	defer wc.approverResolverMu.Unlock()
+	log := wc.log
+	if log == nil {
+		log = zap.NewNop().Sugar()
+	}
+	idp, err := config.NewIdentityProviderLoader(wc.escalManager.Client).WithLogger(log).LoadIdentityProviderByName(ctx, provider)
+	if err != nil {
+		delete(wc.approverResolvers, provider)
+		return nil, fmt.Errorf("load approver identity provider %q: %w", provider, err)
+	}
+	key := approverResolverConfig{name: idp.Name, issuer: idp.Issuer, authority: idp.Authority, providerType: idp.Type, hasKeycloak: idp.Keycloak != nil}
+	if idp.Keycloak != nil {
+		key.keycloak = *idp.Keycloak
+	}
+	if cached, ok := wc.approverResolvers[provider]; ok && cached.config == key {
+		return cached.resolver, nil
+	}
+	resolver := escalation.SetupResolver(idp, log)
+	if wc.approverResolvers == nil {
+		wc.approverResolvers = make(map[string]cachedApproverResolver)
+	}
+	wc.approverResolvers[provider] = cachedApproverResolver{config: key, resolver: resolver}
+	return resolver, nil
 }
 
 // getClusterConfigAcrossNamespaces performs a ClusterConfig lookup across all namespaces
@@ -425,7 +567,7 @@ func (wc *WebhookController) getClusterConfigAcrossNamespaces(ctx context.Contex
 	return wc.ccProvider.GetAcrossAllNamespaces(ctx, name)
 }
 
-func (WebhookController) BasePath() string {
+func (*WebhookController) BasePath() string {
 	return "breakglass/webhook"
 }
 
@@ -436,7 +578,7 @@ func (wc *WebhookController) Register(rg *gin.RouterGroup) error {
 	return nil
 }
 
-func (b WebhookController) Handlers() []gin.HandlerFunc {
+func (b *WebhookController) Handlers() []gin.HandlerFunc {
 	// Return per-IP rate limiting middleware for SAR endpoints
 	if b.rateLimiter != nil {
 		return []gin.HandlerFunc{b.rateLimiter.Middleware()}
@@ -726,6 +868,7 @@ func NewWebhookController(log *zap.SugaredLogger,
 		// SARs are called very frequently by the Kubernetes API server
 		rateLimiter: ratelimit.New(ratelimit.DefaultSARConfig()),
 	}
+
 	for _, opt := range opts {
 		opt(wc)
 	}

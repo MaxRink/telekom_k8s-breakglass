@@ -16,58 +16,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
 
-- Reject unsupported audit namespace selector exclusions before replacing active
-  sinks; migrate these exclusions to namespace patterns before upgrading.
-
-- Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
-  debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
-  signing keys when identity-provider trust settings change.
-
-- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
-
-- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
-
-- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
-
-- Clear inherited OIDC fallback credentials when resolving new settings, including
-  transitions to direct OIDC configuration.
-
-- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
-
-- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
-
-- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
-
-- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
-
-- Deduplicate notification group badges and avoid a second explicit-user email
-  when that recipient is already covered by an approver group.
-
-- Report unresolved privacy membership as notification suppression separately from
-  the normal case where all recipients were filtered by configuration.
-
-- Bound per-group notification attribution rendering while preserving the full
-  membership snapshot used for privacy exclusions and hidden approver filtering.
-
-- Restrict session notification group recipients to the configured approver
-  identity providers; unresolved membership never falls back to another provider,
-  including hidden and excluded groups.
+- Recognize Kubernetes scheduling defaults on debug workload Pods, validating
+  named-class additions against the spoke PriorityClass while retaining explicit
+  template fields, controller UID checks, and strict ReplicaSet template matching.
 
 - Scope session request emails to the matched escalation, suppress notifications
   when hidden or excluded group membership is unresolved, and remove hidden group
   names from email content.
 
-- Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
+- Restrict session notification group recipients to the configured approver
+  identity providers; unresolved membership never falls back to another provider,
+  including hidden and excluded groups.
+
+- Bound per-group notification attribution rendering while preserving the full
+  membership snapshot used for privacy exclusions and hidden approver filtering.
+
+- Report unresolved privacy membership as notification suppression separately from
+  the normal case where all recipients were filtered by configuration.
+
+- Deduplicate notification group badges and avoid a second explicit-user email
+  when that recipient is already covered by an approver group.
+
+- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
+
+- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
+
+- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
+
+- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+
+- Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
+  debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
+  signing keys when identity-provider trust settings change.
+
+- Reject unsupported audit namespace selector exclusions before replacing active
+  sinks; migrate these exclusions to namespace patterns before upgrading.
 
 - Explain how to recover legacy debug sessions whose auxiliary resource UIDs were not recorded.
 
+- Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
+
 - Accept configured Kubernetes default node-condition toleration durations when checking debug workload identity, and reuse one live Pod lookup per authorization request while retaining UID checks.
 
-- Recognize Kubernetes scheduling defaults on debug workload Pods, validating
-  named-class additions against the spoke PriorityClass while retaining explicit
-  template fields, controller UID checks, and strict ReplicaSet template matching.
+- Reuse each provider/group membership result within one pod-security approval decision, including failed lookups, while retrying on later decisions.
 
 - Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
+
+- Reuse provider-bound approver group resolvers after reloading provider configuration and credentials; unchanged providers retain the configured membership-cache TTL.
 
 - Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
 
@@ -76,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
 
 - Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
+
+- Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership; explicit approver email matching is case-insensitive. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
 
 ### Added
 
@@ -136,17 +142,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `breakglass-debug` target, and use valid exact node names in Helm scheduling
   fixtures.
 
+- Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
+  restricted session notifications without changing approver readiness.
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
 - **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
   redirects, preserve explicit issuer bindings in runtime selection and admission,
   and invalidate cluster credentials
   when an inherited IdentityProvider client Secret changes. An escalation with an
   updated specification remains unavailable until its Ready condition reflects
   the current generation.
-
-- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
-
-- Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
-  restricted session notifications without changing approver readiness.
 
 - Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
 

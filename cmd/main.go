@@ -350,7 +350,7 @@ func run() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := webhook.Setup(managerCtx, restConfig, log, scheme, &cliConfig.Webhook, cliConfig.EnableValidatingWebhooks,
+			if err := webhook.Setup(managerCtx, restConfig, log, scheme, &cliConfig.Webhook, svcs.ccProvider, cliConfig.EnableValidatingWebhooks,
 				cliConfig.EnableHTTP2, cliConfig.Webhook.CertGeneration); err != nil {
 				errCh <- fmt.Errorf("webhook server failed: %w", err)
 			}

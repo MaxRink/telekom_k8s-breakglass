@@ -103,6 +103,13 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 	}
 }
 
+func TestNamespaceAllowDenyMatcher_InvalidGlobFailsClosed(t *testing.T) {
+	matcher := NewNamespaceAllowDenyMatcher(nil, &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"["}})
+	assert.False(t, matcher.IsAllowed("default"))
+	allow := NewNamespaceAllowDenyMatcher(&breakglassv1alpha1.NamespaceFilter{Patterns: []string{"["}}, nil)
+	assert.False(t, allow.IsAllowed("default"))
+}
+
 func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -738,5 +745,14 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 			got := m.IsAllowed(tt.namespace)
 			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestInvalidNamespaceGlobCannotUseMatchingLabels(t *testing.T) {
+	invalid := &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"["}, SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{MatchLabels: map[string]string{"env": "prod"}}}}
+	for _, matcher := range []*NamespaceAllowDenyMatcher{NewNamespaceAllowDenyMatcher(invalid, nil), NewNamespaceAllowDenyMatcher(nil, invalid)} {
+		if matcher.IsAllowedWithLabels("prod", map[string]string{"env": "prod"}) {
+			t.Fatal("invalid filter allowed via matching labels")
+		}
 	}
 }

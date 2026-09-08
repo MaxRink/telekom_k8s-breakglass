@@ -732,7 +732,11 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		if ctrl.ccProvider != nil {
-			if rc, err := ctrl.ccProvider.GetRESTConfig(ctx, cug.Clustername); err == nil && rc != nil {
+			rc, err := ctrl.ccProvider.GetRESTConfig(ctx, cug.Clustername)
+			if err != nil {
+				return nil, fmt.Errorf("get spoke rest config for %s: %w", cug.Clustername, err)
+			}
+			if rc != nil {
 				remote := rest.CopyConfig(rc)
 				remote.Impersonate = rest.ImpersonationConfig{UserName: cug.Username}
 				client, cerr := kubernetes.NewForConfig(remote)
@@ -754,7 +758,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groupCount", len(groups))
 				return groups, nil
 			}
-			log.Debugw("Falling back to legacy GetUserGroupsWithConfig (kube context)", "cluster", cug.Clustername)
+			return nil, fmt.Errorf("get spoke rest config for %s: returned nil config", cug.Clustername)
 		}
 		return GetUserGroupsWithConfig(ctx, cug, ctrl.configPath)
 	}

@@ -346,17 +346,19 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 
 	// Get PodSecurityOverrides from user's active session escalation (if any)
 	podSecurityOverrides := wc.getPodSecurityOverridesFromSessions(s.ctx, s.sessions, s.reqLog)
+	podSecurityOverrideApproved := podSecurityOverrides != nil
 
 	act := policy.Action{
-		Verb:                 ra.Verb,
-		APIGroup:             ra.Group,
-		Resource:             ra.Resource,
-		Namespace:            ra.Namespace,
-		Name:                 ra.Name,
-		Subresource:          ra.Subresource,
-		ClusterID:            s.clusterName,
-		Tenant:               s.tenant,
-		PodSecurityOverrides: podSecurityOverrides,
+		Verb:                        ra.Verb,
+		APIGroup:                    ra.Group,
+		Resource:                    ra.Resource,
+		Namespace:                   ra.Namespace,
+		Name:                        ra.Name,
+		Subresource:                 ra.Subresource,
+		ClusterID:                   s.clusterName,
+		Tenant:                      s.tenant,
+		PodSecurityOverrides:        podSecurityOverrides,
+		PodSecurityOverrideApproved: podSecurityOverrideApproved,
 	}
 
 	// Fetch namespace labels for DenyPolicy SelectorTerms evaluation

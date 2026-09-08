@@ -23,7 +23,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -120,4 +122,65 @@ func TestFindActiveSession(t *testing.T) {
 	found, err = handlerLeft.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
 	require.NoError(t, err)
 	assert.Nil(t, found)
+}
+
+func TestFindActiveSessionRejectsViewer(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "viewer-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:        breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "viewer@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, IdentityProviderIssuer: "https://trusted.example"}},
+		},
+	}
+	handler := NewKubectlDebugHandler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).Build(), nil)
+	found, err := handler.FindActiveSessionForIssuer(context.Background(), "viewer@example.com", "test-cluster", "https://trusted.example")
+	require.NoError(t, err)
+	assert.Nil(t, found)
+}
+
+func TestEphemeralNamespaceLabelsUseSelectedSpoke(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "target", Labels: map[string]string{"access": "yes"}}}).Build()
+	spoke := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "target", Labels: map[string]string{"access": "no"}}}).Build()
+	handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"spoke": spoke, "other": hub}})
+	filter := &breakglassv1alpha1.NamespaceFilter{SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{MatchLabels: map[string]string{"access": "yes"}}}}
+	for _, tc := range []struct {
+		cluster string
+		want    bool
+	}{{"spoke", false}, {"other", true}} {
+		ds := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: tc.cluster}}
+		got, err := handler.isNamespaceAllowedForEphemeral(context.Background(), ds, "target", filter, nil)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, got)
+	}
+}
+
+func TestAdmissionClusterAdapterMissingProviderFailsClosed(t *testing.T) {
+	client, err := AdaptClusterClientProvider(nil).GetClient(context.Background(), "spoke")
+	require.Error(t, err)
+	assert.Nil(t, client)
+}
+
+func TestFindActiveSessionPreservesIssuerAndRoleTogether(t *testing.T) {
+	for _, tc := range []struct {
+		name, issuer string
+		role         breakglassv1alpha1.ParticipantRole
+		want         bool
+	}{
+		{name: "same issuer participant", issuer: "https://trusted.example", role: breakglassv1alpha1.ParticipantRoleParticipant, want: true},
+		{name: "same issuer owner", issuer: "https://trusted.example/", role: breakglassv1alpha1.ParticipantRoleOwner, want: true},
+		{name: "wrong issuer participant", issuer: "https://other.example", role: breakglassv1alpha1.ParticipantRoleParticipant},
+		{name: "missing issuer participant", role: breakglassv1alpha1.ParticipantRoleParticipant},
+		{name: "same issuer viewer", issuer: "https://trusted.example", role: breakglassv1alpha1.ParticipantRoleViewer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "shared@example.com", Role: tc.role, IdentityProviderIssuer: "https://trusted.example"}}}}
+			handler := NewKubectlDebugHandler(fake.NewClientBuilder().WithScheme(newKubectlTestScheme()).WithObjects(session).Build(), nil)
+			found, err := handler.FindActiveSessionForIssuer(context.Background(), "shared@example.com", "spoke", tc.issuer)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, found != nil)
+		})
+	}
 }
