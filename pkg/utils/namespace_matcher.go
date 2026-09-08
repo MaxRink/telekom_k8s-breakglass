@@ -37,10 +37,8 @@ func NewNamespaceMatcher(filter *breakglassv1alpha1.NamespaceFilter) *NamespaceM
 
 // Matches checks if a namespace matches the filter using only the namespace name.
 // For label-based matching, use MatchesWithLabels.
-// Returns true if:
-// - Filter is nil or empty (matches nothing for explicit filters, depends on semantics)
-// - Namespace name matches any pattern
-// Note: This method cannot evaluate selectorTerms without labels.
+// Returns true if the namespace name matches any pattern.
+// This method returns false for nil or empty filters and cannot evaluate selectorTerms without labels.
 func (m *NamespaceMatcher) Matches(namespace string) bool {
 	if m.filter == nil || m.filter.IsEmpty() {
 		return false
