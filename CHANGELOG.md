@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Disable trusted raw field output for a complete debug template set when Sprig
+  mutation functions can modify requester-visible maps during rendering.
+
 - Validate both device-login verification URLs before displaying or opening them.
 
 - Reject unsupported audit namespace selector exclusions before replacing active
@@ -110,6 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
+
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
 
 - **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
   redirects, preserve explicit issuer bindings in runtime selection and admission,
