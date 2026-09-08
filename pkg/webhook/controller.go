@@ -290,6 +290,10 @@ func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Contex
 		return false, "", ""
 	}
 
+	// Reuse one live snapshot only within this authorization decision.
+	var targetPod *corev1.Pod
+	podFetched := false
+
 	// Check each active debug session
 	for _, ds := range debugSessionList.Items {
 		// Only check active sessions for this cluster
@@ -306,7 +310,17 @@ func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Contex
 		// Check if the pod is in the allowed pods list
 		podAllowed := false
 		for _, ap := range ds.Status.AllowedPods {
-			if ap.Namespace == ra.Namespace && ap.Name == ra.Name {
+			if ap.Namespace != ra.Namespace || ap.Name != ra.Name || ap.UID == "" {
+				continue
+			}
+			if !podFetched {
+				podFetched = true
+				pod, err := wc.fetchPodFromCluster(ctx, clusterName, ra.Namespace, ra.Name)
+				if err == nil {
+					targetPod = pod
+				}
+			}
+			if targetPod != nil && string(targetPod.UID) == ap.UID {
 				podAllowed = true
 				break
 			}

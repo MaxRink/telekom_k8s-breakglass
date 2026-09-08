@@ -56,6 +56,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resourceName
       type:
         scalar: string
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
   map:
     fields:
@@ -96,6 +99,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: ready
       type:
         scalar: boolean
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfig
   map:
     fields:
@@ -413,6 +419,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: resourceName
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.BindingReference
@@ -860,6 +869,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: copyNamespace
+      type:
+        scalar: string
+    - name: copyUID
       type:
         scalar: string
     - name: createdAt
@@ -2087,6 +2099,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: podName
       type:
         scalar: string
+    - name: podUID
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainersConfig
   map:
     fields:
@@ -2978,6 +2993,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: source
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig

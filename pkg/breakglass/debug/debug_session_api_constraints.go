@@ -69,6 +69,12 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(
 
 	// If no namespace constraints, use default behavior
 	if nc == nil {
+		if template.Spec.TargetNamespace != "" {
+			if requestedNamespace != "" && requestedNamespace != template.Spec.TargetNamespace {
+				return "", fmt.Errorf("template '%s' requires target namespace '%s'", template.Name, template.Spec.TargetNamespace)
+			}
+			return template.Spec.TargetNamespace, nil
+		}
 		if requestedNamespace != "" {
 			c.log.Debugw("No namespace constraints, using requested namespace",
 				"template", template.Name,
@@ -874,6 +880,13 @@ func validateDeniedNodeLabels(deniedNodeLabels map[string]string, context string
 }
 
 func andNodeSelectors(left, right *corev1.NodeSelector) (*corev1.NodeSelector, error) {
+	// A non-nil selector with no terms is an explicit unsatisfiable constraint.
+	if left != nil && len(left.NodeSelectorTerms) == 0 {
+		return &corev1.NodeSelector{}, nil
+	}
+	if right != nil && len(right.NodeSelectorTerms) == 0 {
+		return &corev1.NodeSelector{}, nil
+	}
 	if left == nil {
 		if right == nil {
 			return nil, nil

@@ -375,6 +375,28 @@ func shouldSendNotification(cfg *breakglassv1alpha1.DebugSessionNotificationConf
 	}
 }
 
+// notificationRecipients expands configured exclusions before mailbox filtering.
+// Unknown membership fails closed; group names must never be treated as addresses.
+func (c *DebugSessionAPIController) notificationRecipients(ctx context.Context, base []string, cfg *breakglassv1alpha1.DebugSessionNotificationConfig) []string {
+	if cfg != nil && cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Groups) > 0 {
+		if c.groupMemberResolver == nil {
+			c.log.Warn("Skipping debug notification because excluded group membership is unavailable")
+			return nil
+		}
+		cfg = cfg.DeepCopy()
+		for _, group := range cfg.ExcludedRecipients.Groups {
+			members, err := c.groupMemberResolver.Members(ctx, group)
+			if err != nil {
+				c.log.Warnw("Skipping debug notification because excluded group membership could not be resolved", "error", err)
+				return nil
+			}
+			cfg.ExcludedRecipients.Users = append(cfg.ExcludedRecipients.Users, members...)
+		}
+		cfg.ExcludedRecipients.Groups = nil
+	}
+	return buildNotificationRecipients(base, cfg)
+}
+
 func buildNotificationRecipients(base []string, cfg *breakglassv1alpha1.DebugSessionNotificationConfig) []string {
 	if cfg == nil && len(base) == 0 {
 		return nil
@@ -383,13 +405,15 @@ func buildNotificationRecipients(base []string, cfg *breakglassv1alpha1.DebugSes
 	seen := make(map[string]struct{}, len(base))
 	var recipients []string
 	add := func(addr string) {
+		addr = strings.TrimSpace(addr)
 		if addr == "" {
 			return
 		}
-		if _, ok := seen[addr]; ok {
+		key := strings.ToLower(addr)
+		if _, ok := seen[key]; ok {
 			return
 		}
-		seen[addr] = struct{}{}
+		seen[key] = struct{}{}
 		recipients = append(recipients, addr)
 	}
 
@@ -397,17 +421,22 @@ func buildNotificationRecipients(base []string, cfg *breakglassv1alpha1.DebugSes
 		add(addr)
 	}
 	if cfg != nil {
+		// Group membership is not available at notification time. Fail closed
+		// rather than treating group names as mailbox addresses.
+		if cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Groups) > 0 {
+			return nil
+		}
 		for _, addr := range cfg.AdditionalRecipients {
 			add(addr)
 		}
-		if cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Users) > 0 {
-			excluded := make(map[string]struct{}, len(cfg.ExcludedRecipients.Users))
+		if cfg.ExcludedRecipients != nil {
+			excluded := make(map[string]struct{}, len(cfg.ExcludedRecipients.Users)+len(cfg.ExcludedRecipients.Groups))
 			for _, u := range cfg.ExcludedRecipients.Users {
-				excluded[u] = struct{}{}
+				excluded[strings.ToLower(strings.TrimSpace(u))] = struct{}{}
 			}
 			filtered := recipients[:0]
 			for _, addr := range recipients {
-				if _, blocked := excluded[addr]; blocked {
+				if _, blocked := excluded[strings.ToLower(addr)]; blocked {
 					continue
 				}
 				filtered = append(filtered, addr)

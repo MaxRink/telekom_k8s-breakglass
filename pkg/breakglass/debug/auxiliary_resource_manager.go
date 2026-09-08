@@ -31,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -213,6 +214,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 				APIVersion:   addlRes.APIVersion,
 				ResourceName: addlRes.ResourceName,
 				Namespace:    addlRes.Namespace,
+				UID:          addlRes.UID,
 			}
 
 			err := m.deleteResource(ctx, targetClient, addlStatus, session)
@@ -601,7 +603,7 @@ func (m *AuxiliaryResourceManager) deployResource(
 		// SSA will create or update the resource, handling existing resources automatically.
 		// Note: We use our own field owner and force ownership to take over any existing resources.
 		obj.SetManagedFields(nil)
-		if err := utils.ApplyUnstructured(ctx, targetClient, obj); err != nil {
+		if err := applyTrackedResource(ctx, targetClient, obj); err != nil {
 			status.Error = fmt.Sprintf("SSA apply failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
 			return status, fmt.Errorf("failed to apply resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
@@ -633,6 +635,7 @@ func (m *AuxiliaryResourceManager) deployResource(
 			status.APIVersion = obj.GetAPIVersion()
 			status.ResourceName = obj.GetName()
 			status.Namespace = obj.GetNamespace()
+			status.UID = string(obj.GetUID())
 			status.Created = true
 			now := time.Now().UTC().Format(time.RFC3339)
 			status.CreatedAt = &now
@@ -643,6 +646,7 @@ func (m *AuxiliaryResourceManager) deployResource(
 				APIVersion:   obj.GetAPIVersion(),
 				ResourceName: obj.GetName(),
 				Namespace:    obj.GetNamespace(),
+				UID:          string(obj.GetUID()),
 			})
 		}
 	}
@@ -690,9 +694,11 @@ func (m *AuxiliaryResourceManager) deleteResource(
 	obj.SetKind(status.Kind)
 	obj.SetName(status.ResourceName)
 	obj.SetNamespace(status.Namespace)
+	uid := types.UID(status.UID)
+	obj.SetUID(uid)
 
 	// Delete the resource
-	if err := targetClient.Delete(ctx, obj); err != nil {
+	if err := deleteTrackedResource(ctx, targetClient, session, obj); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Already deleted, that's fine
 			m.log.Debugw("Auxiliary resource already deleted",
@@ -857,7 +863,7 @@ func AddAuxiliaryResourceToDeployedResources(
 		APIVersion: status.APIVersion,
 		Name:       status.ResourceName,
 		Namespace:  status.Namespace,
-		UID:        "", // UID populated later when we fetch the created resource
+		UID:        status.UID,
 		Source:     fmt.Sprintf("auxiliary:%s", status.Name),
 	})
 
@@ -868,7 +874,7 @@ func AddAuxiliaryResourceToDeployedResources(
 			APIVersion: addlRes.APIVersion,
 			Name:       addlRes.ResourceName,
 			Namespace:  addlRes.Namespace,
-			UID:        "",
+			UID:        addlRes.UID,
 			Source:     fmt.Sprintf("auxiliary:%s", status.Name),
 		})
 	}
@@ -897,7 +903,7 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 
 		// Check primary resource readiness
 		if !status.Ready {
-			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
+			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID)
 			status.ReadinessStatus = primaryReady.readinessStatus
 			if primaryReady.ready {
 				status.Ready = true
@@ -933,7 +939,7 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 				continue
 			}
 
-			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace)
+			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace, addlRes.UID)
 			addlRes.ReadinessStatus = addlReady.readinessStatus
 
 			if addlReady.ready {
@@ -977,7 +983,7 @@ func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
 	ctx context.Context,
 	log *zap.SugaredLogger,
 	targetClient client.Client,
-	apiVersion, kind, name, namespace string,
+	apiVersion, kind, name, namespace, expectedUID string,
 ) readinessResult {
 	gvk, err := parseGVK(apiVersion, kind)
 	if err != nil {
@@ -988,7 +994,21 @@ func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
 		return readinessResult{failed: true, message: fmt.Sprintf("invalid GVK: %v", err)}
 	}
 
-	readiness := m.readinessChecker.CheckResourceReadiness(ctx, targetClient, gvk, name, namespace)
+	if expectedUID == "" {
+		return readinessResult{failed: true, message: "resource identity is not recorded; terminate this legacy debug session and request a new session"}
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	if err := targetClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return readinessResult{readinessStatus: "NotFound", message: "resource not found"}
+		}
+		return readinessResult{readinessStatus: "Unknown", message: fmt.Sprintf("resource lookup failed: %v", err)}
+	}
+	if string(obj.GetUID()) != expectedUID {
+		return readinessResult{failed: true, message: "resource was replaced"}
+	}
+	readiness := m.readinessChecker.CheckReadiness(obj)
 
 	return readinessResult{
 		ready:           readiness.IsReady(),

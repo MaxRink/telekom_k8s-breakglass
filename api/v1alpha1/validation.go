@@ -909,6 +909,9 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	}
 
 	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingConstraints != nil {
+		result.Errors = append(result.Errors, validateSchedulingConstraints(template.Spec.SchedulingConstraints, specPath.Child("schedulingConstraints"))...)
+	}
 	if template.Spec.SchedulingOptions != nil {
 		result.Errors = append(result.Errors, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
 	}

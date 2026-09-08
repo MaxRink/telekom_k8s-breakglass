@@ -877,7 +877,6 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 	apiClient := NewDebugSessionAPIClient(token)
 	var createdSessionName string
-	namespace := helpers.GetTestNamespace()
 
 	t.Run("CreateDebugSession", func(t *testing.T) {
 		req := DebugSessionCreateRequest{
@@ -900,7 +899,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 		// Add to cleanup - create a reference for later deletion
 		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: createdSessionName, Namespace: namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, UID: session.UID},
 		})
 	})
 
@@ -1004,8 +1003,6 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	cleanup.Add(binding)
 	require.NoError(t, cli.Create(ctx, binding))
 
-	namespace := helpers.GetTestNamespace()
-
 	// Create test context for authenticated API clients
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, helpers.GetTestNamespace())
 	requesterToken := tc.OIDCProvider().GetToken(t, ctx, helpers.TestUsers.DebugSessionRequester.Username, helpers.TestUsers.DebugSessionRequester.Password)
@@ -1018,7 +1015,6 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	session, err := tc.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Join-Leave test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
@@ -1153,7 +1149,6 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	session, err := tc.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Termination test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")

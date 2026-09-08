@@ -1585,6 +1585,9 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				for j := range tt.debugSessions[i].Status.Participants {
 					tt.debugSessions[i].Status.Participants[j].IdentityProviderIssuer = "https://test-idp.example"
 				}
+				for j := range tt.debugSessions[i].Status.AllowedPods {
+					tt.debugSessions[i].Status.AllowedPods[j].UID = "pod-uid"
+				}
 				objs = append(objs, &tt.debugSessions[i])
 			}
 
@@ -1603,6 +1606,9 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			wc := &WebhookController{
 				log:          logger.Sugar(),
 				escalManager: escalMgr,
+				podFetchFn: func(_ context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+					return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: "pod-uid"}}, nil
+				},
 			}
 
 			allowed, session, reason := wc.checkDebugSessionAccessForIssuer(context.Background(), tt.username, tt.clusterName, "https://test-idp.example", tt.ra, logger.Sugar())

@@ -58,13 +58,14 @@ type DebugSessionAPIController struct {
 	// clusterClients optionally overrides how target-cluster clients are
 	// obtained. When nil, ccProvider is used. Tests set this to evaluate
 	// namespace selectorTerms without a live spoke cluster.
-	clusterClients ClientProviderInterface
-	middleware     gin.HandlerFunc
-	mailService    breakglass.MailEnqueuer
-	auditService   breakglass.AuditEmitter
-	disableEmail   bool
-	brandingName   string
-	baseURL        string
+	clusterClients      ClientProviderInterface
+	middleware          gin.HandlerFunc
+	mailService         breakglass.MailEnqueuer
+	groupMemberResolver breakglass.GroupMemberResolver
+	auditService        breakglass.AuditEmitter
+	disableEmail        bool
+	brandingName        string
+	baseURL             string
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller
@@ -82,6 +83,12 @@ func (c *DebugSessionAPIController) WithMailService(mailService breakglass.MailE
 	c.mailService = mailService
 	c.brandingName = brandingName
 	c.baseURL = baseURL
+	return c
+}
+
+// WithGroupMemberResolver enables group exclusions in notification recipients.
+func (c *DebugSessionAPIController) WithGroupMemberResolver(resolver breakglass.GroupMemberResolver) *DebugSessionAPIController {
+	c.groupMemberResolver = resolver
 	return c
 }
 
@@ -1562,13 +1569,9 @@ func (a *debugSessionReadAuthorizer) readApproversFromBinding(ctx context.Contex
 
 	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
 	if err := a.controller.reader().Get(ctx, key, binding); err != nil {
-		if !apierrors.IsNotFound(err) {
-			a.controller.log.Warnw("Could not fetch binding while checking debug session read authorization",
-				"session", session.Name, "binding", key.String(), "error", err)
-			return nil, fmt.Errorf("fetch debug session binding %s: %w", key.String(), err)
-		}
-		a.bindingApprovers[key] = nil
-		return nil, nil
+		a.controller.log.Warnw("Could not fetch binding while checking debug session read authorization",
+			"session", session.Name, "binding", key.String(), "error", err)
+		return nil, fmt.Errorf("fetch debug session binding %s: %w", key.String(), err)
 	}
 	a.bindingApprovers[key] = binding.Spec.Approvers
 	return binding.Spec.Approvers, nil

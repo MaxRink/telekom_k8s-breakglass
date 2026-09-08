@@ -43,7 +43,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 	}
 
 	approverEmails := append([]string(nil), approvers.Users...)
-	approverEmails = buildNotificationRecipients(approverEmails, notificationCfg)
+	approverEmails = c.notificationRecipients(ctx, approverEmails, notificationCfg)
 
 	if len(approverEmails) == 0 {
 		c.log.Debugw("No email recipients configured for debug session approvers, skipping request email", "session", session.Name, "template", debugSessionTemplateName(template))
@@ -112,7 +112,7 @@ func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(ctx context.Co
 		c.log.Warnw("Skipping approval email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
+	recipients := c.notificationRecipients(ctx, []string{recipientEmail}, notificationCfg)
 
 	approvedAt := ""
 	expiresAt := ""
@@ -187,7 +187,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.C
 		c.log.Warnw("Skipping rejection email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
+	recipients := c.notificationRecipients(ctx, []string{recipientEmail}, notificationCfg)
 
 	rejectedAt := ""
 	rejectorName := ""
@@ -302,7 +302,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 		c.log.Warnw("Skipping session created email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
+	recipients := c.notificationRecipients(ctx, []string{recipientEmail}, notificationCfg)
 
 	// Use display name if available, fallback to username
 	requesterName := session.Spec.RequestedByDisplayName
@@ -446,7 +446,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider}).WithAPIReader(c.reader()).withIdentity(identity)
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
@@ -551,7 +551,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider}).WithAPIReader(c.reader()).withIdentity(identity)
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -645,7 +645,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider}).WithAPIReader(c.reader()).withIdentity(identity)
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
@@ -738,24 +738,7 @@ func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha
 
 // canUserOperateDebugResources checks if the user can run mutating kubectl-debug operations.
 func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
-	if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
-		return true
-	}
-
-	for _, p := range session.Status.Participants {
-		if !debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) || p.LeftAt != nil {
-			continue
-		}
-
-		switch p.Role {
-		case breakglassv1alpha1.ParticipantRoleOwner, breakglassv1alpha1.ParticipantRoleParticipant:
-			return true
-		default:
-			continue
-		}
-	}
-
-	return false
+	return sessionParticipantCanOperate(session, identity)
 }
 
 // extractCapabilities extracts capability names from a security context

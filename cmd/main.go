@@ -490,6 +490,12 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)
 
+	// Only supply an operational resolver; SetupResolver's no-op fallback cannot
+	// distinguish an empty group from unavailable group synchronization.
+	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" && !idpConfig.Keycloak.InsecureSkipVerify {
+		debugSessionAPICtrl.WithGroupMemberResolver(resolver)
+	}
+
 	// Note: ClusterBindingAPIController is not exposed as a public API endpoint.
 	// Cluster bindings are aggregated internally through the template/clusters endpoint
 	// (GET /api/debugSessions/templates/:name/clusters) for a unified user experience.

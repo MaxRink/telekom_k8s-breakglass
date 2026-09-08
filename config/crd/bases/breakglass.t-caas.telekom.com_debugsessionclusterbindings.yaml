@@ -803,8 +803,8 @@ spec:
                     type: object
                   deniedNodes:
                     description: |-
-                      deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                      Evaluated as glob patterns.
+                      deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                      Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                     items:
                       type: string
                     type: array
@@ -1605,8 +1605,8 @@ spec:
                               type: object
                             deniedNodes:
                               description: |-
-                                deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                                Evaluated as glob patterns.
+                                deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                                Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                               items:
                                 type: string
                               type: array

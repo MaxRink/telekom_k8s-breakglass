@@ -305,12 +305,25 @@ func TestDebugSession_E2E_SessionCreation(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "E2E testing",
 	})
 	defer func() {
 		_ = cli.Delete(ctx, session)
 	}()
+
+	// The hub object belongs to the selected ClusterConfig namespace, which
+	// need not be the namespace used for test fixtures or the spoke workload.
+	var clusterConfigs breakglassv1alpha1.ClusterConfigList
+	require.NoError(t, cli.List(ctx, &clusterConfigs))
+	var hubNamespaces []string
+	for _, clusterConfig := range clusterConfigs.Items {
+		if clusterConfig.Name == "tenant-a" {
+			hubNamespaces = append(hubNamespaces, clusterConfig.Namespace)
+		}
+	}
+	require.Len(t, hubNamespaces, 1, "expected one ClusterConfig for the requested cluster")
+	assert.Equal(t, hubNamespaces[0], session.Namespace)
+	assert.Equal(t, "breakglass-debug", session.Spec.TargetNamespace)
 
 	// Wait for session to be processed using helpers
 	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
@@ -332,7 +345,6 @@ func TestDebugSession_E2E_SessionStateTransitions(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing state transitions",
 	})
 	defer func() {
@@ -366,7 +378,6 @@ func TestDebugSession_E2E_SessionTermination(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing termination",
 	})
 	defer func() {
@@ -400,7 +411,6 @@ func TestDebugSession_E2E_SessionCleanup(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing cleanup",
 	})
 
@@ -428,7 +438,6 @@ func TestDebugSession_E2E_MultipleParticipants(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing participants",
 		InvitedParticipants: []string{
 			"participant1@example.com",
@@ -665,7 +674,6 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing manual approval workflow",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -765,7 +773,6 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing rejection workflow",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -806,7 +813,6 @@ func TestDebugSession_E2E_SessionRenewal(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing session renewal",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -849,7 +855,6 @@ func TestDebugSession_E2E_SessionExpiration(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1m", // Very short duration
-		Namespace:         testNamespace,
 		Reason:            "Testing session expiration",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -953,7 +958,6 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing constraints enforcement",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -970,7 +974,6 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "4h",
-		Namespace:         testNamespace,
 		Reason:            "Testing constraints enforcement rejection",
 	})
 	require.Error(t, err)
@@ -1061,7 +1064,6 @@ func TestDebugSession_E2E_WorkloadDeployment(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing workload deployment",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1180,7 +1182,6 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing ephemeral container injection",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1303,7 +1304,6 @@ func TestDebugSession_E2E_PodCopy(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing pod copy",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1406,7 +1406,6 @@ func TestDebugSession_E2E_NodeDebugPod(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing node debug pod",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1790,7 +1789,6 @@ func TestDebugSession_E2E_SchedulingOptions(t *testing.T) {
 		Cluster:                  "tenant-a",
 		TemplateRef:              template.Name,
 		RequestedDuration:        "30m",
-		Namespace:                testNamespace,
 		Reason:                   "Testing scheduling option selection",
 		SelectedSchedulingOption: "high-memory", // Select high-memory option
 	})

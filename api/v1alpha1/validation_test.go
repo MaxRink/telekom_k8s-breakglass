@@ -2441,7 +2441,7 @@ func TestDebugSessionTemplate_WithSchedulingOptions(t *testing.T) {
 					NodeSelector: map[string]string{
 						"node-pool": "general",
 					},
-					DeniedNodes: []string{"control-plane-*"},
+					DeniedNodes: []string{"control-plane-1"},
 					DeniedNodeLabels: map[string]string{
 						"node-role.kubernetes.io/control-plane": "*",
 					},

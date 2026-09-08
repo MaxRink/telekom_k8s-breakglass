@@ -272,8 +272,6 @@ spec:
       node-pool: "general-purpose"
     deniedNodeLabels:
       node-role.kubernetes.io/control-plane: "*"
-    deniedNodes:
-      - "control-plane-*"
   
   # Optional: Scheduling options (user can choose one)
   schedulingOptions:
@@ -639,10 +637,10 @@ schedulingConstraints:
       topologyKey: topology.kubernetes.io/zone
       whenUnsatisfiable: ScheduleAnyway
   
-  # Block specific nodes by name pattern (glob)
+  # Block specific nodes by exact name (replace with your node names)
   deniedNodes:
-    - "control-plane-*"
-    - "etcd-*"
+    - "control-plane-1"
+    - "etcd-1"
   
   # Block nodes with any of these labels
   deniedNodeLabels:
@@ -650,7 +648,7 @@ schedulingConstraints:
     node-role.kubernetes.io/master: "*"
 ```
 
-Exact `deniedNodes` entries and `deniedNodeLabels` are rendered into hard node affinity requirements on created debug workloads. Glob-style `deniedNodes` entries are retained in the resolved session constraints for policy visibility, but Kubernetes node affinity cannot enforce glob patterns directly; prefer stable labels in `deniedNodeLabels` for hard node-pool exclusion.
+Exact `deniedNodes` entries and `deniedNodeLabels` are rendered into hard node affinity requirements. Glob-style `deniedNodes` entries are rejected at admission and rendering; migrate existing globs to exact names or stable labels in `deniedNodeLabels`. See [lifecycle security and upgrade recovery](security-defender-lifecycle.md).
 
 ### Scheduling Options
 

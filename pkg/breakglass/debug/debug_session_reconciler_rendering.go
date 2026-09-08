@@ -572,7 +572,7 @@ func buildDeniedNodeSelector(constraints *breakglassv1alpha1.SchedulingConstrain
 		exactNodes := make([]string, 0, len(constraints.DeniedNodes))
 		for _, node := range constraints.DeniedNodes {
 			if strings.ContainsAny(node, "*?[") {
-				continue
+				return nil, fmt.Errorf("deniedNodes pattern %q is unsupported: use deniedNodeLabels or an exact node name", node)
 			}
 			exactNodes = append(exactNodes, node)
 		}
