@@ -6,9 +6,11 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -17,9 +19,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // allSensitiveEventTypes mirrors the cases in IsSensitiveEvent so that
 // TestIsSensitiveEvent and sampling tests share a single source of truth.
@@ -67,6 +74,45 @@ func TestEventTypes(t *testing.T) {
 		t.Run(string(tc.eventType), func(t *testing.T) {
 			severity := SeverityForEventType(tc.eventType)
 			assert.Equal(t, tc.expectedSeverity, severity)
+		})
+	}
+}
+
+func TestRedactURL(t *testing.T) {
+	assert.Equal(t, "https://hooks.example/events", redactURL("https://user:secret@hooks.example/events?token=secret#fragment"))
+	assert.Equal(t, "<invalid-url>", redactURL("://bad"))
+}
+
+func TestWebhookSinkRedactsTransportURL(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprint(batch), func(t *testing.T) {
+			core, logs := observer.New(zap.DebugLevel)
+			logger := zap.New(core)
+			sink := NewWebhookSink(WebhookSinkConfig{URL: "https://user:secret@collector.invalid/events?token=secret#secret"}, logger)
+			cause := errors.New("nested secret transport detail")
+			sink.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, &url.Error{Op: "nested", URL: "https://secret.invalid?secret", Err: cause}
+			})
+			wrapped := NewCircuitBreakerSink(sink, DefaultCircuitBreakerConfig(), logger)
+			var err error
+			if batch {
+				err = wrapped.WriteBatch(context.Background(), []*Event{{ID: "event"}})
+			} else {
+				err = wrapped.Write(context.Background(), &Event{ID: "event"})
+			}
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "secret")
+			assert.ErrorIs(t, err, cause)
+			var typed *url.Error
+			assert.ErrorAs(t, err, &typed)
+			service := &Service{sinks: []Sink{wrapped}}
+			health := service.GetSinkHealth()
+			require.Len(t, health, 1)
+			assert.NotEmpty(t, health[0].LastError)
+			assert.NotContains(t, health[0].LastError, "secret")
+			for _, entry := range logs.All() {
+				assert.NotContains(t, fmt.Sprint(entry.ContextMap()), "secret")
+			}
 		})
 	}
 }
@@ -1807,4 +1853,15 @@ func TestSyncWriteDirect_NoDirectSinks_FallsBackToPrimary(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, primaryReceived, 1, "primary sink must receive event when no direct sinks configured")
 	assert.Equal(t, "e3", primaryReceived[0].ID)
+}
+
+func TestWebhookSinkRedactsMalformedRequestURL(t *testing.T) {
+	sink := NewWebhookSink(WebhookSinkConfig{URL: "https://invalid/%secret"}, zap.NewNop())
+	for _, err := range []error{
+		sink.Write(context.Background(), &Event{ID: "single"}),
+		sink.WriteBatch(context.Background(), []*Event{{ID: "batch"}}),
+	} {
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "secret")
+	}
 }
