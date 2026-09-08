@@ -279,7 +279,13 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj *IdentityPr
 	allErrs = append(allErrs, result.Errors...)
 
 	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique - requires k8s client)
-	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, obj.Spec.Issuer, obj.Name, field.NewPath("spec").Child("issuer"))...)
+	issuer := obj.Spec.Issuer
+	issuerPath := field.NewPath("spec", "issuer")
+	if issuer == "" {
+		issuer = obj.Spec.OIDC.Authority
+		issuerPath = field.NewPath("spec", "oidc", "authority")
+	}
+	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, issuer, obj.Name, issuerPath)...)
 
 	var warnings admission.Warnings
 	if len(allErrs) == 0 {

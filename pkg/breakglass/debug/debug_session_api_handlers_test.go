@@ -67,6 +67,7 @@ func setupAuthenticatedDebugSessionRouter(t *testing.T, ctrl *DebugSessionAPICon
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", username)
 		if email != "" {
 			c.Set("email", email)
@@ -427,6 +428,7 @@ func TestHandleInjectEphemeralContainer_SessionNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	testRouter := gin.New()
 	testRouter.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -484,6 +486,7 @@ func TestHandleInjectEphemeralContainer_SessionNotActive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -566,6 +569,7 @@ func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "unauthorized-user") // Different from owner
 		c.Next()
 	})
@@ -626,6 +630,7 @@ func TestHandleInjectEphemeralContainer_TemplateNotKubectlDebug(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -872,6 +877,7 @@ func TestHandleCreatePodCopy_SessionNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -926,6 +932,7 @@ func TestHandleCreatePodCopy_SessionNotActive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -1001,6 +1008,7 @@ func TestHandleCreatePodCopy_UserNotParticipant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "not-owner")
 		c.Next()
 	})
@@ -1057,6 +1065,7 @@ func TestHandleCreatePodCopy_TemplateNotKubectlDebug(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -1126,6 +1135,7 @@ func TestHandleCreateNodeDebugPod_SessionNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -1422,6 +1432,7 @@ func TestHandleListDebugSessions_WithAllowedPodOperations(t *testing.T) {
 	assert.Equal(t, 1, response.Total)
 
 	// Verify AllowedPodOperations is included in summary
+	require.Len(t, response.Sessions, 1)
 	ops := response.Sessions[0].AllowedPodOperations
 	require.NotNil(t, ops)
 	assert.True(t, *ops.Exec)
@@ -1585,6 +1596,7 @@ func TestHandleApproveDebugSession_NotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -1633,6 +1645,7 @@ func TestHandleApproveDebugSession_NotPendingApproval(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -1696,6 +1709,7 @@ func TestHandleApproveDebugSession_NotAuthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "unauthorized@example.com")
 		c.Set("groups", []string{"users"}) // Not in admins group
 		c.Next()
@@ -1801,6 +1815,7 @@ func TestHandleApproveDebugSession_ApprovalTimedOut(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1866,6 +1881,7 @@ func TestHandleApproveDebugSession_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1922,6 +1938,7 @@ func TestHandleApproveDebugSession_RejectsUnknownJSONFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1982,6 +1999,7 @@ func TestHandleApproveDebugSession_RejectsMissingMandatoryReason(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -2040,6 +2058,7 @@ func TestHandleApproveDebugSession_AllowsEmptyReasonWhenOnlyRejectionMandatory(t
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -2094,6 +2113,7 @@ func TestHandleRejectDebugSession_NotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -2142,6 +2162,7 @@ func TestHandleRejectDebugSession_NotPendingApproval(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -2330,6 +2351,7 @@ func TestHandleRejectDebugSession_NotAuthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "unauthorized@example.com")
 		c.Set("groups", []string{"users"}) // Not in admins group
 		c.Next()
@@ -2435,6 +2457,7 @@ func TestHandleRejectDebugSession_ApprovalTimedOut(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -2501,6 +2524,7 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -2559,6 +2583,7 @@ func TestHandleRejectDebugSession_RejectsTrailingJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -2619,6 +2644,7 @@ func TestHandleRejectDebugSession_RejectsMissingMandatoryReason(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()

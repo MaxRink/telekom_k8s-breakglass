@@ -285,6 +285,14 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	}
 
 	// Phase 4: Resolve user groups from token or cluster lookup
+	if !wc.validateClusterIdentityProvider(c, ctx, request.Clustername) {
+		return
+	}
+	userIdentifier, clusterConfig, ok := wc.resolveUserIdentifierClaim(c, ctx, request, globalCfg, reqLog)
+	if !ok {
+		return
+	}
+	cug.Username = userIdentifier
 	userGroups, ok := wc.resolveUserGroups(c, ctx, cug, globalCfg, reqLog)
 	if !ok {
 		return
@@ -312,12 +320,6 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 			apiresponses.RespondUnprocessableEntity(c, "missing required request reason")
 			return
 		}
-	}
-
-	// Phase 7: Resolve user identifier claim from config
-	userIdentifier, clusterConfig, ok := wc.resolveUserIdentifierClaim(c, ctx, request, globalCfg, reqLog)
-	if !ok {
-		return
 	}
 
 	// Phase 8: Guard against concurrent creation + check for duplicates

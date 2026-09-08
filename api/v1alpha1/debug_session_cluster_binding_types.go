@@ -486,6 +486,14 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 			"either clusters or clusterSelector must be specified",
 		))
 	}
+	if spec.ClusterSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(spec.ClusterSelector)
+		if err != nil {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("clusterSelector"), spec.ClusterSelector, err.Error()))
+		} else if selector.Empty() {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("clusterSelector"), spec.ClusterSelector, "empty selector is not allowed"))
+		}
+	}
 
 	// Validate constraints if specified
 	if spec.Constraints != nil {

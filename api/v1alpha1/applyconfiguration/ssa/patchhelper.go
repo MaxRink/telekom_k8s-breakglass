@@ -185,6 +185,9 @@ func ensureExplicitEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *u
 func PatchApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) (PatchApplyResult, error) {
 	applyConfig := ac.BreakglassSession(session.Name, session.Namespace).
 		WithStatus(BreakglassSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
 
@@ -193,6 +196,9 @@ func PatchApplyBreakglassSessionStatus(ctx context.Context, c client.Client, ses
 func PatchApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) (PatchApplyResult, error) {
 	applyConfig := ac.DebugSession(session.Name, session.Namespace).
 		WithStatus(DebugSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
 

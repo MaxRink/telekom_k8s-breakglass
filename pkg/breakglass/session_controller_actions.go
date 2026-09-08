@@ -62,7 +62,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
-	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) {
+	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) || !sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can withdraw")
 		return
@@ -87,6 +87,8 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	// clear approver info for withdrawn sessions
 	bs.Status.Approver = ""
 	bs.Status.Approvers = nil
+	bs.Status.ApproverIdentityProvider = ""
+	bs.Status.ApproverIdentityProviders = nil
 
 	// Set RetainedUntil for withdrawn sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
@@ -147,7 +149,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
-	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) {
+	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) || !sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can drop")
 		return
@@ -188,6 +190,8 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 		bs.Status.Approver = ""
 		bs.Status.Approvers = nil
+		bs.Status.ApproverIdentityProvider = ""
+		bs.Status.ApproverIdentityProviders = nil
 
 		// Set RetainedUntil for withdrawn sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
@@ -268,8 +272,9 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	approverEmail, _ := wc.identityProvider.GetEmail(c)
 	if approverEmail != "" {
 		bs.Status.Approver = approverEmail
+		bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
 		// append if not present
-		bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approverEmail)
+		recordApprover(&bs.Status, approverEmail, c.GetString("identity_provider_name"))
 	}
 
 	bs.SetCondition(metav1.Condition{

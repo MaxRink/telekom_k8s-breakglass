@@ -259,11 +259,11 @@ type WebhookController struct {
 	activityTracker        *ActivityTracker             // optional buffered session activity tracker (#314)
 }
 
-// checkDebugSessionAccess checks if a pod operation is allowed by an active debug session.
+// checkDebugSessionAccessForIssuer checks if a pod operation is allowed by an active debug session.
 // Returns (allowed, sessionName, reason) where allowed is true if the user can perform
 // the requested operation on the pod via a debug session they are participating in.
 // Supports exec, attach, portforward, and log subresources based on AllowedPodOperations config.
-func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (bool, string, string) {
+func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Context, username, clusterName, issuer string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (bool, string, string) {
 	// Only check for pods with supported subresources
 	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
 		return false, "", ""
@@ -327,6 +327,9 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 		// Check if the user is a participant of this session
 		for _, p := range ds.Status.Participants {
 			if p.User != username {
+				continue
+			}
+			if !debugParticipantIssuerMatches(ctx, wc.escalManager.Client, p, issuer) {
 				continue
 			}
 			if p.LeftAt != nil {
@@ -1071,4 +1074,11 @@ func (wc *WebhookController) recordSessionActivity(sessions []breakglassv1alpha1
 			return
 		}
 	}
+}
+
+func debugParticipantIssuerMatches(ctx context.Context, reader client.Reader, participant breakglassv1alpha1.DebugSessionParticipant, issuer string) bool {
+	if participant.IdentityProviderIssuer != "" {
+		return issuer != "" && strings.TrimRight(participant.IdentityProviderIssuer, "/") == strings.TrimRight(issuer, "/")
+	}
+	return config.IsOnlyEnabledIdentityProvider(ctx, reader, participant.IdentityProviderName, issuer)
 }

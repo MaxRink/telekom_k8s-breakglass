@@ -308,6 +308,8 @@ func TestAuthHandler_ClaimsExtraction(t *testing.T) {
 	router := gin.New()
 	router.Use(authHandler.Middleware())
 	router.GET("/test", func(c *gin.Context) {
+		assert.True(t, c.GetBool("legacy_identity_allowed"), "single-JWKS mode remains explicit even when JWT carries an issuer")
+		assert.Equal(t, "https://single.example", c.GetString("issuer"))
 		c.JSON(http.StatusOK, gin.H{
 			"email":    c.GetString("email"),
 			"username": c.GetString("username"),
@@ -316,6 +318,7 @@ func TestAuthHandler_ClaimsExtraction(t *testing.T) {
 	})
 
 	claims := jwt.MapClaims{
+		"iss":                "https://single.example",
 		"sub":                "user-123",
 		"email":              "user@example.com",
 		"preferred_username": "tester",

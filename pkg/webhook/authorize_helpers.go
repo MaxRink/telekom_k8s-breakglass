@@ -308,8 +308,8 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 	if s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
 		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
-			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(
-				s.ctx, s.sar.Spec.User, s.clusterName, ra, s.reqLog); debugAllowed {
+			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccessForIssuer(
+				s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, ra, s.reqLog); debugAllowed {
 				s.phases.EndPhase(PhaseDebugSession) // End debug_session phase
 				s.phases.LogSummary()                // Log timing summary
 				s.reqLog.Infow("Debug session authorizing pod operation (bypassing deny policies)",
@@ -657,8 +657,8 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	// Debug session pod exec check: allow exec into debug pods if user is a session participant
 	if !s.allowed && s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
-		if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(
-			s.ctx, username, s.clusterName, ra, s.reqLog); debugAllowed {
+		if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccessForIssuer(
+			s.ctx, username, s.clusterName, s.issuer, ra, s.reqLog); debugAllowed {
 			s.allowed = true
 			s.allowSource = "debug-session"
 			s.allowDetail = fmt.Sprintf("session=%s", debugSession)

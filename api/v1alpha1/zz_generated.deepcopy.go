@@ -969,6 +969,11 @@ func (in *BreakglassSessionStatus) DeepCopyInto(out *BreakglassSessionStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.ApproverIdentityProviders != nil {
+		in, out := &in.ApproverIdentityProviders, &out.ApproverIdentityProviders
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.LastActivity != nil {
 		in, out := &in.LastActivity, &out.LastActivity
 		*out = (*in).DeepCopy()

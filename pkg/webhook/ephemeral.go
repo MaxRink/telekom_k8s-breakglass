@@ -16,7 +16,7 @@ import (
 
 // DebugSessionHandler defines the interface for debug session operations
 type DebugSessionHandler interface {
-	FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error)
+	FindActiveSessionForIssuer(ctx context.Context, user, cluster, issuer string) (*breakglassv1alpha1.DebugSession, error)
 	ValidateEphemeralContainerRequest(
 		ctx context.Context,
 		ds *breakglassv1alpha1.DebugSession,
@@ -76,7 +76,12 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 		return admission.Denied("cluster identity cannot be determined for ephemeral container validation")
 	}
 
-	session, err := w.DebugHandler.FindActiveSession(ctx, user, cluster)
+	issuers := req.UserInfo.Extra["identity.t-caas.telekom.com/issuer"]
+	if len(issuers) != 1 || issuers[0] == "" {
+		return admission.Denied("exactly one nonempty issuer is required for ephemeral container validation")
+	}
+	issuer := issuers[0]
+	session, err := w.DebugHandler.FindActiveSessionForIssuer(ctx, user, cluster, issuer)
 	if err != nil {
 		w.Log.Errorw("Failed to find active session", "error", err)
 		return admission.Errored(http.StatusInternalServerError, err)

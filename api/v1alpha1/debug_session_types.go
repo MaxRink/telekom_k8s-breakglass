@@ -93,6 +93,14 @@ type DebugSessionSpec struct {
 	// +optional
 	RequestedByEmail string `json:"requestedByEmail,omitempty"`
 
+	// identityProviderName identifies the provider that authenticated the requester.
+	// +optional
+	IdentityProviderName string `json:"identityProviderName,omitempty"`
+
+	// identityProviderIssuer identifies the issuer that authenticated the requester.
+	// +optional
+	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
+
 	// requestedByDisplayName is the human-readable name of the requester (from OIDC "name" claim).
 	// +optional
 	RequestedByDisplayName string `json:"requestedByDisplayName,omitempty"`
@@ -343,6 +351,9 @@ type DebugSessionApproval struct {
 	// approvedBy is the email/identifier of the approver.
 	// +optional
 	ApprovedBy string `json:"approvedBy,omitempty"`
+	// approvedByIdentityProvider identifies the provider that authenticated the approver.
+	// +optional
+	ApprovedByIdentityProvider string `json:"approvedByIdentityProvider,omitempty"`
 
 	// approvedAt is when the session was approved.
 	// +optional
@@ -351,6 +362,9 @@ type DebugSessionApproval struct {
 	// rejectedBy is the email/identifier of the rejector.
 	// +optional
 	RejectedBy string `json:"rejectedBy,omitempty"`
+	// rejectedByIdentityProvider identifies the provider that authenticated the rejector.
+	// +optional
+	RejectedByIdentityProvider string `json:"rejectedByIdentityProvider,omitempty"`
 
 	// rejectedAt is when the session was rejected.
 	// +optional
@@ -371,6 +385,12 @@ type DebugSessionParticipant struct {
 	// Used for sending email notifications.
 	// +optional
 	Email string `json:"email,omitempty"`
+	// identityProviderName identifies the provider that authenticated the participant.
+	// +optional
+	IdentityProviderName string `json:"identityProviderName,omitempty"`
+	// identityProviderIssuer identifies the issuer that authenticated the participant.
+	// +optional
+	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
 
 	// displayName is the human-readable name of the participant (from OIDC "name" claim).
 	// +optional

@@ -126,6 +126,14 @@ spec:
                   Keys must match variable names defined in the template.
                   Values are validated against the variable's inputType and validation rules.
                 type: object
+              identityProviderIssuer:
+                description: identityProviderIssuer identifies the issuer that authenticated
+                  the requester.
+                type: string
+              identityProviderName:
+                description: identityProviderName identifies the provider that authenticated
+                  the requester.
+                type: string
               invitedParticipants:
                 description: invitedParticipants lists users invited to join the session.
                 items:
@@ -1084,6 +1092,10 @@ spec:
                   approvedBy:
                     description: approvedBy is the email/identifier of the approver.
                     type: string
+                  approvedByIdentityProvider:
+                    description: approvedByIdentityProvider identifies the provider
+                      that authenticated the approver.
+                    type: string
                   reason:
                     description: reason is the reason for approval/rejection.
                     type: string
@@ -1093,6 +1105,10 @@ spec:
                     type: string
                   rejectedBy:
                     description: rejectedBy is the email/identifier of the rejector.
+                    type: string
+                  rejectedByIdentityProvider:
+                    description: rejectedByIdentityProvider identifies the provider
+                      that authenticated the rejector.
                     type: string
                   required:
                     description: required indicates if approval is needed.
@@ -1394,6 +1410,14 @@ spec:
                       description: |-
                         email is the email address of the participant (from OIDC "email" claim).
                         Used for sending email notifications.
+                      type: string
+                    identityProviderIssuer:
+                      description: identityProviderIssuer identifies the issuer that
+                        authenticated the participant.
+                      type: string
+                    identityProviderName:
+                      description: identityProviderName identifies the provider that
+                        authenticated the participant.
                       type: string
                     joinedAt:
                       description: joinedAt is when the user joined the session.

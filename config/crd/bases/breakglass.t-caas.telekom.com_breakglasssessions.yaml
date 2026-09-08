@@ -215,6 +215,15 @@ spec:
                 description: approver is the identity (email) of the last approver
                   who changed the session state.
                 type: string
+              approverIdentityProvider:
+                description: approverIdentityProvider is the provider that authenticated
+                  the last approver.
+                type: string
+              approverIdentityProviders:
+                description: approverIdentityProviders aligns with approvers by index.
+                items:
+                  type: string
+                type: array
               approvers:
                 description: |-
                   approvers is a list of identities (emails) who have approved this session.

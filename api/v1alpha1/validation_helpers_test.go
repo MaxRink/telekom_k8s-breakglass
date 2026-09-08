@@ -2872,6 +2872,11 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestParseDuration_RejectsOverflowingRemainder(t *testing.T) {
+	_, err := ParseDuration("1d2562047h")
+	assert.Error(t, err)
+}
+
 func TestValidateHTTPSURL_EdgeCases(t *testing.T) {
 	fieldPath := field.NewPath("spec").Child("url")
 
@@ -3732,6 +3737,60 @@ func TestValidateSessionIdentityProviderAuthorization_ListError(t *testing.T) {
 	assert.Equal(t, field.ErrorTypeInternal, errs[0].Type)
 	assert.Contains(t, errs[0].Error(), "failed to list escalations for IDP authorization")
 	assert.Contains(t, errs[0].Error(), "injected list error")
+}
+
+func TestIdentityProviderEffectiveIssuerAdmission(t *testing.T) {
+	scheme := runtime.NewScheme()
+	assert.NoError(t, AddToScheme(scheme))
+	existing := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "existing"}, Spec: IdentityProviderSpec{
+		OIDC: OIDCConfig{Authority: "https://auth.example.com/", ClientID: "client", ExpectedAudience: "client"},
+	}}
+	oldClient, oldCache := webhookClient, webhookCache
+	t.Cleanup(func() { webhookClient, webhookCache = oldClient, oldCache })
+	webhookCache = nil
+	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	for _, issuer := range []string{"", "https://auth.example.com"} {
+		candidate := existing.DeepCopy()
+		candidate.Name = "candidate"
+		candidate.Spec.Issuer = issuer
+		candidate.Spec.OIDC.Authority = "https://auth.example.com"
+		_, err := candidate.ValidateCreate(context.Background(), candidate)
+		assert.ErrorContains(t, err, "issuer must be unique")
+		_, err = candidate.ValidateUpdate(context.Background(), existing, candidate)
+		assert.ErrorContains(t, err, "issuer must be unique")
+	}
+	_, err := existing.ValidateUpdate(context.Background(), existing, existing.DeepCopy())
+	assert.NoError(t, err)
+	candidate := existing.DeepCopy()
+	candidate.Name = "distinct"
+	candidate.ResourceVersion = ""
+	candidate.Spec.Issuer = "https://distinct.example.com"
+	_, err = candidate.ValidateCreate(context.Background(), candidate)
+	assert.NoError(t, err)
+	// An explicit issuer is authoritative, even if the authority differs.
+	assert.NoError(t, webhookClient.Create(context.Background(), candidate))
+	errs := validateIdentityProviderFields(context.Background(), candidate.Name, candidate.Spec.OIDC.Authority, field.NewPath("name"), field.NewPath("issuer"))
+	assert.NotEmpty(t, errs)
+	errs = validateIdentityProviderFields(context.Background(), candidate.Name, candidate.Spec.Issuer+"/", field.NewPath("name"), field.NewPath("issuer"))
+	assert.Empty(t, errs)
+}
+
+func TestParseDurationCombinedRepresentableBoundaries(t *testing.T) {
+	const maximum = time.Duration(1<<63 - 1)
+	for _, tc := range []struct {
+		input string
+		want  time.Duration
+	}{
+		{"1d12h", 36 * time.Hour},
+		{"1d" + (maximum - 24*time.Hour).String(), maximum},
+		{"1d-2562047h", 24*time.Hour - 2562047*time.Hour},
+	} {
+		got, err := ParseDuration(tc.input)
+		assert.NoError(t, err, tc.input)
+		assert.Equal(t, tc.want, got, tc.input)
+	}
+	_, err := ParseDuration("1d" + (maximum - 24*time.Hour + 1).String())
+	assert.Error(t, err)
 }
 
 func TestValidateIdentityProviderFields_ExplicitIssuerIsAuthoritative(t *testing.T) {

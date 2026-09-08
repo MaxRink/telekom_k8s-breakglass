@@ -237,12 +237,16 @@ func TestIsPrivileged(t *testing.T) {
 
 // mockDebugHandler implements DebugSessionHandler for testing
 type mockDebugHandler struct {
+	findCalls   int
+	issuer      string
 	session     *breakglassv1alpha1.DebugSession
 	findErr     error
 	validateErr error
 }
 
-func (m *mockDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error) {
+func (m *mockDebugHandler) FindActiveSessionForIssuer(ctx context.Context, user, cluster, issuer string) (*breakglassv1alpha1.DebugSession, error) {
+	m.findCalls++
+	m.issuer = issuer
 	return m.session, m.findErr
 }
 
@@ -331,7 +335,7 @@ func TestEphemeralContainerWebhook_Handle(t *testing.T) {
 			name:        "find session error returns internal error",
 			subResource: "ephemeralcontainers",
 			username:    "testuser",
-			pod:         &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"}},
+			pod:         &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"}, Spec: corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "new", Image: "busybox"}}}}},
 			oldPod:      &corev1.Pod{},
 			findErr:     errors.New("failed to list sessions"),
 			expectError: true,
@@ -340,7 +344,7 @@ func TestEphemeralContainerWebhook_Handle(t *testing.T) {
 			name:           "no active session returns denied",
 			subResource:    "ephemeralcontainers",
 			username:       "testuser",
-			pod:            &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"}},
+			pod:            &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"}, Spec: corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "new", Image: "busybox"}}}}},
 			oldPod:         &corev1.Pod{},
 			session:        nil,
 			expectDenied:   true,
@@ -459,7 +463,7 @@ func TestEphemeralContainerWebhook_Handle(t *testing.T) {
 			req := admission.Request{
 				AdmissionRequest: admissionv1.AdmissionRequest{
 					SubResource: tt.subResource,
-					UserInfo:    authenticationv1.UserInfo{Username: tt.username},
+					UserInfo:    authenticationv1.UserInfo{Username: tt.username, Extra: map[string]authenticationv1.ExtraValue{"identity.t-caas.telekom.com/issuer": {"https://issuer.example"}}},
 				},
 			}
 
@@ -499,4 +503,46 @@ func TestNewEphemeralContainerWebhook(t *testing.T) {
 	assert.Nil(t, webhook.Decoder)
 	assert.Equal(t, logger, webhook.Log)
 	assert.Nil(t, webhook.DebugHandler)
+}
+
+func TestEphemeralAdmissionIssuerProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		issuers     authenticationv1.ExtraValue
+		noAddition  bool
+		allowed     bool
+		lookupCalls int
+	}{
+		{name: "missing"},
+		{name: "empty list", issuers: authenticationv1.ExtraValue{}},
+		{name: "empty issuer", issuers: authenticationv1.ExtraValue{""}},
+		{name: "multiple issuers", issuers: authenticationv1.ExtraValue{"https://a.example", "https://b.example"}},
+		{name: "single issuer", issuers: authenticationv1.ExtraValue{"https://a.example"}, allowed: true, lookupCalls: 1},
+		{name: "no new container with valid session", issuers: authenticationv1.ExtraValue{"https://a.example"}, noAddition: true, allowed: true, lookupCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{Spec: corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug", Image: "busybox"}}}}}
+			old := &corev1.Pod{}
+			if tc.noAddition {
+				old = pod.DeepCopy()
+			}
+			handler := &mockDebugHandler{session: &breakglassv1alpha1.DebugSession{}}
+			w := &EphemeralContainerWebhook{Log: zap.NewNop().Sugar(), Decoder: &mockDecoder{pod: pod, oldPod: old}, DebugHandler: handler}
+			extra := map[string]authenticationv1.ExtraValue{}
+			if tc.issuers != nil {
+				extra["identity.t-caas.telekom.com/issuer"] = tc.issuers
+			}
+			req := admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{SubResource: "ephemeralcontainers", UserInfo: authenticationv1.UserInfo{Username: "operator", Extra: extra}}}
+			ctx := context.WithValue(context.Background(), clusterContextKey, "spoke")
+			response := w.Handle(ctx, req)
+			require.Equal(t, tc.allowed, response.Allowed)
+			require.Equal(t, tc.lookupCalls, handler.findCalls)
+			if !tc.allowed {
+				require.Contains(t, response.Result.Message, "exactly one nonempty issuer")
+			}
+			if tc.lookupCalls > 0 {
+				require.Equal(t, "https://a.example", handler.issuer)
+			}
+		})
+	}
 }

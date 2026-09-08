@@ -656,6 +656,9 @@ func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs b
 		log.Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err)...)
 		return fmt.Errorf("failed to resolve BreakglassSession %s before status update: %w", bs.Name, err)
 	}
+	if bs.ResourceVersion != "" && current.ResourceVersion != bs.ResourceVersion {
+		return apierrors.NewConflict(breakglassv1alpha1.GroupVersion.WithResource("breakglasssessions").GroupResource(), bs.Name, fmt.Errorf("stale resource version %q (current %q)", bs.ResourceVersion, current.ResourceVersion))
+	}
 
 	// Populate missing fields from current state
 	if bs.Namespace == "" {

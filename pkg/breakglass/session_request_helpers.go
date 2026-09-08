@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,28 @@ type authenticatedIdentity struct {
 	email    string
 	emailErr error
 	username string
+}
+
+func (wc *BreakglassSessionController) validateClusterIdentityProvider(c *gin.Context, ctx context.Context, cluster string) bool {
+	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
+		return true
+	}
+	cc, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, cluster)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return true
+		}
+		apiresponses.RespondInternalError(c, "resolve cluster identity provider policy", err, wc.log)
+		return false
+	}
+	if cc == nil || len(cc.Spec.IdentityProviderRefs) == 0 {
+		return true
+	}
+	if !slices.Contains(cc.Spec.IdentityProviderRefs, c.GetString("identity_provider_name")) {
+		apiresponses.RespondForbidden(c, "identity provider is not allowed for this cluster")
+		return false
+	}
+	return true
 }
 
 // escalationResolutionResult holds the outputs of resolving escalations and approvers
@@ -473,10 +496,14 @@ func (wc *BreakglassSessionController) resolveUserIdentifierClaim(
 
 	// Check ClusterConfig for per-cluster override
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
-	if wc.clusterConfigManager != nil {
+	if wc.clusterConfigManager != nil && wc.clusterConfigManager.hasClient() {
 		var ccErr error
 		clusterConfig, ccErr = wc.clusterConfigManager.GetClusterConfigByName(ctx, request.Clustername)
 		if ccErr != nil {
+			if !apierrors.IsNotFound(ccErr) {
+				apiresponses.RespondInternalError(c, "resolve cluster user identifier policy", ccErr, reqLog)
+				return "", nil, false
+			}
 			reqLog.Debugw("Could not fetch cluster config for user identifier claim",
 				"cluster", request.Clustername,
 				"error", ccErr)

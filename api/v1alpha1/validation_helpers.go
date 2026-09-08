@@ -71,6 +71,10 @@ func ParseDuration(s string) (time.Duration, error) {
 			if err != nil {
 				return 0, fmt.Errorf("invalid duration after days: %w", err)
 			}
+			const maxDuration = time.Duration(1<<63 - 1)
+			if remainderDuration > maxDuration-daysDuration {
+				return 0, fmt.Errorf("duration overflows time.Duration")
+			}
 			return daysDuration + remainderDuration, nil
 		}
 
@@ -161,6 +165,7 @@ func ensureClusterWideUniqueIssuer(
 	currentName string,
 	path *field.Path,
 ) field.ErrorList {
+	issuer = strings.TrimRight(issuer, "/")
 	if issuer == "" {
 		return nil
 	}
@@ -201,7 +206,11 @@ func ensureClusterWideUniqueIssuer(
 			return nil
 		}
 		// Check for issuer conflict
-		if idp.Spec.Issuer != "" && idp.Spec.Issuer == issuer {
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		if strings.TrimRight(effectiveIssuer, "/") == issuer {
 			msg := fmt.Sprintf("issuer must be unique cluster-wide; conflicting IdentityProvider=%s", idp.Name)
 			errs = append(errs, field.Duplicate(path, msg))
 			return errors.New("issuer conflict detected")

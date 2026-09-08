@@ -211,11 +211,17 @@ type BreakglassSessionStatus struct {
 	// approver is the identity (email) of the last approver who changed the session state.
 	// +optional
 	Approver string `json:"approver,omitempty"`
+	// approverIdentityProvider is the provider that authenticated the last approver.
+	// +optional
+	ApproverIdentityProvider string `json:"approverIdentityProvider,omitempty"`
 
 	// approvers is a list of identities (emails) who have approved this session.
 	// This is useful when multiple approvers are involved.
 	// +optional
 	Approvers []string `json:"approvers,omitempty"`
+	// approverIdentityProviders aligns with approvers by index.
+	// +optional
+	ApproverIdentityProviders []string `json:"approverIdentityProviders,omitempty"`
 
 	// approvalReason stores the free-text reason supplied by the approver when approving/rejecting the session.
 	// +optional
