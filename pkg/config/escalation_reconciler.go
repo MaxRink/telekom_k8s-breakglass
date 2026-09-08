@@ -24,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 )
 
@@ -52,7 +51,36 @@ type EscalationReconciler struct {
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
-	return ssa.ApplyBreakglassEscalationStatus(ctx, r.client, escalation)
+	current := &breakglassv1alpha1.BreakglassEscalation{}
+	if err := r.client.Get(ctx, client.ObjectKeyFromObject(escalation), current); err != nil {
+		return err
+	}
+	if current.UID != escalation.UID || current.Generation != escalation.Generation {
+		return fmt.Errorf("escalation %s/%s changed while updating validation status", escalation.Namespace, escalation.Name)
+	}
+	base := current.DeepCopy()
+	copyEscalationValidationStatus(current, escalation)
+	return r.client.Status().Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+}
+
+func copyEscalationValidationStatus(current, desired *breakglassv1alpha1.BreakglassEscalation) {
+	for _, conditionType := range []breakglassv1alpha1.BreakglassEscalationConditionType{
+		breakglassv1alpha1.BreakglassEscalationConditionConfigValidated,
+		breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionMailProviderValid,
+		breakglassv1alpha1.BreakglassEscalationConditionReady,
+	} {
+		typeName := string(conditionType)
+		condition := apimeta.FindStatusCondition(desired.Status.Conditions, typeName)
+		if condition == nil {
+			apimeta.RemoveStatusCondition(&current.Status.Conditions, typeName)
+		} else {
+			apimeta.SetStatusCondition(&current.Status.Conditions, *condition)
+		}
+	}
+	current.Status.ObservedGeneration = desired.Status.ObservedGeneration
 }
 
 // NewEscalationReconciler creates a new EscalationReconciler instance.
@@ -232,6 +260,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 			r.logger.Warnw("Failed to update escalation status with validation errors",
 				"escalation", escalation.Name,
 				"error", err)
+			return reconcile.Result{}, fmt.Errorf("update escalation validation failure status: %w", err)
 		}
 
 		// Reference validation errors (cluster, IDP, deny policy, mail provider) may be
