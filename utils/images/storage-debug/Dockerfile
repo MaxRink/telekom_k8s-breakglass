@@ -1,24 +1,32 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM golang:1.27@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS kubestr-builder
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kubestr-builder
 
 ARG TARGETARCH
 ARG KUBESTR_VERSION=v0.4.49
 ARG KUBESTR_COMMIT=01940ed37be9a0c7a70d80cd26c648eaa11e5174
+ARG X_NET_VERSION=v0.60.0
+ARG X_CRYPTO_VERSION=v0.57.0
+ARG X_TEXT_VERSION=v0.42.0
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
+# x/crypto is patched in the module graph; only require its version if linked.
 RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenhq/kubestr.git /src/kubestr \
     && test "$(git -C /src/kubestr rev-parse HEAD)" = "${KUBESTR_COMMIT}" \
     && go -C /src/kubestr get \
         github.com/moby/spdystream@v0.5.1 \
-        golang.org/x/crypto@v0.53.0 \
-        golang.org/x/net@v0.56.0 \
+        "golang.org/x/crypto@${X_CRYPTO_VERSION}" \
+        "golang.org/x/net@${X_NET_VERSION}" \
         golang.org/x/oauth2@v0.27.0 \
-        golang.org/x/text@v0.39.0 \
+        "golang.org/x/text@${X_TEXT_VERSION}" \
     && go -C /src/kubestr mod tidy \
     && go -C /src/kubestr build -mod=mod -trimpath -ldflags='-s -w' -o /out/kubestr . \
-    && test -x /out/kubestr
+    && test -x /out/kubestr \
+    && go version -m /out/kubestr > /out/kubestr-build-info \
+    && cat /out/kubestr-build-info \
+    && awk -v net="${X_NET_VERSION}" -v crypto="${X_CRYPTO_VERSION}" -v text="${X_TEXT_VERSION}" \
+        'BEGIN { c = 1 } $1 == "dep" { if ($2 == "golang.org/x/net") n = ($3 == net); if ($2 == "golang.org/x/crypto") c = ($3 == crypto); if ($2 == "golang.org/x/text") t = ($3 == text) } END { exit !(n && c && t) }' /out/kubestr-build-info
 
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
@@ -56,6 +64,7 @@ RUN apk add --no-cache \
     && install -d -o root -g root /usr/share/breakglass/runbooks/upstream/storage-diagnostics
 
 COPY --from=kubestr-builder /out/kubestr /usr/libexec/storage-debug/kubestr
+COPY --from=kubestr-builder /out/kubestr-build-info /usr/share/breakglass/kubestr-build-info
 COPY --chmod=0755 bin/storage-report bin/storage-diagnostics /usr/local/bin/
 COPY --chmod=0644 motd /etc/motd
 COPY --chmod=0644 README.md RUNBOOK.md /usr/share/breakglass/runbooks/upstream/storage-diagnostics/

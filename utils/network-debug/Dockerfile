@@ -14,11 +14,12 @@ ARG BUILD_DATE=unknown
 # pwru is built from its immutable Go module version with the pinned builder.
 # The compiler and build dependencies never enter the runtime image. Storage
 # tooling is intentionally excluded; kubestr belongs to storage-debug.
-FROM golang:1.27@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS tools
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS tools
 ARG TARGETARCH
 ARG PWRU_VERSION=v1.0.12
 ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
 ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
+ARG X_NET_VERSION=v0.60.0
 
 WORKDIR /src/pwru
 
@@ -34,9 +35,14 @@ RUN set -eux; \
 	mkdir -p /src/pwru /out; \
 	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
 	test "$(awk '$1 == "go" { print $2 }' /src/pwru/go.mod)" = "1.25.0"; \
+	chmod -R u+w /src/pwru; \
+	go -C /src/pwru get "golang.org/x/net@${X_NET_VERSION}"; \
+	go -C /src/pwru mod tidy; \
 	chmod +x /src/pwru/libpcap/configure; \
 	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
-	install -m 0755 pwru /out/pwru
+	install -m 0755 pwru /out/pwru; \
+	go version -m /out/pwru > /out/pwru-build-info; \
+	awk -v expected="${X_NET_VERSION}" '$1 == "dep" && $2 == "golang.org/x/net" { found = ($3 == expected) } END { exit !found }' /out/pwru-build-info
 
 FROM runtime
 
@@ -80,6 +86,7 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE,SYS_PTRACE"
 
 COPY --from=tools /out/pwru /usr/local/bin/pwru
+COPY --from=tools /out/pwru-build-info /usr/share/breakglass/pwru-build-info
 COPY scripts/net-debug /usr/local/bin/net-debug
 COPY scripts/net-report /usr/local/bin/net-report
 COPY scripts/network-debug-profile.sh /etc/profile.d/network-debug.sh
