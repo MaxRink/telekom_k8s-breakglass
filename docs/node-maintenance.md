@@ -74,6 +74,20 @@ with only `NET_ADMIN`, a read-only root, RuntimeDefault seccomp, and privilege
 escalation disabled. Both pods publish evidence before their disposable
 resources are removed.
 
+Both Docker and Kind also execute the same real exact-entry fixture. It
+replaces an existing neighbor and moves one MAC/VLAN FDB entry to the approved
+port while asserting that same-IP/different-interface, other-IP, other-MAC,
+other-VLAN, and other-bridge decoys remain unchanged. Forged approved tuples,
+broad flush requests, and unconfigured VLANs fail before mutation. The fixture
+creates only collision-checked test veths/bridges in its disposable namespace,
+checks their removal, and deletes the Kind Pod and fixture ConfigMap by UID.
+Docker mounts the fixed fixture script from the runner as one read-only file;
+Kind mounts it from a ConfigMap. Neither mounts a host root or node filesystem
+or adds capabilities beyond the repair profile. This is utility behavior
+evidence, not provider node-class
+support, a controller four-eyes approval test, or permission to enable an
+operational maintenance profile.
+
 The controller remains responsible for pinning the image by digest, enforcing
 one active workload per node, expiring approvals independently, bounding pod
 and evidence-volume lifetimes, and recording cleanup. An actual kexec executor
