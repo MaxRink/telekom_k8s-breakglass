@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -555,6 +556,55 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 
 		require.NoError(t, err)
 	})
+}
+
+func TestKubectlDebugHandler_ValidateEphemeralContainerRequestBindingNamespaceFilter(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
+				},
+			},
+			ResolvedBindingSpec: &apiextensionsv1.JSON{Raw: []byte(`{"kubectlDebugTargetNamespaces":{"ephemeralContainers":{"patterns":["tenant-*"]}}}`)},
+		},
+	}
+	targetClient := fake.NewClientBuilder().
+		WithScheme(newKubectlTestScheme()).
+		WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}}).
+		Build()
+	handler := newTestKubectlDebugHandler(fake.NewClientBuilder().WithScheme(newKubectlTestScheme()).Build(), &mockClientProvider{
+		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+	})
+
+	err := handler.ValidateEphemeralContainerRequest(
+		context.Background(), session, "production", "app", "busybox:latest", nil, false, false,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "namespace production is not allowed")
+	assert.Equal(t, http.StatusForbidden, kubectlDebugOperationHTTPStatus(err))
+}
+
+func TestResolvedKubectlDebugTargetNamespaceFilterRejectsInvalidSnapshot(t *testing.T) {
+	for _, operation := range []string{"ephemeralContainers", "podCopy"} {
+		for _, filter := range []string{
+			`{"selectorTerms":[{}]}`,
+			`{"selectorTerms":[{"matchExpressions":[{"key":"team","operator":"In"}]}]}`,
+			`{"selectorTerms":[{"matchExpressions":[{"key":"team","operator":"Exists","values":["payments"]}]}]}`,
+		} {
+			t.Run(operation+"/"+filter, func(t *testing.T) {
+				ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedBindingSpec: &apiextensionsv1.JSON{
+						Raw: []byte(fmt.Sprintf(`{"kubectlDebugTargetNamespaces":{"%s":%s}}`, operation, filter)),
+					},
+				}}
+				_, err := resolvedKubectlDebugTargetNamespaceFilter(ds, operation)
+				require.Error(t, err)
+			})
+		}
+	}
 }
 
 func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
@@ -2878,6 +2928,60 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "namespace production is not allowed for pod copy")
+	})
+
+	t.Run("binding source namespace allowlist is additive", func(t *testing.T) {
+		sessionWithBindingFilter := testSession.DeepCopy()
+		sessionWithBindingFilter.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{
+			Raw: []byte(`{"kubectlDebugTargetNamespaces":{"podCopy":{"patterns":["tenant-*"]}}}`),
+		}
+		hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithBindingFilter).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		handlerWithBindingFilter := newTestKubectlDebugHandler(hub, mockProvider)
+
+		_, err := handlerWithBindingFilter.CreatePodCopy(
+			context.Background(), sessionWithBindingFilter, "production", "app-pod", "", "test-user@example.com",
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "namespace production is not allowed for pod copy")
+	})
+
+	t.Run("binding source labels revoked before copy", func(t *testing.T) {
+		session := testSession.DeepCopy()
+		session.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{
+			Raw: []byte(`{"kubectlDebugTargetNamespaces":{"podCopy":{"selectorTerms":[{"matchLabels":{"team":"payments"}}]}}}`),
+		}
+		hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		sourceNS := productionNs.DeepCopy()
+		sourceNS.Labels = map[string]string{"team": "payments"}
+		reads, creates := 0, 0
+		target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(testPod, testNs, sourceNS).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+					if err := cl.Get(ctx, key, obj, opts...); err != nil {
+						return err
+					}
+					if ns, ok := obj.(*corev1.Namespace); ok && key.Name == "production" {
+						reads++
+						if reads > 1 {
+							ns.Labels = nil
+						}
+					}
+					return nil
+				},
+				Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+					creates++
+					return cl.Create(ctx, obj, opts...)
+				},
+			}).Build()
+		handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+		pod, err := handler.CreatePodCopy(context.Background(), session, "production", "app-pod", "", "test-user@example.com")
+		require.Error(t, err)
+		assert.Nil(t, pod)
+		assert.Contains(t, err.Error(), "no longer allowed for pod copy")
+		assert.Zero(t, creates)
 	})
 }
 

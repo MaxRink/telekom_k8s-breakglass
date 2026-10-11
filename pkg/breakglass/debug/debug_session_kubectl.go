@@ -37,6 +37,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
@@ -1281,6 +1282,10 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	if !pc.Enabled {
 		return nil, kubectlDebugRequestErrorf("pod copy is not enabled for this template")
 	}
+	bindingAllowedNamespaces, err := resolvedKubectlDebugTargetNamespaceFilter(ds, "podCopy")
+	if err != nil {
+		return nil, err
+	}
 
 	// Resolve the target client and retain the exact live ClusterConfig used.
 	targetClient, configuredCluster, err := h.privilegedOperationClient(ctx, ds.Spec.Cluster)
@@ -1294,7 +1299,8 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		return nil, fmt.Errorf("failed to fetch namespace labels for %s: %w", originalNamespace, err)
 	}
 	matcher := utils.NewNamespaceAllowDenyMatcher(pc.AllowedNamespaces, pc.DeniedNamespaces)
-	if !matcher.IsAllowedWithLabels(originalNamespace, nsLabels) {
+	if !matcher.IsAllowedWithLabels(originalNamespace, nsLabels) ||
+		(bindingAllowedNamespaces != nil && !utils.NewNamespaceAllowDenyMatcher(bindingAllowedNamespaces, nil).IsAllowedWithLabels(originalNamespace, nsLabels)) {
 		return nil, kubectlDebugPolicyErrorf("namespace %s is not allowed for pod copy", originalNamespace)
 	}
 
@@ -1392,7 +1398,8 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	if err != nil {
 		return nil, fmt.Errorf("failed to re-read namespace labels for %s before copy: %w", originalNamespace, err)
 	}
-	if !matcher.IsAllowedWithLabels(originalNamespace, freshNamespaceLabels) {
+	if !matcher.IsAllowedWithLabels(originalNamespace, freshNamespaceLabels) ||
+		(bindingAllowedNamespaces != nil && !utils.NewNamespaceAllowDenyMatcher(bindingAllowedNamespaces, nil).IsAllowedWithLabels(originalNamespace, freshNamespaceLabels)) {
 		return nil, kubectlDebugPolicyErrorf("namespace %s is no longer allowed for pod copy", originalNamespace)
 	}
 
@@ -1913,13 +1920,17 @@ func (h *KubectlDebugHandler) isNamespaceAllowedForEphemeral(
 	namespace string,
 	allowed, denied *breakglassv1alpha1.NamespaceFilter,
 ) (bool, error) {
+	bindingAllowed, err := resolvedKubectlDebugTargetNamespaceFilter(ds, "ephemeralContainers")
+	if err != nil {
+		return false, err
+	}
 	matcher := utils.NewNamespaceAllowDenyMatcher(allowed, denied)
-	if !namespaceFilterRequiresLabels(allowed) && !namespaceFilterRequiresLabels(denied) {
-		return matcher.IsAllowed(namespace), nil
+	bindingMatcher := utils.NewNamespaceAllowDenyMatcher(bindingAllowed, nil)
+	if !namespaceFilterRequiresLabels(allowed) && !namespaceFilterRequiresLabels(denied) && !namespaceFilterRequiresLabels(bindingAllowed) {
+		return matcher.IsAllowed(namespace) && (bindingAllowed == nil || bindingMatcher.IsAllowed(namespace)), nil
 	}
 	targetClient := h.client
 	if h.ccProvider != nil {
-		var err error
 		targetClient, err = h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 		if err != nil {
 			return false, kubectlDebugInternalErrorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
@@ -1935,7 +1946,34 @@ func (h *KubectlDebugHandler) isNamespaceAllowedForEphemeral(
 		}
 		return false, kubectlDebugInternalErrorf("failed to fetch namespace labels for %s: %w", namespace, err)
 	}
-	return matcher.IsAllowedWithLabels(namespace, nsLabels), nil
+	return matcher.IsAllowedWithLabels(namespace, nsLabels) &&
+		(bindingAllowed == nil || bindingMatcher.IsAllowedWithLabels(namespace, nsLabels)), nil
+}
+
+func resolvedKubectlDebugTargetNamespaceFilter(ds *breakglassv1alpha1.DebugSession, operation string) (*breakglassv1alpha1.NamespaceFilter, error) {
+	if ds == nil || ds.Status.ResolvedBindingSpec == nil {
+		return nil, nil
+	}
+	var binding breakglassv1alpha1.DebugSessionClusterBindingSpec
+	if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding); err != nil {
+		return nil, fmt.Errorf("failed to decode resolved binding spec: %w", err)
+	}
+	if binding.KubectlDebugTargetNamespaces == nil {
+		return nil, nil
+	}
+	var filter *breakglassv1alpha1.NamespaceFilter
+	switch operation {
+	case "ephemeralContainers":
+		filter = binding.KubectlDebugTargetNamespaces.EphemeralContainers
+	case "podCopy":
+		filter = binding.KubectlDebugTargetNamespaces.PodCopy
+	default:
+		return nil, fmt.Errorf("unsupported kubectl-debug target namespace operation %q", operation)
+	}
+	if errs := breakglassv1alpha1.ValidateKubectlDebugTargetNamespaceFilter(filter, field.NewPath("kubectlDebugTargetNamespaces", operation)); len(errs) > 0 {
+		return nil, fmt.Errorf("resolved binding has an invalid kubectl-debug target namespace filter for %s: %w", operation, errs.ToAggregate())
+	}
+	return filter, nil
 }
 
 func namespaceFilterRequiresLabels(filter *breakglassv1alpha1.NamespaceFilter) bool {
