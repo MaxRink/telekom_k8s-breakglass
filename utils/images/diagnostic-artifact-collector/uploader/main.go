@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -39,6 +40,8 @@ const (
 	maxManifestBytes            = int64(32768)
 	retryDelay                  = 250 * time.Millisecond
 	pinnedCABundle              = "/etc/ssl/certs/ca-certificates.crt"
+	uploadCABundle              = "/etc/breakglass/artifact-upload-ca/ca.crt"
+	maxUploadCABundleBytes      = int64(1 << 20)
 	tarBlockSize                = int64(512)
 	maxCrashdumpSourceEntries   = int64(8192)
 	maxTarFixedMembers          = int64(5) // files, files/coredumps, manifest, stdout, stderr
@@ -1247,18 +1250,26 @@ func canonicalTarName(name string, directory bool) (string, error) {
 }
 
 func defaultUploadHTTPClient() *http.Client {
-	client, err := uploadHTTPClientForCABundle(pinnedCABundle)
+	additionalBundle := ""
+	if enabled, present := os.LookupEnv("BREAKGLASS_ARTIFACT_UPLOAD_CA_BUNDLE"); present {
+		if enabled != "true" {
+			return nil
+		}
+		additionalBundle = uploadCABundle
+	}
+	client, err := uploadHTTPClientForCABundles(pinnedCABundle, additionalBundle)
 	if err != nil {
 		return nil
 	}
 	return client
 }
 
-// uploadHTTPClientForCABundle is private so production always uses the
-// image-pinned CA bundle. Its path parameter exists only to make unit tests
-// independent of the host filesystem; no environment variable can select a
-// trust store.
+// Paths are test seams; production always uses fixed image and mount paths.
 func uploadHTTPClientForCABundle(caBundlePath string) (*http.Client, error) {
+	return uploadHTTPClientForCABundles(caBundlePath, "")
+}
+
+func uploadHTTPClientForCABundles(caBundlePath, additionalBundlePath string) (*http.Client, error) {
 	caBundle, err := os.ReadFile(caBundlePath)
 	if err != nil {
 		return nil, fmt.Errorf("read pinned CA bundle: %w", err)
@@ -1266,6 +1277,47 @@ func uploadHTTPClientForCABundle(caBundlePath string) (*http.Client, error) {
 	rootCAs := x509.NewCertPool()
 	if !rootCAs.AppendCertsFromPEM(caBundle) {
 		return nil, errors.New("pinned CA bundle contains no certificates")
+	}
+	if additionalBundlePath != "" {
+		file, err := os.Open(additionalBundlePath)
+		if err != nil {
+			return nil, fmt.Errorf("open upload CA bundle: %w", err)
+		}
+		defer func() { _ = file.Close() }()
+		bundle, err := io.ReadAll(io.LimitReader(file, maxUploadCABundleBytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("read upload CA bundle: %w", err)
+		}
+		if len(bundle) > int(maxUploadCABundleBytes) {
+			return nil, errors.New("upload CA bundle must contain PEM certificates within the 1 MiB limit")
+		}
+		certificates := 0
+		for len(bytes.TrimSpace(bundle)) > 0 {
+			bundle = bytes.TrimSpace(bundle)
+			if !bytes.HasPrefix(bundle, []byte("-----BEGIN CERTIFICATE-----")) {
+				return nil, errors.New("upload CA bundle contains non-certificate data")
+			}
+			endMarker := []byte("-----END CERTIFICATE-----")
+			end := bytes.Index(bundle, endMarker)
+			if end < 0 {
+				return nil, errors.New("upload CA bundle contains unterminated PEM")
+			}
+			end += len(endMarker)
+			block, remainder := pem.Decode(bundle[:end])
+			if block == nil || len(bytes.TrimSpace(remainder)) != 0 || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+				return nil, errors.New("upload CA bundle contains invalid PEM")
+			}
+			certificate, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("parse upload CA certificate: %w", err)
+			}
+			rootCAs.AddCert(certificate)
+			certificates++
+			bundle = bundle[end:]
+		}
+		if certificates == 0 {
+			return nil, errors.New("upload CA bundle contains no certificates")
+		}
 	}
 	return &http.Client{
 		Timeout: uploadTimeout,
