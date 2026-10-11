@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
+	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
 	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/local"
@@ -86,6 +87,9 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if !artifactConfig.Enabled {
 		return nil, nil
 	}
+	if err := artifactjob.ValidateImagePullSecrets(artifactConfig.CollectorImagePullSecrets); err != nil {
+		return nil, err
+	}
 	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.ClusterProvider == nil {
 		return nil, errors.New("enabled diagnostic artifacts require uncached clients, manager, debug API, and lease fence")
 	}
@@ -137,6 +141,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	}
 	issuerAdapter := &uploadTokenIssuer{keyring: keyring, now: time.Now}
 	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: issuer, Log: deps.Log}
+	reconciler.ImagePullSecrets = append([]corev1.LocalObjectReference(nil), artifactConfig.CollectorImagePullSecrets...)
 	controllers, err := artifactAPIControllers(service, deps, artifactConfig.UploadMaxBytes)
 	if err != nil {
 		_ = closeStore()

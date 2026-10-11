@@ -54,6 +54,7 @@ type Config struct {
 	UploadTokenSecretName string
 	UploadCABundleRef     *breakglassv1alpha1.ArtifactUploadCABundleReference
 	Image                 string
+	ImagePullSecrets      []corev1.LocalObjectReference
 	Node                  string
 	MaxBytes              int64
 	TimeoutSeconds        int32
@@ -127,6 +128,7 @@ func Build(config Config) (*batchv1.Job, error) {
 		uploaderEnv = append(uploaderEnv, corev1.EnvVar{Name: uploadCAKey, Value: "true"})
 	}
 	pod := corev1.PodSpec{
+		ImagePullSecrets:             append([]corev1.LocalObjectReference(nil), config.ImagePullSecrets...),
 		RestartPolicy:                corev1.RestartPolicyNever,
 		AutomountServiceAccountToken: boolPtr(false),
 		HostNetwork:                  false,
@@ -175,6 +177,9 @@ func validate(config Config) error {
 	if !validImageDigest(config.Image) {
 		return errors.New("diagnostic artifact image must be pinned by digest")
 	}
+	if err := ValidateImagePullSecrets(config.ImagePullSecrets); err != nil {
+		return err
+	}
 	parsed, err := url.Parse(config.UploadURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.Contains(config.UploadURL, "provider") {
 		return errors.New("diagnostic artifact upload URL must be an HTTPS controller route")
@@ -188,6 +193,17 @@ func validate(config Config) error {
 		}
 	} else if config.Node != "" || config.MaxAgeMinutes != 0 || (config.DetailLevel != "" && config.DetailLevel != "basic" && config.DetailLevel != "extended") {
 		return errors.New("system-summary recipe inputs are invalid")
+	}
+	return nil
+}
+
+// ValidateImagePullSecrets rejects invalid administrator-owned references
+// before host initialization or spoke resource provisioning.
+func ValidateImagePullSecrets(secrets []corev1.LocalObjectReference) error {
+	for _, secret := range secrets {
+		if len(validation.IsDNS1123Subdomain(secret.Name)) != 0 {
+			return errors.New("diagnostic artifact image pull Secret name is invalid")
+		}
 	}
 	return nil
 }
