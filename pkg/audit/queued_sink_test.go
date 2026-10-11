@@ -213,7 +213,7 @@ func TestIsolatedMultiSink_WriteBatchMatchesSensitiveErrorPropagation(t *testing
 	}, time.Second, 10*time.Millisecond, "second event was not queued")
 
 	err := ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionValidated}})
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 
 	err = ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionRevoked}})
 	assert.Error(t, err)
@@ -263,6 +263,7 @@ func TestQueuedSink_CircuitBreaker(t *testing.T) {
 		WriteTimeout:            100 * time.Millisecond,
 		CircuitBreakerThreshold: 3,
 		CircuitBreakerResetTime: 100 * time.Millisecond,
+		RetryAttempts:           1,
 	}
 
 	qs := NewQueuedSink(mock, cfg, logger)
@@ -285,7 +286,9 @@ func TestQueuedSink_CircuitBreaker(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond, "circuit breaker should open after failures")
 
 	// Now allow writes to succeed
-	mock.failAfter = 1000 // Won't fail anymore
+	mock.mu.Lock()
+	mock.alwaysFail = false
+	mock.mu.Unlock()
 
 	// Keep attempting the write until the reset closes the circuit.
 	require.Eventually(t, func() bool {
@@ -353,6 +356,7 @@ func TestIsolatedMultiSink_FailureIsolation(t *testing.T) {
 		WorkerCount:             1,
 		CircuitBreakerThreshold: 3,
 		CircuitBreakerResetTime: time.Hour, // Long reset to keep circuit open
+		RetryAttempts:           1,
 	}
 
 	ims := NewIsolatedMultiSink([]Sink{workingSink, failingSink}, cfg, logger)
@@ -491,4 +495,5 @@ func TestQueuedSink_WriteAfterCloseReturnsError(t *testing.T) {
 	err := qs.Write(context.Background(), &Event{ID: "after-close", Type: EventSessionValidated})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "is closed")
+	assert.Equal(t, int64(1), qs.Health().DroppedEvents)
 }

@@ -166,6 +166,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 
 	// Build sinks from ALL enabled configs (aggregate)
 	var allSinks []Sink
+	var sinkQueues []QueuedSinkConfig
 	var configNames []string
 	for _, config := range enabledConfigs {
 		sinks, err := s.buildSinks(ctx, config)
@@ -184,6 +185,9 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 			return fmt.Errorf("build audit sinks from config %q: %w", config.Name, err)
 		}
 		allSinks = append(allSinks, sinks...)
+		for range sinks {
+			sinkQueues = append(sinkQueues, queuedConfig(config.Spec.Queue))
+		}
 		configNames = append(configNames, config.Name)
 	}
 
@@ -213,7 +217,9 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 			if config.Spec.Queue.Workers > 0 {
 				workerCount = config.Spec.Queue.Workers
 			}
-			dropOnFull = config.Spec.Queue.DropOnFull
+			if config.Spec.Queue.DropOnFull != nil {
+				dropOnFull = *config.Spec.Queue.DropOnFull
+			}
 		}
 
 		if config.Spec.Sampling != nil {
@@ -238,18 +244,15 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 
 	// Create isolated multi-sink: each sink gets its own queue for isolation
 	// If one sink is slow/blocked, it won't affect other sinks
-	queuedSinkCfg := QueuedSinkConfig{
-		QueueSize:               queueSize,
-		WorkerCount:             workerCount,
-		WriteTimeout:            5 * time.Second,
-		DropOnFull:              dropOnFull,
-		CircuitBreakerThreshold: 5,
-		CircuitBreakerResetTime: 30 * time.Second,
-	}
-	isolatedMultiSink := NewIsolatedMultiSink(allSinks, queuedSinkCfg, s.logger)
+	queuedSinkCfg := DefaultQueuedSinkConfig()
+	queuedSinkCfg.QueueSize = queueSize
+	queuedSinkCfg.WorkerCount = workerCount
+	queuedSinkCfg.DropOnFull = dropOnFull
+	isolatedMultiSink := NewIsolatedMultiSink(allSinks, queuedSinkCfg, s.logger, sinkQueues...)
 
 	// Create manager config (now simpler since queuing is per-sink)
 	managerCfg := ManagerConfig{
+		Enrich:                  s.enrichResourceIdentity,
 		QueueSize:               100000, // Main queue still buffers before broadcasting
 		WorkerCount:             5,
 		BatchSize:               100,
@@ -442,14 +445,10 @@ func (s *Service) GetSinkHealth() []SinkHealth {
 	// If using isolated multi-sink (per-sink queues), get health from there
 	if s.isolatedMultiSink != nil {
 		for _, qh := range s.isolatedMultiSink.Health() {
-			circuitState := "closed"
-			if qh.CircuitOpen {
-				circuitState = "open"
-			}
 			h := SinkHealth{
 				Name:                qh.Name,
 				Healthy:             qh.Healthy,
-				CircuitState:        circuitState,
+				CircuitState:        qh.CircuitState,
 				ConsecutiveFailures: int64(qh.ConsecutiveFails),
 				TotalRequests:       qh.ProcessedEvents + qh.FailedEvents,
 				TotalFailures:       qh.FailedEvents,
