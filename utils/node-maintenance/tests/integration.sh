@@ -1146,6 +1146,24 @@ assert_volume_path_absent() {
 		|| fail "unexpected evidence-volume path was created: $relative_path"
 }
 
+for option in --target-node --interface --evidence-dir --confirm; do
+	run_command "guard-preflight-duplicate-${option#--}" 2 none read-only node-recovery \
+		--target-node node-a --interface lo --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT \
+		"$option" ''
+	grep -Fq -- "$option may be supplied only once" "$fixture_dir/output" \
+		|| fail "duplicate preflight $option produced no parsing denial"
+	if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+		-c '! find /evidence -mindepth 1 -maxdepth 1 -print | grep -q .'; then
+		:
+	else
+		fail "duplicate preflight $option created evidence before argument validation"
+	fi
+	destroy_fixture
+done
+pass 'duplicate preflight options are rejected before evidence creation'
+
 run_command guard-neighbor-injection 2 none neighbor-replace network-repair \
 	--target-node node-a --interface lo --action neighbor-replace \
 	--neighbor-address '192.0.2.2;touch-/evidence/injected' --entry-mac 02:00:00:00:00:02 \
