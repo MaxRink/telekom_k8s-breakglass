@@ -29,8 +29,8 @@ func dropK8sInternalFieldsEscalation(e *breakglassv1alpha1.BreakglassEscalation)
 	if e == nil {
 		return
 	}
+	// Keep UID so clients can distinguish the session owner from a replacement policy.
 	e.ManagedFields = nil
-	e.UID = ""
 	e.ResourceVersion = ""
 	e.Generation = 0
 	if e.Annotations != nil {
@@ -118,6 +118,7 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		return
 	}
 	reqLog.Debugw("Successfully fetched escalations from manager", "escalationCount", len(escalations))
+	escalations = breakglass.FilterEscalationsByIdentityProvider(escalations, c.GetString("identity_provider_name"))
 
 	clusterReadiness := map[string]bool{}
 	if activeOnly {

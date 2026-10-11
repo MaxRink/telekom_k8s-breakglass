@@ -2,6 +2,7 @@ package escalation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -102,7 +103,7 @@ func TestDropK8sInternalFieldsEscalationStripsMetadataAndStatus(t *testing.T) {
 
 	dropK8sInternalFieldsEscalation(esc)
 
-	assert.Equal(t, "", string(esc.UID))
+	assert.Equal(t, "12345", string(esc.UID), "retain immutable policy identity for session owner matching")
 	assert.Equal(t, "", esc.ResourceVersion)
 	assert.EqualValues(t, 0, esc.Generation)
 	assert.Nil(t, esc.ManagedFields)
@@ -117,6 +118,86 @@ func TestDropK8sInternalFieldsEscalationStripsMetadataAndStatus(t *testing.T) {
 type stubIdentityProvider struct {
 	email string
 	err   error
+}
+
+func TestHandleGetEscalationsPreservesPolicyUID(t *testing.T) {
+	policy := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "owner-policy", Namespace: "test", UID: "immutable-owner-uid"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Groups: []string{"requesters"}, Clusters: []string{"prod"},
+			},
+			EscalatedGroup: "emergency",
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(policy).Build()
+	ec := &BreakglassEscalationController{
+		manager: &EscalationManager{Client: cli}, log: zaptest.NewLogger(t).Sugar(),
+		identityProvider: &stubIdentityProvider{email: "requester@example.com"},
+		configPath:       "/nonexistent/config.yaml",
+	}
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) { c.Set("groups", []string{"requesters"}); c.Next() })
+	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/breakglassEscalations?activeOnly=false", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var policies struct {
+		Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &policies))
+	require.Len(t, policies.Items, 1)
+	require.Equal(t, policy.UID, policies.Items[0].UID)
+}
+
+func TestHandleGetEscalationsFiltersRequesterIdentityProvider(t *testing.T) {
+	for _, provider := range []string{"idp-a", "idp-b", ""} {
+		t.Run(provider, func(t *testing.T) {
+			policy := func(name string, allowed, requesterAllowed []string) *breakglassv1alpha1.BreakglassEscalation {
+				return &breakglassv1alpha1.BreakglassEscalation{
+					ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test"},
+					Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+						Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"requesters"}, Clusters: []string{"prod"}},
+						EscalatedGroup: "emergency", AllowedIdentityProviders: allowed,
+						AllowedIdentityProvidersForRequests: requesterAllowed,
+					},
+				}
+			}
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(
+				policy("unrestricted", nil, nil), policy("a", []string{"idp-a"}, nil),
+				policy("b", []string{"idp-b"}, nil), policy("request-a", []string{"idp-b"}, []string{"idp-a"}),
+			).Build()
+			ec := &BreakglassEscalationController{
+				manager: &EscalationManager{Client: cli}, log: zaptest.NewLogger(t).Sugar(),
+				identityProvider: &stubIdentityProvider{email: "requester@example.com"}, configPath: "/nonexistent/config.yaml",
+			}
+			engine := gin.New()
+			engine.Use(func(c *gin.Context) {
+				c.Set("groups", []string{"requesters"})
+				c.Set("identity_provider_name", provider)
+				c.Next()
+			})
+			engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/breakglassEscalations?activeOnly=false", nil))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var policies struct {
+				Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &policies))
+			names := []string{}
+			for _, item := range policies.Items {
+				names = append(names, item.Name)
+			}
+			expected := []string{"unrestricted"}
+			if provider == "idp-a" {
+				expected = append(expected, "a", "request-a")
+			} else if provider == "idp-b" {
+				expected = append(expected, "b")
+			}
+			require.ElementsMatch(t, expected, names)
+		})
+	}
 }
 
 func (s *stubIdentityProvider) GetEmail(_ *gin.Context) (string, error) {
