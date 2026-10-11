@@ -165,6 +165,97 @@ func TestAuxiliaryCreateDoesNotAdoptConcurrentForeignResource(t *testing.T) {
 	require.ErrorContains(t, err, "owned by another session")
 }
 
+func TestAuxiliaryRecoveryRejectsForeignPodTemplateSessionUID(t *testing.T) {
+	for _, kind := range []string{"Deployment", "DaemonSet", "Job"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			apiVersion := "apps/v1"
+			if kind == "Job" {
+				apiVersion = "batch/v1"
+			}
+			existing := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": apiVersion, "kind": kind,
+				"metadata": map[string]interface{}{"name": "collision", "namespace": "target", "uid": "original-uid", "annotations": map[string]interface{}{
+					sourceSessionUIDAnnotation: "same-session", createOperationIDAnnotation: "operation",
+				}},
+				"spec": map[string]interface{}{"template": map[string]interface{}{
+					"metadata": map[string]interface{}{"annotations": map[string]interface{}{sourceSessionUIDAnnotation: "foreign-session"}},
+				}},
+			}}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(existing).WithInterceptorFuncs(interceptor.Funcs{
+				Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+					t.Fatal("foreign PodTemplate session UID must never reach SSA")
+					return nil
+				},
+			}).Build()
+			require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), existing))
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{UID: "same-session"},
+				Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+					Name: "workload", APIVersion: apiVersion, Kind: kind, ResourceName: "collision",
+					Namespace: "target", UID: "original-uid", CreateOperationID: "operation",
+				}}},
+			}
+			desired := existing.DeepCopy()
+			desired.SetUID("")
+			desired.SetResourceVersion("")
+			require.NoError(t, unstructured.SetNestedStringMap(desired.Object, map[string]string{sourceSessionUIDAnnotation: "same-session"}, "spec", "template", "metadata", "annotations"))
+			err := applyOrRecoverAuxiliaryResource(ctx, target, desired, session, "workload")
+			require.ErrorContains(t, err, "different PodTemplate session UID")
+			live := existing.DeepCopy()
+			require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), live))
+			require.Equal(t, existing.Object["spec"], live.Object["spec"])
+		})
+	}
+}
+
+func TestAuxiliaryRecoveryPreservesLegacyJobTemplate(t *testing.T) {
+	ctx := context.Background()
+	existing := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]interface{}{"name": "legacy", "namespace": "target", "uid": "original-uid", "annotations": map[string]interface{}{
+			sourceSessionUIDAnnotation: "same-session", createOperationIDAnnotation: "operation",
+		}},
+		"spec": map[string]interface{}{"template": map[string]interface{}{
+			"metadata": map[string]interface{}{"annotations": map[string]interface{}{"operator": "retained"}},
+			"spec": map[string]interface{}{"restartPolicy": "Never", "containers": []interface{}{
+				map[string]interface{}{"name": "debug", "image": "debug:test"},
+			}},
+		}},
+	}}
+	applies := 0
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(existing).WithInterceptorFuncs(interceptor.Funcs{
+		Apply: func(ctx context.Context, c client.WithWatch, cfg runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
+			applies++
+			payload, err := json.Marshal(cfg)
+			require.NoError(t, err)
+			obj := &unstructured.Unstructured{}
+			require.NoError(t, json.Unmarshal(payload, &obj.Object))
+			require.Equal(t, existing.Object["spec"], obj.Object["spec"], "Job template must stay immutable")
+			require.Equal(t, existing.GetUID(), obj.GetUID())
+			require.Equal(t, existing.GetResourceVersion(), obj.GetResourceVersion())
+			return c.Update(ctx, obj)
+		},
+	}).Build()
+	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), existing))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{UID: "same-session"},
+		Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+			Name: "workload", APIVersion: "batch/v1", Kind: "Job", ResourceName: "legacy",
+			Namespace: "target", UID: "original-uid", CreateOperationID: "operation",
+		}}},
+	}
+	desired := existing.DeepCopy()
+	annotations := managedPodAnnotations(desired)
+	annotations[sourceSessionUIDAnnotation] = string(session.UID)
+	require.NoError(t, unstructured.SetNestedStringMap(desired.Object, annotations, "spec", "template", "metadata", "annotations"))
+	require.NoError(t, applyOrRecoverAuxiliaryResource(ctx, target, desired, session, "workload"))
+	require.Equal(t, 1, applies)
+	live := existing.DeepCopy()
+	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), live))
+	require.Equal(t, existing.Object["spec"], live.Object["spec"])
+}
+
 func TestAuxiliaryRecoveryRejectsEmptySessionUID(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()

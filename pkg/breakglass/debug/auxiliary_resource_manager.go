@@ -178,9 +178,9 @@ func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
 		statuses = append(statuses, status)
 
 		if err != nil {
-			// A hub status conflict is not an optional target-resource failure.
-			// Retry from fresh persisted intent before any further target writes.
-			if isDebugSessionStatusConflict(err) {
+			// Retry classified conflicts from fresh session and resource fences,
+			// not through optional/required target-resource failure policies.
+			if isDebugSessionDeploymentConflict(err) {
 				return statuses, err
 			}
 			failurePolicy := effectiveAuxiliaryResourceFailurePolicy(auxRes)
@@ -431,6 +431,7 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 ) breakglassv1alpha1.AuxiliaryResourceContext {
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
+			UID:         string(session.UID),
 			Name:        session.Name,
 			Namespace:   session.Namespace,
 			Cluster:     session.Spec.Cluster,
@@ -803,6 +804,11 @@ type auxiliaryCreateRejectedError struct{ err error }
 func (e *auxiliaryCreateRejectedError) Error() string { return e.err.Error() }
 func (e *auxiliaryCreateRejectedError) Unwrap() error { return e.err }
 
+type auxiliaryApplyConflict struct{ err error }
+
+func (e *auxiliaryApplyConflict) Error() string { return e.err.Error() }
+func (e *auxiliaryApplyConflict) Unwrap() error { return e.err }
+
 // applyOrRecoverAuxiliaryResource creates unstructured auxiliary resources
 // atomically. Existing objects must belong to this session before native SSA
 // can reconcile them, which prevents concurrent foreign-object adoption while
@@ -843,10 +849,22 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	if recordedUID != "" && string(existing.GetUID()) != recordedUID {
 		return fmt.Errorf("target resource %s/%s UID does not match recorded auxiliary resource", obj.GetNamespace(), obj.GetName())
 	}
+	if annotations := managedPodAnnotations(existing); annotations != nil {
+		if uid := annotations[sourceSessionUIDAnnotation]; uid != "" && uid != string(session.UID) {
+			return fmt.Errorf("target resource %s/%s already exists with a different PodTemplate session UID", obj.GetNamespace(), obj.GetName())
+		}
+	}
+	if managedPodAnnotations(existing)[sourceSessionUIDAnnotation] == "" {
+		removeManagedPodSessionUID(obj, string(session.UID))
+	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	obj.SetManagedFields(nil)
-	return utils.ApplyUnstructured(ctx, targetClient, obj)
+	err := utils.ApplyUnstructured(ctx, targetClient, obj)
+	if apierrors.IsConflict(err) {
+		return &auxiliaryApplyConflict{err: err}
+	}
+	return err
 }
 
 func auxiliaryResourceIdentity(session *breakglassv1alpha1.DebugSession, auxiliaryName string, obj *unstructured.Unstructured) (string, bool) {
@@ -1025,6 +1043,7 @@ func ValidateAuxiliaryResources(resources []breakglassv1alpha1.AuxiliaryResource
 			// Use sample context for validation
 			sampleCtx := breakglassv1alpha1.AuxiliaryResourceContext{
 				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
+					UID:         "validation-session-uid",
 					Name:        "validation-session",
 					Namespace:   "breakglass-system",
 					Cluster:     "validation-cluster",
