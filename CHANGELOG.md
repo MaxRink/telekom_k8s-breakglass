@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Escalation-config chart 0.4.2 accepts `clusterConfig.labels` and
+  `clusterConfig.annotations`, merging scoped metadata into plain Helm output.
+  Explicit labels override matching chart defaults. Empty maps preserve current
+  behavior; non-empty label changes can expand or restrict clusters matched by
+  DebugSession template/binding selectors and must be reviewed as access-policy
+  changes. Consumers can replace Flux-only metadata post-renderers with these
+  portable values for native/manual Helm installs and upgrades.
 - Optional `DebugSessionTemplate.spec.artifactCollection.uploadCABundleRef`
   selects a ConfigMap or Secret CA bundle in the collector's target namespace.
   Only the uploader mounts it read-only and appends it to image-pinned system
@@ -68,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [the migration guide](docs/debug-session.md#migration-from-escalation-grant-authorization).
 
 ### Changed
+
+- Reserve fresh Helm chart versions for v0.3.0-rc.9: escalation-config 0.4.2
+  and debug-session-catalogue 0.2.5. The release workflow stamps both packaged
+  charts with the release tag as `appVersion`.
 
 - Require Go 1.27.2 or newer for CI, source builds and production image builders
   to avoid vulnerable standard-library versions.
