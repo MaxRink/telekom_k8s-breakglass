@@ -663,7 +663,7 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 		"clusterHasIDPRestriction", clusterHasIDPRestriction)
 
 	// Validate and apply custom duration if provided
-	if request.Duration > 0 {
+	if request.Duration != 0 {
 		// Parse max allowed duration from string (e.g., "1h", "3600s", "7d")
 		d, err := breakglassv1alpha1.ParseDuration(matchedEsc.Spec.MaxValidFor)
 		if err != nil {
@@ -680,6 +680,10 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 		// Convert custom duration to Go duration string (e.g., "1h30m")
 		customDuration := time.Duration(request.Duration) * time.Second
 		spec.MaxValidFor = customDuration.String()
+		// A shorter request narrows both deadlines without changing the escalation policy.
+		if idleTimeout, err := breakglassv1alpha1.ParseDuration(spec.IdleTimeout); err == nil && idleTimeout > customDuration {
+			spec.IdleTimeout = customDuration.String()
+		}
 		reqLog.Debugw("Custom duration applied", "duration", request.Duration, "defaultMaxValidFor", matchedEsc.Spec.MaxValidFor, "customMaxValidFor", spec.MaxValidFor)
 	}
 
