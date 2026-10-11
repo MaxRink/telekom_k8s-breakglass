@@ -222,6 +222,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		return
 	}
 
+	recordedActor := ""
 	switch sesCondition {
 	case breakglassv1alpha1.SessionConditionTypeApproved:
 		// Clear any previous rejection timestamp so the approved state is canonical.
@@ -265,6 +266,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		approverEmail, _ := wc.identityProvider.GetEmail(c)
 		approver := firstNonEmpty(approverEmail, authenticatedActor)
 		if approver != "" {
+			recordedActor = approver
 			bs.Status.Approver = approver
 			bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
 			// append to approvers history if not already present
@@ -290,6 +292,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		// record approver (rejector)
 		rejector := authenticatedActor
 		if rejector != "" {
+			recordedActor = rejector
 			bs.Status.Approver = rejector
 			bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
 			recordApprover(&bs.Status, rejector, c.GetString("identity_provider_name"))
@@ -330,14 +333,9 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		return
 	}
 
-	// Get approver identity for audit events
-	approver := wc.identityProvider.GetUsername(c)
-	if approver == "" {
-		if email := c.GetString("email"); email != "" {
-			approver = email
-		}
-	}
-	approver = firstNonEmpty(approver, authenticatedActor)
+	// Audit events use the same identity persisted as the approver/rejector so
+	// that lifecycle events for one session correlate on a single actor.
+	approver := firstNonEmpty(recordedActor, wc.identityProvider.GetUsername(c), c.GetString("email"), authenticatedActor)
 
 	// Track metrics for session lifecycle events
 	switch sesCondition {

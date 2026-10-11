@@ -326,6 +326,14 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 
 	// check if session status is approved
 	ses = getSession()
+	// Audit actor must match the persisted approver even when the username
+	// claim differs from the email claim.
+	require.Equal(t, "approver@example.com", ses.Status.Approver)
+	for _, event := range events {
+		if event.Type == audit.EventSessionApproved || event.Type == audit.EventSessionActivated {
+			assert.Equal(t, ses.Status.Approver, event.Actor.User, "actor for %s", event.Type)
+		}
+	}
 	if ses.Status.ApprovedAt.Day() != time.Now().Day() {
 		t.Fatalf("Expected session to be approved, but it is not.")
 	}
@@ -5115,6 +5123,12 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	types := eventTypes(mockAudit.GetEvents())
 	assert.Contains(t, types, audit.EventSessionDenied)
 	assert.NotContains(t, types, audit.EventSessionRejected)
+	for _, event := range mockAudit.GetEvents() {
+		if event.Type == audit.EventSessionDenied {
+			assert.Equal(t, sessions[0].Status.Approver, event.Actor.User)
+			assert.Equal(t, "owner@example.com", event.Actor.User)
+		}
+	}
 }
 
 func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
