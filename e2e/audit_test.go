@@ -314,7 +314,9 @@ func TestAuditLogging(t *testing.T) {
 					require.Equal(t, helpers.TestUsers.Requester.Email, event.Actor.User)
 					require.ElementsMatch(t, helpers.TestUsers.Requester.Groups, event.Actor.Groups)
 				case audit.EventSessionApproved:
-					require.Equal(t, helpers.TestUsers.Approver.Username, event.Actor.User)
+					// The audit actor is the approver identity persisted on the session.
+					require.Equal(t, helpers.TestUsers.Approver.Email, persisted.Status.Approver)
+					require.Equal(t, persisted.Status.Approver, event.Actor.User)
 					require.ElementsMatch(t, helpers.TestUsers.Approver.Groups, event.Actor.Groups)
 				}
 				expectedEvents[event.Type] = true
