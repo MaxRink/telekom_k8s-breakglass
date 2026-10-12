@@ -251,6 +251,26 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	if !ds.DeletionTimestamp.IsZero() && hasMaintenanceFinalizer(ds) {
+		if err := c.cleanupMaintenance(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+		// activateSession acquires the hub connection lease before the
+		// maintenance executor is deployed, so deletion must release it as the
+		// terminal cleanup paths do. RevokeSession is a no-op when no lease is
+		// recorded or the Lease is already gone; the unrecorded sweep covers a
+		// Lease created after the session was deleted mid-activation.
+		if c.connectionLeases != nil {
+			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := c.connectionLeases.RevokeUnrecordedSessionLeases(ctx, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, c.removeMaintenanceFinalizer(ctx, ds)
+	}
+
 	// Perform structural validation using shared validation function.
 	// This catches malformed resources that somehow bypassed the admission webhook.
 	validationResult := breakglassv1alpha1.ValidateDebugSession(ds)
@@ -409,6 +429,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
+	if err := c.validateMaintenancePending(ctx, ds, effectiveTemplate, binding); err != nil {
+		return c.failSession(ctx, ds, fmt.Sprintf("invalid node-maintenance request: %v", err))
+	}
 	// Failure retention uses an existing approved snapshot, or the effective
 	// constraints just resolved for a request that has no snapshot yet.
 	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
@@ -547,6 +570,9 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 	if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
 		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
+	}
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.NodeMaintenance != nil {
+		return c.handleMaintenanceActive(ctx, ds)
 	}
 
 	// Resolve any target mutation whose status outcome was interrupted by a
@@ -758,6 +784,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // hasTrackedSpokeResources reports whether the session status still references
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
+	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
+		return true
+	}
 	if utils.DebugSessionHasActionableDeployedResources(ds) ||
 		hasOutstandingAuxiliaryResources(ds) ||
 		len(ds.Status.AllowedPods) > 0 {
@@ -986,6 +1015,17 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
+	if template.Spec.NodeMaintenance != nil {
+		// Install the cleanup finalizer before acquiring any hub lease: a
+		// deletion in between would otherwise drop the session without running
+		// the finalizer branch that revokes the lease.
+		if !ds.DeletionTimestamp.IsZero() {
+			return ctrl.Result{}, nil
+		}
+		if err := c.ensureMaintenanceFinalizer(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	if c.connectionLeases != nil && c.ccProvider != nil {
 		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 		if err != nil {
@@ -1026,7 +1066,23 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 
 	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
-		if err := c.deployDebugResources(ctx, ds, template); err != nil {
+		var deployErr error
+		if template.Spec.NodeMaintenance != nil {
+			if err := maintenanceApprovers(template, binding); err != nil {
+				return c.failSession(ctx, ds, err.Error())
+			}
+			deployErr = c.deployMaintenance(ctx, ds)
+		} else {
+			deployErr = c.deployDebugResources(ctx, ds, template)
+		}
+		if err := deployErr; err != nil {
+			if errors.Is(err, errNodeMaintenanceBusy) {
+				ds.Status.Message = "Waiting for exclusive node-maintenance Lease"
+				if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+			}
 			if isDebugSessionDeploymentConflict(err) {
 				return ctrl.Result{}, err
 			}
@@ -1046,6 +1102,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		bindingOps = binding.Spec.AllowedPodOperations
 	}
 	ds.Status.AllowedPodOperations = breakglassv1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
+	if template.Spec.NodeMaintenance != nil {
+		ds.Status.AllowedPodOperations = maintenancePodOperations()
+	}
 
 	// Add the requesting user as owner participant
 	ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{
@@ -1721,6 +1780,9 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 // approvers are used. Approval is required when the effective approver set has
 // users or groups, unless auto-approve conditions are met.
 func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
+	if template != nil && template.Spec.NodeMaintenance != nil {
+		return true
+	}
 	// Binding approvers replace template approvers when the field is present,
 	// even if the binding intentionally sets an empty approver list.
 	if binding != nil && binding.Spec.Approvers != nil {
