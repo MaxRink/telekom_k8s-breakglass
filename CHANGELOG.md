@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- BreakglassSession `session.approved`, `session.denied` and immediate
+  (non-scheduled) `session.activated` audit events now use the approver/rejector identity persisted in
+  `status.approver` as `actor.user`, instead of the username claim. Previously,
+  when email and username claims differed, these events named a different actor
+  than the persisted session status and other lifecycle events. Scheduled
+  activations are still attributed to the `system` actor.
+
 - Accept session requests shorter than their escalation's idle timeout. Copy
   the smaller of the configured idle timeout and requested duration into the
   session, preserving admission constraints and the requested hard expiry.
