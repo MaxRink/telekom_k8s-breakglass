@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -104,4 +105,28 @@ func TestActivationCopiesCanonicalKubernetesOwner(t *testing.T) {
 	require.Len(t, session.Status.Participants, 1)
 	require.Equal(t, "tester", session.Status.Participants[0].User)
 	require.Equal(t, "canonical-subject", session.Status.Participants[0].KubernetesUser)
+}
+
+func TestActivationStartedAuditCarriesActivatedSessionUID(t *testing.T) {
+	controller, session, template, _ := newDeploymentFenceFixture(t)
+	controller.connectionLeases = nil
+	sink := &cleanupAuditCaptureSink{}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
+	controller = controller.WithAuditManager(manager)
+	_, err := controller.activateSession(context.Background(), session, template, nil)
+	require.NoError(t, err)
+	require.NoError(t, manager.Close())
+
+	var started *audit.Event
+	for _, event := range sink.Events() {
+		if event.Type == audit.EventDebugSessionStarted {
+			started = event
+		}
+	}
+	require.NotNil(t, started, "activation must emit a started audit event")
+	require.Equal(t, "session-uid", string(session.UID))
+	require.Equal(t, string(session.UID), started.Target.UID)
+	require.NotNil(t, started.RequestContext)
+	require.Equal(t, string(session.UID), started.RequestContext.SessionUID)
+	require.Equal(t, string(session.UID), started.RequestContext.DebugSessionUID)
 }

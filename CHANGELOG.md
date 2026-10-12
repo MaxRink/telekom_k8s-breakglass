@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- DebugSession lifecycle audit events emitted by the API and the reconciler
+  `debug_session.started` event now carry the observed DebugSession UID in
+  `target.uid` and the session request context (`sessionUID`,
+  `debugSessionUID`). Previously these events identified the session by name
+  only, so consumers could not correlate them by immutable UID.
+
 - BreakglassSession `session.approved`, `session.denied` and immediate
   (non-scheduled) `session.activated` audit events now use the approver/rejector identity persisted in
   `status.approver` as `actor.user`, instead of the username claim. Previously,

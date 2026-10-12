@@ -877,12 +877,15 @@ func (m *Manager) DebugSessionCreated(ctx context.Context, sessionName, user, cl
 }
 
 // DebugSessionStarted emits an audit event after a debug session is activated.
-func (m *Manager) DebugSessionStarted(ctx context.Context, sessionName, namespace, user, cluster, templateName string) {
+// The UID is the one observed on the activated object, so retries never
+// correlate the event with a later DebugSession that reuses the name.
+func (m *Manager) DebugSessionStarted(ctx context.Context, sessionName, namespace, uid, user, cluster, templateName string) {
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionStarted,
 		Severity: SeverityInfo,
 		Actor:    Actor{User: user},
 		Target: Target{
+			UID:       uid,
 			Kind:      "DebugSession",
 			Name:      sessionName,
 			Namespace: namespace,
@@ -892,7 +895,7 @@ func (m *Manager) DebugSessionStarted(ctx context.Context, sessionName, namespac
 			"cluster":      cluster,
 			"templateName": templateName,
 		},
-		RequestContext: &RequestContext{DebugSessionName: sessionName},
+		RequestContext: &RequestContext{SessionName: sessionName, SessionUID: uid, DebugSessionName: sessionName, DebugSessionUID: uid},
 	})
 }
 

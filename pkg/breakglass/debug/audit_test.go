@@ -47,6 +47,7 @@ func TestEmitDebugSessionAuditEvent_HappyPath(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-debug-session",
 			Namespace: "breakglass",
+			UID:       "debug-session-uid",
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
@@ -64,6 +65,12 @@ func TestEmitDebugSessionAuditEvent_HappyPath(t *testing.T) {
 	assert.Equal(t, "breakglass", events[0].Target.Namespace)
 	assert.Equal(t, "test-debug-session", events[0].Target.Name)
 	assert.Equal(t, "Test creation", events[0].Details["message"])
+	// Lifecycle events carry the immutable UID observed at emission.
+	assert.Equal(t, "debug-session-uid", events[0].Target.UID)
+	require.NotNil(t, events[0].RequestContext)
+	assert.Equal(t, "test-debug-session", events[0].RequestContext.DebugSessionName)
+	assert.Equal(t, "debug-session-uid", events[0].RequestContext.DebugSessionUID)
+	assert.Equal(t, "debug-session-uid", events[0].RequestContext.SessionUID)
 }
 
 func TestEmitDebugSessionAuditEvent_AuditNotEnabled(t *testing.T) {

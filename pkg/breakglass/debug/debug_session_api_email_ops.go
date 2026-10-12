@@ -353,14 +353,13 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 			Groups: nil, // Groups not available in this context
 		},
 		Target: audit.Target{
+			UID:       string(session.UID),
 			Kind:      "DebugSession",
 			Name:      session.Name,
 			Namespace: session.Namespace,
 			Cluster:   session.Spec.Cluster,
 		},
-		RequestContext: &audit.RequestContext{
-			SessionName: session.Name,
-		},
+		RequestContext: audit.SessionRequestContext(session),
 		Details: map[string]interface{}{
 			"message":     message,
 			"cluster":     session.Spec.Cluster,
