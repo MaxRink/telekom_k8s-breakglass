@@ -810,7 +810,7 @@ func TestManagerHelperMethods(t *testing.T) {
 	manager.AccessDecision(ctx, "user@test.com", []string{"g1"}, "pods", "p2", "ns1", "c1", "delete", false, "s5")
 	manager.PolicyViolation(ctx, "user@test.com", []string{"g1"}, "pods", "p3", "ns1", "c1", "deny-policy", "violation")
 	manager.DebugSessionCreated(ctx, "ds1", "user@test.com", "c1", "template1")
-	manager.DebugSessionStarted(ctx, "ds-started", "debug-ns", "user@test.com", "c1", "template1")
+	manager.DebugSessionStarted(ctx, "ds-started", "debug-ns", "ds-started-uid", "user@test.com", "c1", "template1")
 	manager.DebugSessionTerminated(ctx, "ds2", "admin@test.com", "expired")
 
 	require.NoError(t, manager.Close())
@@ -827,6 +827,10 @@ func TestManagerHelperMethods(t *testing.T) {
 	require.NotNil(t, started)
 	assert.Equal(t, "debug-ns", started.Target.Namespace)
 	assert.Equal(t, "c1", started.Details["cluster"])
+	assert.Equal(t, "ds-started-uid", started.Target.UID)
+	require.NotNil(t, started.RequestContext)
+	assert.Equal(t, "ds-started-uid", started.RequestContext.DebugSessionUID)
+	assert.Equal(t, "ds-started-uid", started.RequestContext.SessionUID)
 	mu.Unlock()
 }
 

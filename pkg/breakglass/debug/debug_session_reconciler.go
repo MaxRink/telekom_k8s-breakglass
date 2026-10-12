@@ -1072,7 +1072,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 	if c.shouldEmitAudit(ctx, ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
-			auditManager.DebugSessionStarted(ctx, ds.Name, ds.Namespace, ds.Spec.RequestedBy, ds.Spec.Cluster, ds.Spec.TemplateRef)
+			auditManager.DebugSessionStarted(ctx, ds.Name, ds.Namespace, string(ds.UID), ds.Spec.RequestedBy, ds.Spec.Cluster, ds.Spec.TemplateRef)
 		}
 	}
 
