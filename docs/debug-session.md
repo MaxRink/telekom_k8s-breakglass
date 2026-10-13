@@ -1110,6 +1110,8 @@ retroactively annotate or roll existing Pods.
 
 1. **Creation**: Auxiliary resources are created before debug pods start when `createBefore: true` (the default), or after the debug workload is applied when `createBefore: false`
 2. **Cleanup**: Resources are deleted when the session ends when `deleteAfter: true` (the default), and retained when `deleteAfter: false`
+3. **kubectl-debug mode**: Sessions with `mode: kubectl-debug` have no controller workload. Both phases are deployed when the session activates, before any debug pod can be requested, and cleaned up like workload-mode resources.
+4. **Kyverno PolicyExceptions**: Kyverno loads new exceptions with a short delay. When a session created a `kyverno.io` or `policies.kyverno.io` `PolicyException`, an admission-webhook denial of the workload create within 30 seconds of the exception's first `createdAt` requeues activation (status message `Waiting for PolicyException admission`) instead of failing the session. `kubectl-debug` node pod requests retry within the same window. Other errors are not retried.
 
 ### Failure Policies
 

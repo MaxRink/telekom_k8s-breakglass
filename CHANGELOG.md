@@ -95,6 +95,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   garbage-collected when the session ends even if kubestr is killed;
   `STORAGE_DEBUG_IMAGE_PULL_SECRETS` is copied to the fio Pod.
 
+- DebugSession activation now requeues instead of failing when the workload
+  create is denied by an admission webhook within 30 seconds of the session
+  creating a `kyverno.io` or `policies.kyverno.io` `PolicyException`. Kyverno
+  loads new exceptions through an informer cache, so a workload created
+  milliseconds later was denied and the session failed terminally even though
+  the exception matched. The window is measured from the exception's first
+  `createdAt` and the reconcile worker is not blocked. Other create errors and
+  later denials still fail the session.
+- `kubectl-debug` DebugSessions now deploy their `auxiliaryResources` when the
+  session activates and clean them up on termination. Previously the resources
+  were silently ignored outside workload and hybrid mode, so node-debug
+  templates could not bundle a per-session admission exception. Node debug pod
+  creation retries webhook denials within 30 seconds of such an exception's
+  creation.
 - Diagnostic artifact cleanup now deletes collector Jobs with background
   propagation. Previously the `batch/v1` legacy orphan default left each
   collector Pod behind (`Succeeded`, no owner reference) after the Job was
