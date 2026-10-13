@@ -61,7 +61,9 @@ preflight capture for an exact replace action, records `dry_run=true`,
 the mutating action. A preview needs no capability beyond the read-only
 captures. Both options are part of the approved tuple (`&vrf=` and
 `&dry_run=true`, appended only when set), so a preview approval cannot execute
-a mutation and an approval without a VRF cannot run inside one.
+a mutation and an approval without a VRF cannot be used for a VRF-bound
+repair. A request without `--vrf` keeps the legacy behavior and does not check
+the interface master.
 
 The immutable controller template must inject `BREAKGLASS_NODE_NAME` from
 Downward API `spec.nodeName`, unique operation/recording/approval identifiers,

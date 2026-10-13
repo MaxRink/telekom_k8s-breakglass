@@ -145,12 +145,12 @@ case "$action" in
 		# shellcheck disable=SC2153
 		if [ -n "$vrf" ]; then
 			master_path=$(readlink -f "/sys/class/net/$interface/master" 2>/dev/null || true)
-			vrf_ifindex=$(pin_interface_ifindex "$vrf")
 			if [ "${master_path##*/}" != "$vrf" ] || ! capture "$bundle/before-vrf.txt" ip -details link show dev "$vrf" ||
 				! grep -F ' vrf table ' "$bundle/before-vrf.txt" >/dev/null; then
 				record_event operation-completed preflight-failed
 				die "interface '$interface' is not enslaved to exact VRF device '$vrf'; no repair was attempted (evidence: $bundle)"
 			fi
+			vrf_ifindex=$(pin_interface_ifindex "$vrf")
 			if ! capture "$bundle/before-neighbor-route.txt" ip "$NEIGHBOR_FAMILY" route get "$neighbor_address" vrf "$vrf" ||
 				! grep -F " dev $interface " "$bundle/before-neighbor-route.txt" >/dev/null; then
 				record_event operation-completed preflight-failed
