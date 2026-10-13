@@ -70,6 +70,28 @@ The trace workload must use `hostNetwork: true` and `hostPID: true`; the
 wrapper verifies that its network namespace is the host init namespace through
 `/proc/1/ns/net` before starting `pwru`.
 
+pwru's kprobes are global. A trace sees packets in every network namespace on
+the node (host, every Pod, tunnels); the wrapper applies no netns filter. Three
+opt-in flags extend what the evidence shows:
+
+- `--meta` adds pwru's NETNS, MARK, IFACE, PROTO, MTU and LEN columns, so each
+  tuple can be attributed to the host or a Pod network namespace. Without
+  SYS_ADMIN pwru cannot enter other namespaces to resolve interface names and
+  prints the ifindex, and logs a warning about this.
+- `--backend kprobe-multi` attaches and detaches in about a second instead of
+  40-70 seconds, and resolves function names. It needs CAP_SYSLOG to read
+  `/proc/kallsyms` under the default `kptr_restrict=1`, and the wrapper fails
+  closed without it. kprobe-multi needs kernel 5.18 or later built with
+  `CONFIG_FPROBE` and `CONFIG_FUNCTION_TRACER`.
+- `--all-kmods` also traces skb functions of loaded kernel modules (for
+  example bridge, veth, nf_*, vxlan), using their `/sys/kernel/btf/<module>`.
+  Combined with kprobe-multi it also needs kernel support for multi-kprobe
+  attachment to module functions (upstream 6.2, possibly missing on older
+  stable kernels). pwru then fails to attach and the trace exits non-zero.
+  Fall back to `--backend kprobe --all-kmods --meta`, which works on any
+  kernel the default backend supports but detaches in 40-70 seconds, so the
+  workload stop grace must cover that.
+
 The image runs as root because packet capture and eBPF tracing require kernel
 access. Grant only the network namespace and Linux capabilities needed for the
 specific investigation. Do not add `privileged: true` by default.
@@ -193,7 +215,8 @@ the Linux/kind workflow then deletes both Pods and verifies namespace/cluster
 cleanup.
 
 The host trace remains a separate host-network/host-PID operation. Its wrapper
-executes the pinned `pwru --backend kprobe` with a native event-line bound into
+executes the pinned `pwru --backend kprobe` (or `kprobe-multi` with
+`--backend kprobe-multi`) with a native event-line bound into
 a private regular staging file, applies an independent kernel file-size bound,
 and runs it under an owned process-group watchdog with bounded INT-to-KILL
 shutdown.

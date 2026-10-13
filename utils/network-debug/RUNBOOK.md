@@ -28,7 +28,15 @@ For a kernel trace, use `net-debug trace --duration 30 --events 1000
 --filter 'skb mark 0' --output trace.log` from a host network namespace with
 the required BTF, debugfs, tracefs, securityfs/LSM, BPF/PERFMON,
 NET_ADMIN, SYS_RESOURCE, and SYS_PTRACE prerequisites. SYS_PTRACE is used
-only to read `/proc/1/ns/net` for the host-PID identity check. The helper fails closed
+only to read `/proc/1/ns/net` for the host-PID identity check. For whole-node
+evidence add `--backend kprobe-multi --all-kmods --meta` (requires SYSLOG as
+well): tuples then carry the NETNS inode of the host or Pod namespace they
+were seen in, module functions are traced, and kprobe detach is near-instant.
+kprobe-multi needs kernel 5.18+ with `CONFIG_FPROBE` and
+`CONFIG_FUNCTION_TRACER`; attaching it to module functions needs kernel
+support (upstream 6.2, possibly missing on older stable kernels). If the trace
+exits non-zero with an attach error there, use `--backend kprobe --all-kmods
+--meta` instead and allow 40-70 seconds for detach. The helper fails closed
 when any prerequisite is absent; its host-trace context drops `NET_RAW` and
 does not add privileged or SYS_ADMIN fallbacks. Save pcaps and reports only to an approved mount, redact
 addresses and payloads, and remove the session when the investigation is
