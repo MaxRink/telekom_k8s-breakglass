@@ -1015,6 +1015,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
+	if template.Spec.Hotfix != nil || ds.Spec.Hotfix != nil {
+		return c.failSession(ctx, ds, "hotfix sessions are not supported by this controller version")
+	}
 	if template.Spec.NodeMaintenance != nil {
 		// Install the cleanup finalizer before acquiring any hub lease: a
 		// deletion in between would otherwise drop the session without running
@@ -1794,7 +1797,7 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 // approvers are used. Approval is required when the effective approver set has
 // users or groups, unless auto-approve conditions are met.
 func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
-	if template != nil && template.Spec.NodeMaintenance != nil {
+	if template != nil && (template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil) {
 		return true
 	}
 	// Binding approvers replace template approvers when the field is present,
