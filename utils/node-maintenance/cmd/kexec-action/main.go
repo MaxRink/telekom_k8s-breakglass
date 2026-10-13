@@ -54,6 +54,9 @@ type system interface {
 	snapshot(name string) (*os.File, error)
 	// seal makes a snapshot immutable before the kernel reads it.
 	seal(file *os.File) error
+	// ignoreTermination makes SIGTERM, SIGINT and SIGHUP inert, so from the
+	// kernel load on only SIGKILL can interrupt load, sync and reboot.
+	ignoreTermination()
 	kexecFileLoad(kernelFD, initrdFD int, cmdline []byte) error
 	kexecUnload() error
 	sync()
@@ -127,6 +130,9 @@ func run(sys system, req request, out io.Writer) error {
 	if !sys.now().Before(req.deadline) {
 		return errors.New("approved action deadline expired; no kernel was loaded")
 	}
+	// A termination signal after the load would leave a loaded kernel and an
+	// unknown outcome; before the load it is harmless.
+	sys.ignoreTermination()
 	if err := sys.kexecFileLoad(int(kernel.Fd()), int(initrd.Fd()), cmdline); err != nil {
 		return fmt.Errorf("kexec_file_load: %w", err)
 	}

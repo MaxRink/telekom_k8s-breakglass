@@ -23,5 +23,6 @@ func (hostSystem) seal(*os.File) error                  { return errUnsupported 
 func (hostSystem) kexecFileLoad(int, int, []byte) error { return errUnsupported }
 func (hostSystem) kexecUnload() error                   { return errUnsupported }
 func (hostSystem) sync()                                {}
+func (hostSystem) ignoreTermination()                   {}
 func (hostSystem) rebootKexec() error                   { return errUnsupported }
 func (hostSystem) now() time.Time                       { return time.Now() }

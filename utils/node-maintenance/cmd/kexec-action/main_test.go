@@ -60,6 +60,7 @@ func (f *fakeSystem) kexecFileLoad(kernelFD, initrdFD int, cmdline []byte) error
 
 func (f *fakeSystem) kexecUnload() error { f.calls = append(f.calls, "unload"); return nil }
 func (f *fakeSystem) sync()              { f.calls = append(f.calls, "sync") }
+func (f *fakeSystem) ignoreTermination() { f.calls = append(f.calls, "ignore-signals") }
 func (f *fakeSystem) rebootKexec() error { f.calls = append(f.calls, "reboot"); return f.rebootErr }
 
 func (f *fakeSystem) now() time.Time {
@@ -95,7 +96,7 @@ func TestRunLoadsVerifiedKernelThenSyncsAndReboots(t *testing.T) {
 	if err == nil {
 		t.Fatal("a returning reboot must fail")
 	}
-	want := []string{"open " + kernelPath, "seal", "open " + initrdPath, "seal", "open " + cmdlinePath, "seal", "load", "sync", "reboot", "unload"}
+	want := []string{"open " + kernelPath, "seal", "open " + initrdPath, "seal", "open " + cmdlinePath, "seal", "ignore-signals", "load", "sync", "reboot", "unload"}
 	if !reflect.DeepEqual(sys.calls, want) {
 		t.Fatalf("calls = %q, want %q", sys.calls, want)
 	}
@@ -163,7 +164,7 @@ func TestRunUnloadsInsteadOfRebootingAfterTheDeadline(t *testing.T) {
 	if err := run(sys, req, io.Discard); err == nil || !strings.Contains(err.Error(), "deadline") {
 		t.Fatalf("run() = %v, want a deadline refusal", err)
 	}
-	want := []string{"open " + kernelPath, "seal", "open " + initrdPath, "seal", "open " + cmdlinePath, "seal", "load", "sync", "unload"}
+	want := []string{"open " + kernelPath, "seal", "open " + initrdPath, "seal", "open " + cmdlinePath, "seal", "ignore-signals", "load", "sync", "unload"}
 	if !reflect.DeepEqual(sys.calls, want) {
 		t.Fatalf("calls = %q, want %q", sys.calls, want)
 	}

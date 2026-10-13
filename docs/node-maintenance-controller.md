@@ -215,9 +215,10 @@ cordon and NotReady/unreachable taints so the receipt survives the reboot. Its
 admission exception, if any, belongs in the per-session auxiliary resources.
 
 A successful kexec kills the executor, so the result is decided by the Node,
-not by the Pod phase: on a Ready Node a new boot ID is `succeeded` and the
-original boot ID with a terminated executor whose termination message reports
-`kexec_loaded=0` is `failed`. A kill, eviction or Pod deadline can stop the
+not by the Pod phase. On a Ready Node a terminated executor whose termination
+message reports `kexec_loaded=0` and the approved `boot_id` is `failed`, even
+if the Node rebooted later for another reason. Otherwise a new boot ID is
+`succeeded`; it proves a reboot, not which kernel booted. A kill, eviction or Pod deadline can stop the
 executor between loading and rebooting, so a terminated executor without that
 proof is not `failed`. Anything else is `interrupted` at expiry or `unknown`
 at cleanup. Cleanup uncordons the Node only
@@ -227,6 +228,13 @@ with its annotation for an operator; remove it with `kubectl uncordon` and
 `kubectl annotate node NODE breakglass.t-caas.telekom.com/maintenance-cordon-`
 after checking the console and, if `/sys/kernel/kexec_loaded` is `1`, unloading
 the image with `kexec -u` or rebooting. Audit events also carry `bootID`.
+
+Cleanup deletes the executor Pod and waits until it is gone before it releases
+the node Lease, the session finalizer and the cordon. If the recovery kernel
+does not start kubelet, the Pod stays `Terminating` and cleanup waits. After
+the console shows that the executor no longer runs (the Node runs the recovery
+kernel or is powered off), remove the Pod with
+`kubectl -n breakglass-node-maintenance delete pod OPERATION_ID --force --grace-period=0`.
 
 ## Approval, execution and cleanup
 

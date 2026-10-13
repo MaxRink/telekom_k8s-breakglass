@@ -61,9 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A `dryRun` profile only validates the bundle. Execution refuses control-plane
   Nodes, records the boot ID, cordons and drains the Node through the Eviction
   API, then runs the new `kexec-recovery` helper with `SYS_BOOT` only, which
-  loads the verified descriptors with `kexec_file_load` and reboots. A new boot
-  ID on a Ready Node proves success. A failure counts as proven only when the
-  executor reports `kexec_loaded=0`; anything else keeps the Node cordoned.
+  loads the verified descriptors with `kexec_file_load` and reboots. A failure
+  counts as proven only when the executor reports `kexec_loaded=0` in the
+  approved boot; otherwise a new boot ID on a Ready Node counts as success (it
+  proves a reboot, not which kernel booted). Anything else keeps the Node
+  cordoned.
   `allowedTargets[].interface` and `entryMAC` are now optional in the schema
   and remain required by validation for network repair.
 - Escalation-config chart 0.4.2 accepts `clusterConfig.labels` and

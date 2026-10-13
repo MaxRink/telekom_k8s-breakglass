@@ -824,38 +824,51 @@ func (c *DebugSessionController) prepareKexecNode(ctx context.Context, ds *break
 	return errNodeMaintenanceDraining
 }
 
-// kexecOutcome is decided only on a Ready Node: a new boot ID proves the
-// reboot, while the original boot ID with a terminated executor that reported
-// no loaded kexec image proves that the helper failed closed. A kill, an
+// kexecOutcome is decided only on a Ready Node. A terminated executor that
+// reported no loaded kexec image in the approved boot is a proven failure,
+// even if the Node rebooted later for another reason. Otherwise a new boot ID
+// proves a reboot (not which kernel booted) and counts as success. A kill, an
 // eviction or a deadline can stop the executor between load and reboot, so
 // any other termination stays unresolved and keeps the Node cordoned.
 func kexecOutcome(status *breakglassv1alpha1.NodeMaintenanceStatus, node *corev1.Node, pod *corev1.Pod) string {
 	if status.BootID == "" || node == nil || !maintenanceNodeReady(node) {
 		return ""
 	}
+	unloaded, executorBootID := kexecTermination(pod)
+	if unloaded && executorBootID == status.BootID {
+		return "failed"
+	}
 	if node.Status.NodeInfo.BootID != "" && node.Status.NodeInfo.BootID != status.BootID {
 		return "succeeded"
 	}
-	if pod != nil && (pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded) && kexecUnloadProven(pod) {
+	// An executor that did not report its boot ID ran in the original boot.
+	if unloaded && executorBootID == "" {
 		return "failed"
 	}
 	return ""
 }
 
-// kexecUnloadProven reports whether the executor container exited after
-// writing kexec_loaded=0 as its termination message.
-func kexecUnloadProven(pod *corev1.Pod) bool {
+// kexecTermination reports whether a terminated executor container wrote
+// kexec_loaded=0 as its termination message, and the boot_id it reported.
+func kexecTermination(pod *corev1.Pod) (unloaded bool, bootID string) {
+	if pod == nil || (pod.Status.Phase != corev1.PodFailed && pod.Status.Phase != corev1.PodSucceeded) {
+		return false, ""
+	}
 	for _, container := range pod.Status.ContainerStatuses {
 		if container.Name != "node-maintenance" || container.State.Terminated == nil {
 			continue
 		}
 		for _, line := range strings.Split(container.State.Terminated.Message, "\n") {
-			if strings.TrimSpace(line) == "kexec_loaded=0" {
-				return true
+			line = strings.TrimSpace(line)
+			if line == "kexec_loaded=0" {
+				unloaded = true
+			}
+			if value, ok := strings.CutPrefix(line, "boot_id="); ok {
+				bootID = value
 			}
 		}
 	}
-	return false
+	return unloaded, bootID
 }
 
 func maintenanceNodeReady(node *corev1.Node) bool {

@@ -30,7 +30,8 @@ case "${0##*/}" in
 esac
 
 # The controller keeps the Node cordoned unless a terminated executor proves
-# that no kexec image is left loaded, so every exit reports the kernel state.
+# that no kexec image is left loaded, so every exit reports the kernel state
+# and the boot it ran in.
 # shellcheck disable=SC2317 # invoked only by the EXIT trap
 record_kexec_state() {
 	[ "$mode_action" = kexec-recovery ] || return 0
@@ -40,7 +41,10 @@ record_kexec_state() {
 		0 | 1) ;;
 		*) kexec_state=unknown ;;
 	esac
-	printf 'kexec_loaded=%s\n' "$kexec_state" >/dev/termination-log || true
+	# The boot ID lets the controller tell a refusal in the approved boot from
+	# a kubelet re-run of the executor after the kexec.
+	current_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+	printf 'kexec_loaded=%s\nboot_id=%s\n' "$kexec_state" "$current_boot_id" >/dev/termination-log || true
 }
 trap 'record_kexec_state' EXIT
 
@@ -278,8 +282,15 @@ validate_action_deadline
 printf 'validation_result=provider-inputs-verified\nexecution_requested_at_utc=%s\nboot_id_before=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$boot_id" | append_evidence "$bundle/metadata"
 record_event kexec-requested accepted
 printf 'Provider-owned recovery inputs verified; executing kexec on %s now. Evidence: %s\n' "$target_node" "$bundle"
-set +e
+# Copying and hashing up to 768 MiB can outlast the 10-second evidence bound,
+# so the approved deadline bounds kexec-action instead. kexec-action ignores
+# SIGTERM from the kernel load on, so the timeout cannot interrupt load, sync
+# and reboot; before the load a timeout leaves nothing loaded.
 # shellcheck disable=SC2154 # action_deadline is set by validate_action_deadline in common.sh
+[ -n "$action_deadline" ] || die "BREAKGLASS_ACTION_DEADLINE_UNIX is required to execute kexec; kexec was not executed"
+capture_timeout_seconds=$((action_deadline - $(date +%s)))
+[ "$capture_timeout_seconds" -gt 0 ] || die "approved action deadline expired; kexec was not executed"
+set +e
 capture "$bundle/action-kexec.txt" kexec-action "$boot_id" "$kernel_sha256" "$initrd_sha256" "$cmdline_sha256" "$action_deadline"
 action_status=$?
 set -e

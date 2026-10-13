@@ -228,6 +228,27 @@ func TestKexecFailedHelperOnSameBootIsFailedAndUncordoned(t *testing.T) {
 	require.False(t, kexecNode(t, spoke).Spec.Unschedulable)
 }
 
+func TestKexecFailedHelperStaysFailedAfterUnrelatedReboot(t *testing.T) {
+	c, ds, spoke, _ := kexecFixture(t, false, nil)
+	drainKexecNode(t, c, ds)
+	terminateKexecExecutor(t, spoke, kexecExecutorPod(t, spoke, ds), 1, "kexec_loaded=0\nboot_id=boot-1\n")
+	rebootKexecNode(t, spoke, "boot-2")
+	_, err := c.handleMaintenanceActive(t.Context(), ds)
+	require.NoError(t, err)
+	require.Equal(t, "failed", ds.Status.NodeMaintenance.Result, "a fail-closed executor in the approved boot is not a successful kexec")
+}
+
+func TestKexecRerunRefusalAfterRebootIsSucceeded(t *testing.T) {
+	c, ds, spoke, _ := kexecFixture(t, false, nil)
+	drainKexecNode(t, c, ds)
+	// kubelet re-ran the executor after the kexec; it refused on the new boot ID.
+	terminateKexecExecutor(t, spoke, kexecExecutorPod(t, spoke, ds), 1, "kexec_loaded=0\nboot_id=boot-2\n")
+	rebootKexecNode(t, spoke, "boot-2")
+	_, err := c.handleMaintenanceActive(t.Context(), ds)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", ds.Status.NodeMaintenance.Result)
+}
+
 func TestKexecExecutorStoppedWithoutUnloadProofKeepsNodeCordoned(t *testing.T) {
 	for name, exit := range map[string]struct {
 		code    int32

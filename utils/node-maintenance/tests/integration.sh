@@ -1853,8 +1853,8 @@ grep -q 'kexec_file_load' "$execute_host_bundle/action-kexec.txt" \
 grep -q '"event":"kexec-requested"' "$execute_host_bundle/events.jsonl" \
 	|| fail 'kexec execution did not record its request event before acting'
 [ "$(cat /proc/sys/kernel/random/boot_id)" = "$host_boot_id" ] || fail 'runner boot ID changed'
-[ "$(cat "$kexec_termination_log")" = kexec_loaded=0 ] \
-	|| fail 'failed kexec execution did not report kexec_loaded=0 in its termination message'
+[ "$(cat "$kexec_termination_log")" = "$(printf 'kexec_loaded=0\nboot_id=%s' "$host_boot_id")" ] \
+	|| fail 'failed kexec execution did not report kexec_loaded=0 and its boot ID in its termination message'
 rm -f "$kexec_termination_log"
 kexec_termination_log=
 destroy_fixture

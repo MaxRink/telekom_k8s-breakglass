@@ -8,6 +8,7 @@ package main
 
 import (
 	"os"
+	"os/signal"
 	"syscall"
 	"time"
 	"unsafe"
@@ -59,6 +60,10 @@ func (hostSystem) kexecFileLoad(kernelFD, initrdFD int, cmdline []byte) error {
 func (hostSystem) kexecUnload() error { return kexecFileLoadSyscall(-1, -1, nil, kexecFileUnload) }
 
 func (hostSystem) sync() { syscall.Sync() }
+
+func (hostSystem) ignoreTermination() {
+	signal.Ignore(syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+}
 
 func (hostSystem) rebootKexec() error { return syscall.Reboot(syscall.LINUX_REBOOT_CMD_KEXEC) }
 
