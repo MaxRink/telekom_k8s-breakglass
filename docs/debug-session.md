@@ -1139,6 +1139,7 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 | `.session.cluster` | Target cluster name |
 | `.session.requestedBy` | Requesting user |
 | `.target.namespace` | Target namespace for debug pods |
+| `.target.nodeName`, `.target.nodeUID` | Approved Node name and UID of a `nodeMaintenance` session (allowlist-matched); empty otherwise |
 | `.session.reason` | Session request reason |
 | `.template.name` | Template name |
 
