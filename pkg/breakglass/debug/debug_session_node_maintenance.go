@@ -841,7 +841,8 @@ func kexecOutcome(status *breakglassv1alpha1.NodeMaintenanceStatus, node *corev1
 	if node.Status.NodeInfo.BootID != "" && node.Status.NodeInfo.BootID != status.BootID {
 		return "succeeded"
 	}
-	// An executor that did not report its boot ID ran in the original boot.
+	// The Node reported no new boot (checked above), so an executor
+	// image that reports no boot ID failed closed in the approved boot.
 	if unloaded && executorBootID == "" {
 		return "failed"
 	}

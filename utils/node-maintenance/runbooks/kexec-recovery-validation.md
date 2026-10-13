@@ -90,8 +90,9 @@ exit the executor writes `kexec_loaded=0|1|unknown` from
 
 The controller decides the outcome only on a Ready Node: a terminated executor
 that reported `kexec_loaded=0` in the approved boot is `failed`; otherwise a
-new boot ID is `succeeded`, which proves a reboot, not which kernel booted. An executor killed without that report may have
-left a kernel loaded, so its outcome stays unknown.
+new boot ID is `succeeded`, which proves a reboot, not which kernel booted. An
+executor killed without that report may have left a kernel loaded, so its
+outcome stays unknown.
 Evidence in `/evidence` is lost with a successful reboot; the audited result
 and boot IDs are the receipt. Cleanup uncordons the Node only for a proven
 outcome. An unknown or interrupted kexec leaves the Node cordoned with the

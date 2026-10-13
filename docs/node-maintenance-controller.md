@@ -218,9 +218,9 @@ A successful kexec kills the executor, so the result is decided by the Node,
 not by the Pod phase. On a Ready Node a terminated executor whose termination
 message reports `kexec_loaded=0` and the approved `boot_id` is `failed`, even
 if the Node rebooted later for another reason. Otherwise a new boot ID is
-`succeeded`; it proves a reboot, not which kernel booted. A kill, eviction or Pod deadline can stop the
-executor between loading and rebooting, so a terminated executor without that
-proof is not `failed`. Anything else is `interrupted` at expiry or `unknown`
+`succeeded`; it proves a reboot, not which kernel booted. A kill, eviction or
+Pod deadline can stop the executor between loading and rebooting, so a
+terminated executor without that proof is not `failed`. Anything else is `interrupted` at expiry or `unknown`
 at cleanup. Cleanup uncordons the Node only
 when this operation owns the cordon and the outcome is `succeeded` or `failed`,
 or when no executor was created. An unproven reboot leaves the Node cordoned
