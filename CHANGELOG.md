@@ -133,6 +133,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prerequisite escalations afterwards; see
   [the migration guide](docs/debug-session.md#migration-from-escalation-grant-authorization).
 
+- network-debug `net-debug trace` no longer fails complete pwru traces on
+  real 6.x kernels, where detaching thousands of kprobes takes 40-55 seconds.
+  The default `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace rises from 15 to
+  60 seconds (maximum 120), and a forced stop during detach after pwru reached
+  its event limit is accepted only with the exact `count=<events>` marker and
+  exactly that many tuples.
+
 ### Changed
 
 - Reserve fresh Helm chart versions for v0.3.0-rc.9: escalation-config 0.4.2
