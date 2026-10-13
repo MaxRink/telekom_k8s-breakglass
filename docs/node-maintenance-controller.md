@@ -141,7 +141,9 @@ must not be optional or `deleteAfter: false`, must use `failurePolicy: fail`
 (or omit it), and must name a category listed in
 `requiredAuxiliaryResourceCategories`; every required category must contain at
 least one resource. `auxiliaryResourceDefaults`, requester
-`selectedAuxiliaryResources` and binding overrides remain rejected.
+`selectedAuxiliaryResources` and binding overrides remain rejected. The
+resource kind is not restricted, so RBAC on `DebugSessionTemplate` decides who
+may add resources that a maintenance session creates.
 
 The controller renders and creates these resources on the target cluster after
 acquiring the node Lease and before the Job. Templates can bind such a
