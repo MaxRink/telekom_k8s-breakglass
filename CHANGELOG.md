@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The controller serves the `plan`, `apply` and `rollback` stages of platform
+  hotfix sessions: one single-attempt executor Pod per node, canary and batch
+  layout with control-plane nodes one at a time, health gates (node
+  conditions, control-plane Pods, API server `/readyz`) and soak time, a
+  per-cluster and per-node Lease, synchronous critical audit events, the
+  `HotfixRecord` drift record and node annotations. A failed node, a failed
+  gate, a suspended template or an expiring session stops the rollout.
 - API for typed platform hotfix sessions: `DebugSessionTemplate.spec.hotfix`
   (operator profile with payload types, path allowlist, restartable units,
   static Pods, host containers, rollout and lifetime limits, and a `suspended`
