@@ -84,7 +84,7 @@ spec:
                     description: names are exact Node names.
                     items:
                       type: string
-                    maxItems: 5000
+                    maxItems: 1000
                     type: array
                     x-kubernetes-list-type: set
                   selector:

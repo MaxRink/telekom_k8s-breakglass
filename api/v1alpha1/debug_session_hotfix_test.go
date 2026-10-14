@@ -117,6 +117,9 @@ func TestHotfixRequestValidation(t *testing.T) {
 		{"image tag", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
 			r.Payload = &HotfixPayload{Type: HotfixPayloadStaticPodImage, Image: &HotfixImagePayload{StaticPod: "etcd", Image: "registry.k8s.io/etcd:3.6.5"}}
 		}, false},
+		{"image without registry host", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			r.Payload = &HotfixPayload{Type: HotfixPayloadHostContainerImage, Image: &HotfixImagePayload{HostContainer: "cra-vsr", Image: "t-caas/cra-vsr" + hotfixDigest}}
+		}, false},
 		{"image tag plus digest", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
 			r.Payload = &HotfixPayload{Type: HotfixPayloadStaticPodImage, Image: &HotfixImagePayload{StaticPod: "etcd", Image: "registry.k8s.io/etcd:3.6.5" + hotfixDigest}}
 		}, false},

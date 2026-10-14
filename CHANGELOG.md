@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   switch), the `DebugSession.spec.hotfix` stage request
   (plan, apply, rollback, reconfirm, close) and the `HotfixRecord` drift CRD.
   Validation covers digest and SHA-256 pinning, HTTPS sources without
-  credentials, a hard path denylist, sed and unified-diff restrictions,
+  credentials or query strings, a hard path denylist, sed and unified-diff restrictions,
   all-at-once reasons, lifetime caps and the plan-hash binding of apply to a
   reviewed plan. The controller does not serve hotfix sessions yet: it refuses
   hotfix templates at request time and fails such sessions closed. See
