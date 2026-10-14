@@ -11,9 +11,11 @@ package v1alpha1
 // NodeMaintenanceServiceApplyConfiguration represents a declarative configuration of the NodeMaintenanceService type for use
 // with apply.
 //
-// NodeMaintenanceService restarts one allowlisted host systemd unit on a
-// cordoned and drained Node through systemd's private socket. After the helper
-// verified the unit, the controller recreates the listed Pods on that Node
+// NodeMaintenanceService bounds a host action that the helper runs through
+// systemd's private socket on a cordoned and drained Node: service-restart
+// restarts one allowlisted unit, sriov-reprovision runs the fixed netplan
+// SR-IOV commands. After the helper verified the action, the controller
+// recreates the listed Pods on that Node
 // (for example a network agent that must re-apply its configuration to a
 // restarted router container) and requires the Node and each replacement to
 // be Ready before it reports success and uncordons the Node.

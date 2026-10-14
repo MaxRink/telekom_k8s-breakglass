@@ -29,8 +29,9 @@ type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// kexec pins the provider recovery bundle for a kexec-recovery profile.
 	// It is required for kexec-recovery and forbidden for every other action.
 	Kexec *NodeMaintenanceKexecApplyConfiguration `json:"kexec,omitempty"`
-	// service bounds a service-restart profile. It is required for
-	// service-restart and forbidden for every other action.
+	// service bounds a drained host action that runs through systemd. It is
+	// required for service-restart and sriov-reprovision and forbidden for
+	// every other action.
 	Service *NodeMaintenanceServiceApplyConfiguration `json:"service,omitempty"`
 }
 

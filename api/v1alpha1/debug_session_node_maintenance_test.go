@@ -404,3 +404,47 @@ func TestNodeMaintenanceModuleLoadIsModuleOnly(t *testing.T) {
 	withModule := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service", Module: "gre"}
 	require.Error(t, ValidateNodeMaintenanceTarget(NodeMaintenanceActionServiceRestart, &withModule))
 }
+
+func TestNodeMaintenanceSRIOVReprovisionIsPFAndCountOnly(t *testing.T) {
+	image := "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64)
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "ens1f0", VirtualFunctions: kptr.To(int32(8))}
+	profile := &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionSRIOVReprovision, Image: image,
+		AllowedTargets: []NodeMaintenanceTarget{target}, Service: &NodeMaintenanceService{DrainTimeoutSeconds: 60}}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile, &target))
+	for _, change := range []struct {
+		name   string
+		mutate func(*NodeMaintenanceTarget)
+	}{
+		{"other PF", func(v *NodeMaintenanceTarget) { v.Interface = "ens1f1" }},
+		{"other count", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = kptr.To(int32(4)) }},
+		{"no count", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = nil }},
+		{"zero count", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = kptr.To(int32(0)) }},
+		{"count over 256", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = kptr.To(int32(257)) }},
+		{"no PF", func(v *NodeMaintenanceTarget) { v.Interface = "" }},
+		{"dot PF", func(v *NodeMaintenanceTarget) { v.Interface = ".." }},
+		{"option-like PF", func(v *NodeMaintenanceTarget) { v.Interface = "-h" }},
+		{"PF with space", func(v *NodeMaintenanceTarget) { v.Interface = "ens1f0 x" }},
+		{"unit", func(v *NodeMaintenanceTarget) { v.Unit = "kubelet.service" }},
+		{"module", func(v *NodeMaintenanceTarget) { v.Module = "igb" }},
+		{"MAC", func(v *NodeMaintenanceTarget) { v.EntryMAC = "02:00:00:00:00:02" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			request := *target.DeepCopy()
+			change.mutate(&request)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile, &request))
+		})
+	}
+	preview := profile.DeepCopy()
+	preview.DryRun = true
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(preview, &target), "no preview")
+	noBounds := profile.DeepCopy()
+	noBounds.Service = nil
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(noBounds, &target), "drainTimeoutSeconds")
+	// The count belongs only to sriov-reprovision.
+	withCount := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service", VirtualFunctions: kptr.To(int32(8))}
+	require.ErrorContains(t, ValidateNodeMaintenanceTarget(NodeMaintenanceActionServiceRestart, &withCount), "virtualFunctions")
+	// The service bounds belong only to the systemd actions.
+	module := &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionModuleLoad, Image: image, Service: &NodeMaintenanceService{DrainTimeoutSeconds: 60},
+		AllowedTargets: []NodeMaintenanceTarget{{TargetNode: "node-a", TargetNodeUID: "node-uid", Module: "igb"}}}
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(module, &module.AllowedTargets[0]), "service-restart and sriov-reprovision")
+}

@@ -36,6 +36,7 @@ preflight="$root_dir/lib/node-recovery-preflight.sh"
 kexec_validate="$root_dir/lib/kexec-recovery-validate.sh"
 service_restart="$root_dir/lib/service-restart.sh"
 module_load="$root_dir/lib/module-load.sh"
+sriov_reprovision="$root_dir/lib/sriov-reprovision.sh"
 
 assert_neighbor_literal_accepted() {
 	address=$1
@@ -319,5 +320,32 @@ assert_rejected 'module-load requires a module-load approval' "controller-approv
 	module_env service-restart "$module_tuple" ip6_gre MODULE-LOAD
 assert_rejected 'module-load approval is bound to the exact module' 'controller-approved module request does not exactly match the requested tuple' \
 	module_env module-load "$module_tuple" gre MODULE-LOAD
+
+# sriov-reprovision: exact PF and approved VF count, its own confirmation, action and tuple binding.
+sriov_env() {
+	env BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+		BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION="$1" \
+		BREAKGLASS_APPROVED_SRIOV_REQUEST="$2" "$sriov_reprovision" \
+		--target-node node-a --interface "$3" --virtual-functions "$4" --evidence-dir /evidence --confirm "$5"
+}
+sriov_tuple='target_node=node-a&interface=ens1f0&virtual_functions=8&confirmation=SRIOV-REPROVISION'
+assert_rejected 'sriov-reprovision rejects an interface with unsupported characters' 'interface contains unsupported characters' \
+	sriov_env sriov-reprovision "$sriov_tuple" 'ens1f0 x' 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects a dot PF' "interface '..' is not a PF name" sriov_env sriov-reprovision "$sriov_tuple" .. 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects an option-like PF' "interface '-h' is not a PF name" sriov_env sriov-reprovision "$sriov_tuple" -h 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects a zero VF count' 'must be a positive integer' sriov_env sriov-reprovision "$sriov_tuple" ens1f0 0 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects a leading zero' 'must be a positive integer' sriov_env sriov-reprovision "$sriov_tuple" ens1f0 08 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects more than 256 VFs' 'must not exceed 256' sriov_env sriov-reprovision "$sriov_tuple" ens1f0 257 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision requires its own confirmation' "confirmation must be exactly 'SRIOV-REPROVISION'" \
+	sriov_env sriov-reprovision "$sriov_tuple" ens1f0 8 SERVICE-RESTART
+assert_rejected 'sriov-reprovision requires a sriov-reprovision approval' "controller-approved action 'service-restart' does not match requested action 'sriov-reprovision'" \
+	sriov_env service-restart "$sriov_tuple" ens1f0 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision approval is bound to the exact PF' 'controller-approved SR-IOV request does not exactly match the requested tuple' \
+	sriov_env sriov-reprovision "$sriov_tuple" ens1f1 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision approval is bound to the exact VF count' 'controller-approved SR-IOV request does not exactly match the requested tuple' \
+	sriov_env sriov-reprovision "$sriov_tuple" ens1f0 4 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects duplicate options' '--interface may be supplied only once' \
+	"$sriov_reprovision" --target-node node-a --interface ens1f0 --interface ens1f1 --virtual-functions 8 \
+	--evidence-dir /evidence --confirm SRIOV-REPROVISION
 
 printf 'PASS: node-maintenance fast behavioral guards completed\n'

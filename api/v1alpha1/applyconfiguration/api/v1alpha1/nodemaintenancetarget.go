@@ -41,6 +41,11 @@ type NodeMaintenanceTargetApplyConfiguration struct {
 	// module is the exact kernel module name for module-load and forbidden
 	// for every other action. Each allowlist entry names one module.
 	Module *string `json:"module,omitempty"`
+	// virtualFunctions is the exact number of SR-IOV virtual functions that
+	// the node's netplan configuration creates on the physical function named
+	// by interface. It is required for sriov-reprovision and forbidden for
+	// every other action.
+	VirtualFunctions *int32 `json:"virtualFunctions,omitempty"`
 }
 
 // NodeMaintenanceTargetApplyConfiguration constructs a declarative configuration of the NodeMaintenanceTarget type for use with
@@ -126,5 +131,13 @@ func (b *NodeMaintenanceTargetApplyConfiguration) WithUnit(value string) *NodeMa
 // If called multiple times, the Module field is set to the value of the last call.
 func (b *NodeMaintenanceTargetApplyConfiguration) WithModule(value string) *NodeMaintenanceTargetApplyConfiguration {
 	b.Module = &value
+	return b
+}
+
+// WithVirtualFunctions sets the VirtualFunctions field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the VirtualFunctions field is set to the value of the last call.
+func (b *NodeMaintenanceTargetApplyConfiguration) WithVirtualFunctions(value int32) *NodeMaintenanceTargetApplyConfiguration {
+	b.VirtualFunctions = &value
 	return b
 }
