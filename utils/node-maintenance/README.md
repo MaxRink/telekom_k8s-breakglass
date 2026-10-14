@@ -219,7 +219,7 @@ It has two runtime shapes, chosen by the controller:
 
 | Shape | Used for | Contract |
 |---|---|---|
-| Mount-only | `node-file` without restarts | Not privileged, read-only root, capabilities `CHOWN`, `FOWNER`, `DAC_OVERRIDE` only. The target's parent directory is mounted at `/host<dir>` and `/var/lib/breakglass-hotfix` at `/host/var/lib/breakglass-hotfix` (`BREAKGLASS_HOST_ROOT=/host`). |
+| Mount-only | `node-file` without restarts | Not privileged, read-only root, capabilities `CHOWN`, `FOWNER`, `DAC_OVERRIDE` only. The target's parent directory is mounted at `/host<dir>` and `/var/lib/breakglass-hotfix` at `/host/var/lib/breakglass-hotfix` (`BREAKGLASS_HOST_ROOT=/host`); for a `url` source also `/etc/ssl/certs` read-only, for the node CA bundle. |
 | Host namespace | `node-deb`, `static-pod-image`, `host-container-image`, any restart | Privileged with host PID. Host tools (`dpkg`, `systemctl`, `crictl`, `ctr`, `nerdctl`) run through `nsenter -t 1` (`BREAKGLASS_HOST_EXEC=nsenter`, `BREAKGLASS_HOST_ROOT=/proc/1/root`). A deb hotfix is root code execution on the node; the four-eyes plan review, pinning and allowlists are the controls. |
 
 Safety rules of the executor:
@@ -258,6 +258,14 @@ Safety rules of the executor:
   ignore SIGTERM; the controller sets the Pod grace period to the remaining
   deadline. No hotfix step runs under the 10 s capture timeout of the shell
   helpers.
+
+Plan `nodeDeadlineSeconds` per payload type: a file change needs a few
+seconds; a deb apply needs the downloads (up to 5 min each), up to 10 min for
+dpkg, 1 min for `dpkg --audit` and 2 min per restart; a static Pod needs 5 min
+for the pull and 5 min to come back; a host container needs 5 min for the pull
+and 3 min for the restart. A step that does not fit the remaining time is
+never started. Pulls use `/etc/containerd/certs.d` as the containerd hosts
+directory.
 
 `make test` runs the executor's unit tests (requires GNU sed).
 `make hotfix-image` runs the mount-only shape of the real image against a

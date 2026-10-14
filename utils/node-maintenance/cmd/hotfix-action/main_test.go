@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -60,7 +61,7 @@ func (f *fakeHost) run(_ context.Context, env []string, stdin []byte, name strin
 func newTestExecutor(t *testing.T, hostExec bool) (*executor, *fakeHost) {
 	t.Helper()
 	fake := &fakeHost{answers: map[string]string{}, fail: map[string]bool{}}
-	ex := &executor{root: t.TempDir(), hostExec: hostExec, work: t.TempDir(), run: fake.run, now: time.Now}
+	ex := &executor{root: t.TempDir(), hostExec: hostExec, work: t.TempDir(), run: fake.run, now: time.Now, poll: time.Millisecond}
 	return ex, fake
 }
 
@@ -440,14 +441,14 @@ func TestEtcdSwapRequiresQuorum(t *testing.T) {
 	req := &request{Stage: stageApply, HotfixID: "hf-4", DeadlineUnix: time.Now().Add(time.Hour).Unix(),
 		Payload:  payload{Type: payloadStaticPod, Image: &imagePayload{StaticPod: "etcd", Image: image}},
 		Expected: &expected{BeforeSHA256: sum([]byte(manifest)), AfterSHA256: sum(updated)}}
-	fake.answers["crictl ps --name ^etcd$ --state running -q"] = "e1\n"
+	fake.answers["crictl ps --name ^etcd$"] = "e1\n"
 	fake.answers["crictl exec e1 etcdctl"] = ""
 	fake.onCall = func(call string) {
 		if strings.HasSuffix(call, "member list") {
-			fake.answers["crictl exec e1 etcdctl"] = `{"members":[{},{},{}]}`
+			fake.answers["crictl exec e1 etcdctl"] = `{"members":[{"ID":1},{"ID":2},{"ID":3}]}`
 		}
 		if strings.HasSuffix(call, "endpoint status --cluster") {
-			fake.answers["crictl exec e1 etcdctl"] = `[{"Endpoint":"a","Status":{"leader":7}},{"Endpoint":"b","Status":{"leader":7}}]`
+			fake.answers["crictl exec e1 etcdctl"] = `[{"Endpoint":"a","Status":{"header":{"member_id":1},"leader":7}},{"Endpoint":"b","Status":{"header":{"member_id":2},"leader":7}}]`
 		}
 	}
 	if _, err := ex.execute(req); err == nil || !strings.Contains(err.Error(), "quorum") {
@@ -521,5 +522,166 @@ func TestRequestValidation(t *testing.T) {
 	}
 	if err := validateRequest(base()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// stageDebs writes the debs of req as a plan would have downloaded them.
+func stageTestDebs(t *testing.T, ex *executor, fake *fakeHost, req *request, debs []deb) {
+	t.Helper()
+	require(t, os.MkdirAll(ex.host("/usr/sbin"), 0o755))
+	for i := range debs {
+		debs[i].SHA256 = sum([]byte("deb-" + debs[i].Package + debs[i].Version))
+		writeHost(t, ex, ex.debPath(req, debs[i]), "deb-"+debs[i].Package+debs[i].Version)
+		fake.answers["dpkg-deb -f "+ex.debPath(req, debs[i])] = fmt.Sprintf("Package: %s\nVersion: %s\n", debs[i].Package, debs[i].Version)
+	}
+}
+
+func TestDebInstallFailureRestoresPolicyRC(t *testing.T) {
+	ex, fake := newTestExecutor(t, true)
+	req := debRequest(stageApply)
+	req.Payload.Debs = req.Payload.Debs[:1]
+	stageTestDebs(t, ex, fake, req, req.Payload.Debs)
+	writeHost(t, ex, policyRC, "#!/bin/sh\nexit 0\n")
+	fake.answers["findmnt"] = "rw"
+	fake.answers["dpkg-query -W -f=${db:Status-Abbrev} ${Version} openssh-server"] = "ii  1:9.6p1-3ubuntu13.5"
+	fake.fail["dpkg --force-hold"] = true
+	before := packageState(req.Payload.Debs, func(deb) string { return "1:9.6p1-3ubuntu13.5" })
+	req.Expected = &expected{BeforeSHA256: before, AfterSHA256: packageState(req.Payload.Debs, func(d deb) string { return d.Version })}
+	if _, err := ex.execute(req); err == nil || !strings.Contains(err.Error(), "dpkg --configure -a") {
+		t.Fatalf("expected install failure with recovery hint, got %v", err)
+	}
+	if readHost(t, ex, policyRC) != "#!/bin/sh\nexit 0\n" {
+		t.Fatal("the previous policy-rc.d must be restored after a failed install")
+	}
+}
+
+func TestLeftoverPolicyRCIsRecovered(t *testing.T) {
+	ex, _ := newTestExecutor(t, true)
+	writeHost(t, ex, policyRC, "#!/bin/sh\n"+policyRCMarker+"\nexit 101\n")
+	writeHost(t, ex, policyRCNone, "")
+	require(t, ex.recoverServiceStarts())
+	if _, err := os.Stat(ex.host(policyRC)); !os.IsNotExist(err) {
+		t.Fatal("a policy-rc.d left by a killed executor must be removed")
+	}
+}
+
+func TestDebRollbackPurgesAndVerifies(t *testing.T) {
+	ex, fake := newTestExecutor(t, true)
+	req := debRequest(stageRollback)
+	old := deb{URL: "https://mirror.example/openssh-old.deb", Package: "openssh-server", Version: "1:9.6p1-3ubuntu13.5"}
+	req.Payload.RollbackDebs = []deb{old}
+	stageTestDebs(t, ex, fake, req, req.Payload.RollbackDebs)
+	fake.answers["findmnt"] = "rw"
+	state := "applied"
+	fake.onCall = func(call string) {
+		switch {
+		case strings.HasPrefix(call, "dpkg --force-hold --force-confold --force-downgrade -i"):
+			state = "downgraded"
+		case call == "dpkg --purge libnew1":
+			state = "purged"
+		}
+		ssh, lib := "ii  1:9.6p1-3ubuntu13.99", "ii  2.0-1"
+		if state != "applied" {
+			ssh = "ii  1:9.6p1-3ubuntu13.5"
+		}
+		if state == "purged" {
+			lib = "rc  2.0-1"
+		}
+		fake.answers["dpkg-query -W -f=${db:Status-Abbrev} ${Version} openssh-server"] = ssh
+		fake.answers["dpkg-query -W -f=${db:Status-Abbrev} ${Version} libnew1"] = lib
+	}
+	before := packageState(req.Payload.Debs, func(d deb) string {
+		if d.Package == "openssh-server" {
+			return "1:9.6p1-3ubuntu13.5"
+		}
+		return ""
+	})
+	after := packageState(req.Payload.Debs, func(d deb) string { return d.Version })
+	req.Expected = &expected{BeforeSHA256: before, AfterSHA256: after, NewPackages: []string{"libnew1"}}
+	out, err := ex.execute(req)
+	require(t, err)
+	if out.Result != "rolledBack" || state != "purged" {
+		t.Fatalf("rollback %+v state %s", out, state)
+	}
+
+	// Without rollbackDebs an upgraded package stays; rollback must not claim success.
+	ex2, fake2 := newTestExecutor(t, true)
+	req2 := debRequest(stageRollback)
+	req2.Payload.Debs = req2.Payload.Debs[:1]
+	fake2.answers["findmnt"] = "rw"
+	fake2.answers["dpkg-query -W -f=${db:Status-Abbrev} ${Version} openssh-server"] = "ii  1:9.6p1-3ubuntu13.99"
+	req2.Expected = &expected{BeforeSHA256: packageState(req2.Payload.Debs, func(deb) string { return "1:9.6p1-3ubuntu13.5" }),
+		AfterSHA256: packageState(req2.Payload.Debs, func(d deb) string { return d.Version })}
+	if _, err := ex2.execute(req2); err == nil || !strings.Contains(err.Error(), "replace the node") {
+		t.Fatalf("expected a verified rollback failure, got %v", err)
+	}
+}
+
+func TestDpkgQueryFailureIsNotAbsence(t *testing.T) {
+	ex, fake := newTestExecutor(t, true)
+	fake.fail["dpkg-query"] = true
+	if _, err := ex.execute(debRequest(stagePlan)); err == nil || !strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("a failing dpkg-query must fail the plan, got %v", err)
+	}
+}
+
+func TestHostContainerRollbackUsesRunningImage(t *testing.T) {
+	ex, fake := newTestExecutor(t, true)
+	writeHost(t, ex, "/etc/cra/image", "cit-t-caas-oci/images/t-caas/cra-vsr-6wind-ubi:3.12.3.1\n")
+	image := "registry.example/t-caas/cra-vsr" + digest
+	c := &hostContainer{Name: "cra-vsr", ContainerdNamespace: "hbr", Unit: "cra.service", ImageRefFile: "/etc/cra/image"}
+	req := &request{Stage: stagePlan, HotfixID: "hf-6", DeadlineUnix: time.Now().Add(time.Hour).Unix(), HostContainer: c,
+		Payload: payload{Type: payloadHostContainer, Image: &imagePayload{HostContainer: "cra-vsr", Image: image}}}
+	plan, err := ex.execute(req)
+	require(t, err)
+	normalized := "docker.io/cit-t-caas-oci/images/t-caas/cra-vsr-6wind-ubi:3.12.3.1"
+	running := normalized
+	fake.onCall = func(call string) {
+		if strings.HasPrefix(call, "systemctl restart cra.service") {
+			content := readHost(t, ex, "/etc/cra/image")
+			if strings.HasPrefix(content, "registry.example") {
+				running = image
+			} else {
+				running = normalized
+			}
+		}
+		fake.answers["nerdctl --namespace hbr inspect"] = running + " true\n"
+	}
+	req.Stage = stageApply
+	req.Expected = &expected{BeforeSHA256: plan.BeforeSHA256, AfterSHA256: plan.AfterSHA256}
+	_, err = ex.execute(req)
+	require(t, err)
+	req.Stage = stageRollback
+	out, err := ex.execute(req)
+	require(t, err)
+	if out.Result != "rolledBack" || running != normalized {
+		t.Fatalf("rollback %+v running %s", out, running)
+	}
+}
+
+func TestStaticPodWaitTimesOut(t *testing.T) {
+	ex, fake := newTestExecutor(t, true)
+	base := time.Now()
+	calls := 0
+	ex.now = func() time.Time { calls++; return base.Add(time.Duration(calls) * time.Second) }
+	ex.deadline = base.Add(time.Hour)
+	fake.answers["crictl ps"] = `{"containers":[{"id":"c1","imageRef":"sha256:old"}]}`
+	if err := ex.waitStaticPod("kube-apiserver", "sha256:new", digest, time.Minute); err == nil {
+		t.Fatal("waiting must time out when the old image keeps running")
+	}
+	fake.answers["crictl ps"] = `{"containers":[{"id":"c1","imageRef":"registry.k8s.io/kube-apiserver` + digest + `"}]}`
+	require(t, ex.waitStaticPod("kube-apiserver", "sha256:new", digest, time.Minute))
+}
+
+func TestResultFitsTerminationMessage(t *testing.T) {
+	out := &result{Result: "planned", Diff: strings.Repeat("<&>\"", 2500), Message: strings.Repeat("x", 3000), BeforeSHA256: strings.Repeat("a", 64)}
+	data := fitResult(out)
+	if len(data) > maxResultBytes {
+		t.Fatalf("result is %d bytes", len(data))
+	}
+	var parsed result
+	require(t, json.Unmarshal(data, &parsed))
+	if parsed.BeforeSHA256 != strings.Repeat("a", 64) || !strings.Contains(parsed.Diff, "[truncated]") {
+		t.Fatalf("hashes must survive and the diff must be marked truncated: %+v", parsed)
 	}
 }
