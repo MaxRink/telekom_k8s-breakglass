@@ -10,8 +10,9 @@ WORKDIR /src
 COPY cmd/network-action/ ./
 RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
       go build -trimpath -ldflags='-s -w' -o /out/network-action .
-COPY cmd/service-action/ /src-service-action/
-RUN cd /src-service-action && CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+WORKDIR /src-service-action
+COPY cmd/service-action/ ./
+RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
       go build -trimpath -ldflags='-s -w' -o /out/service-action .
 
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kexec-action-builder
