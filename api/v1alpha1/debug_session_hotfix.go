@@ -374,18 +374,21 @@ type HotfixPlan struct {
 	// rollout is the effective rollout with defaults applied.
 	Rollout HotfixRollout `json:"rollout"`
 	// lifetime is the effective lifetime.
-	Lifetime string `json:"lifetime"`
+	// +optional
+	Lifetime string `json:"lifetime,omitempty"`
 	// fixedIn names the regular release that will contain the fix.
-	FixedIn string `json:"fixedIn"`
+	// +optional
+	FixedIn string `json:"fixedIn,omitempty"`
 	// diffs are the distinct reviewed changes, one per pre-image hash.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +listType=atomic
 	Diffs []HotfixPlannedDiff `json:"diffs,omitempty"`
-	// nodes are the planned nodes in batch order.
+	// nodes are the planned nodes in batch order. A plan in progress has none yet.
+	// +optional
 	// +kubebuilder:validation:MaxItems=1000
 	// +listType=atomic
-	Nodes []HotfixPlannedNode `json:"nodes"`
+	Nodes []HotfixPlannedNode `json:"nodes,omitempty"`
 }
 
 // HotfixPlannedDiff is one reviewed change shared by all nodes with the same pre-image.
@@ -1097,7 +1100,7 @@ func ValidateHotfixPlanBinding(profile *DebugSessionHotfix, apply *DebugSession,
 		return fmt.Errorf("plan targets another cluster or template")
 	}
 	status := plan.Status.Hotfix
-	if status == nil || status.Plan == nil || status.PlannedAt == nil {
+	if status == nil || status.Plan == nil || status.PlannedAt == nil || len(status.Plan.Nodes) == 0 {
 		return fmt.Errorf("plan has not succeeded")
 	}
 	if now.Sub(status.PlannedAt.Time) > HotfixPlanValidity || now.Before(status.PlannedAt.Time) {

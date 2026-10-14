@@ -456,6 +456,7 @@ func TestHotfixPlanBinding(t *testing.T) {
 		"not a plan":       func(p *DebugSession) { p.Spec.Hotfix.Stage = HotfixStageApply },
 		"other name":       func(p *DebugSession) { p.Name = "plan-2" },
 		"other namespace":  func(p *DebugSession) { p.Namespace = "other" },
+		"no nodes":         func(p *DebugSession) { p.Status.Hotfix.Plan.Nodes = nil },
 		"tampered hash":    func(p *DebugSession) { p.Status.Hotfix.PlanHash = strings.Repeat("1", 64) },
 		"already applied":  func(p *DebugSession) { p.Status.Hotfix.AppliedBy = "apply-0" },
 	} {
