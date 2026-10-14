@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,6 +130,7 @@ func main() {
 		work:     envOr("BREAKGLASS_EVIDENCE_DIR", "/evidence"),
 		run:      runCommand,
 		now:      time.Now,
+		poll:     5 * time.Second,
 	}
 	out, err := ex.execute(&req)
 	if err != nil {
@@ -149,13 +151,41 @@ func fail(err error) {
 	os.Exit(1)
 }
 
-// report writes the result to the termination message, which the controller
-// reads from the Pod status, and to stdout for the evidence log.
-func report(out *result) {
+// maxResultBytes keeps the result inside the 4096-byte termination message.
+const maxResultBytes = 3800
+
+func encodeResult(out *result) []byte {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(out)
+	return bytes.TrimSpace(buf.Bytes())
+}
+
+// fitResult shortens the review diff, then the message, until the encoded
+// result fits; JSON escaping can grow both well beyond their raw size.
+func fitResult(out *result) []byte {
 	if len(out.Message) > 1000 {
 		out.Message = out.Message[:1000]
 	}
-	data, _ := json.Marshal(out)
+	data := encodeResult(out)
+	diff := out.Diff
+	for len(data) > maxResultBytes && diff != "" {
+		diff = diff[:len(diff)/2]
+		out.Diff = diff + "\n[truncated]\n"
+		data = encodeResult(out)
+	}
+	for len(data) > maxResultBytes && out.Message != "" {
+		out.Message = out.Message[:len(out.Message)/2]
+		data = encodeResult(out)
+	}
+	return data
+}
+
+// report writes the result to the termination message, which the controller
+// reads from the Pod status, and to stdout for the evidence log.
+func report(out *result) {
+	data := fitResult(out)
 	_ = os.WriteFile(envOr("BREAKGLASS_TERMINATION_LOG", "/dev/termination-log"), data, 0o600)
 	fmt.Println(string(data))
 }

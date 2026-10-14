@@ -25,17 +25,18 @@ var (
 	sha256Pattern  = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	packagePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]{1,62}$`)
 	versionPattern = regexp.MustCompile(`^[0-9A-Za-z.+~:-]{1,128}$`)
-	imagePattern   = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]*[a-z0-9])?(:[0-9]{1,5})?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}$`)
+	imagePattern   = regexp.MustCompile(`^((localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:[0-9]{1,5})?|[a-z0-9-]+:[0-9]{1,5})(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}$`)
 	pathPattern    = regexp.MustCompile(`^/[A-Za-z0-9._@+/-]*$`)
 	unitPattern    = regexp.MustCompile(`^[a-zA-Z0-9@_.-]{1,240}\.service$`)
 	labelPattern   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-	sedPattern     = regexp.MustCompile(`^s[^\\a-zA-Z0-9 \n\r]`)
+	nsPattern      = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+	sedFlags       = regexp.MustCompile(`^[gI0-9]*$`)
 )
 
 var staticPods = []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd"}
 var services = []string{"containerd.service", "kubelet.service", "ssh.service", "chrony.service", "systemd-networkd.service"}
 
-func deniedPrefixes() []string {
+var deniedPrefixes = func() []string {
 	var prefixes []string
 	for _, line := range strings.Split(denylistText, "\n") {
 		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
@@ -43,10 +44,10 @@ func deniedPrefixes() []string {
 		}
 	}
 	return prefixes
-}
+}()
 
 func pathDenied(p string) bool {
-	for _, prefix := range deniedPrefixes() {
+	for _, prefix := range deniedPrefixes {
 		if strings.HasPrefix(p, prefix) || p+"/" == prefix {
 			return true
 		}
@@ -77,7 +78,7 @@ func pathAllowed(allowed []string, p string) bool {
 
 func validateURL(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery {
+	if err != nil || len(raw) > 2048 || strings.ContainsAny(raw, " \t\r\n") || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery {
 		return fmt.Errorf("url %q must be https without credentials, query or fragment", raw)
 	}
 	return nil
@@ -141,8 +142,8 @@ func validateRequest(req *request) error {
 				return errors.New("sed needs expressions")
 			}
 			for _, expression := range f.SedExpressions {
-				if !sedPattern.MatchString(expression) || strings.ContainsAny(expression, "\n\r\x00") {
-					return fmt.Errorf("sed expression %q must be one s command", expression)
+				if err := validateSed(expression); err != nil {
+					return err
 				}
 			}
 		case "diff":
@@ -172,7 +173,8 @@ func validateRequest(req *request) error {
 	case payloadHostContainer:
 		c := req.HostContainer
 		if p.Image == nil || c == nil || p.Image.HostContainer != c.Name || !imagePattern.MatchString(p.Image.Image) ||
-			!labelPattern.MatchString(c.Name) || !labelPattern.MatchString(c.ContainerdNamespace) || c.ContainerdNamespace == "k8s.io" ||
+			!labelPattern.MatchString(c.Name) || !nsPattern.MatchString(c.ContainerdNamespace) ||
+			c.ContainerdNamespace == "k8s.io" || c.ContainerdNamespace == "moby" ||
 			!unitPattern.MatchString(c.Unit) || p.File != nil || len(p.Debs) != 0 || len(p.Restart) != 0 {
 			return errors.New("host-container-image needs the profile host container and a digest-pinned image")
 		}
@@ -190,4 +192,33 @@ func expectedPackages(req *request) []string {
 		return nil
 	}
 	return req.Expected.NewPackages
+}
+
+// validateSed accepts one s command with the flags g, I and a number, like
+// the API. GNU sed --sandbox additionally rejects e, r and w at run time.
+func validateSed(expression string) error {
+	if len(expression) < 4 || len(expression) > 1024 || expression[0] != 's' || strings.ContainsAny(expression, "\n\r\x00") {
+		return fmt.Errorf("sed expression %q must be a single-line s command", expression)
+	}
+	delimiter := expression[1]
+	if delimiter == '\\' || delimiter == ' ' || (delimiter >= 'a' && delimiter <= 'z') ||
+		(delimiter >= 'A' && delimiter <= 'Z') || (delimiter >= '0' && delimiter <= '9') {
+		return fmt.Errorf("sed expression %q has an invalid delimiter", expression)
+	}
+	parts, escaped, rest := 0, false, 2
+	for i := 2; i < len(expression) && parts < 2; i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case expression[i] == '\\':
+			escaped = true
+		case expression[i] == delimiter:
+			parts++
+			rest = i + 1
+		}
+	}
+	if parts != 2 || !sedFlags.MatchString(expression[rest:]) {
+		return fmt.Errorf("sed expression %q must be s<d>regex<d>replacement<d>[gI0-9]", expression)
+	}
+	return nil
 }

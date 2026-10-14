@@ -69,8 +69,11 @@ func (ex *executor) restart(units []string) error {
 			return err
 		}
 		out, err := ex.hostStep(10*time.Second, nil, "systemctl", "is-active", unit)
-		if err != nil || strings.TrimSpace(string(out)) != "active" {
+		if err != nil {
 			return fmt.Errorf("%s is not active after restart: %w", unit, err)
+		}
+		if state := strings.TrimSpace(string(out)); state != "active" {
+			return fmt.Errorf("%s is %q after restart", unit, state)
 		}
 	}
 	return nil
@@ -83,7 +86,7 @@ func (ex *executor) debPath(req *request, d deb) string {
 }
 
 // stageDebs downloads each deb into the hotfix state directory, or reuses a
-// file with the pinned hash.
+// file with the pinned hash, and checks its control fields.
 func (ex *executor) stageDebs(req *request, debs []deb) ([]string, error) {
 	if err := os.MkdirAll(ex.host(path.Join(stateDir, req.HotfixID, "debs")), 0o700); err != nil {
 		return nil, err
@@ -91,12 +94,8 @@ func (ex *executor) stageDebs(req *request, debs []deb) ([]string, error) {
 	var paths []string
 	for _, d := range debs {
 		p := ex.debPath(req, d)
-		if data, err := os.ReadFile(ex.host(p)); err != nil || sum(data) != d.SHA256 {
-			data, err := ex.fetch(d.URL, d.SHA256)
-			if err != nil {
-				return nil, err
-			}
-			if err := os.WriteFile(ex.host(p), data, 0o600); err != nil {
+		if got, err := fileSHA256(ex.host(p)); err != nil || got != d.SHA256 {
+			if err := ex.fetchToFile(d.URL, d.SHA256, ex.host(p), 1<<30); err != nil {
 				return nil, err
 			}
 		}
@@ -118,10 +117,19 @@ func (ex *executor) installed(debs []deb) (map[string]string, error) {
 	versions := map[string]string{}
 	for _, d := range debs {
 		out, err := ex.hostStep(30*time.Second, nil, "dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", d.Package)
+		if err != nil {
+			// Only an unknown package is absent; any other failure must not
+			// make rollback purge a package that was installed before.
+			if strings.Contains(err.Error(), "no packages found matching") {
+				versions[d.Package] = ""
+				continue
+			}
+			return nil, err
+		}
 		fields := strings.Fields(string(out))
 		// The second status letter is the current state; "i" is installed
-		// (also for held packages, "hi").
-		if err == nil && len(fields) == 2 && len(fields[0]) >= 2 && fields[0][1] == 'i' {
+		// (also for held packages, "hi"); "rc" leftovers count as absent.
+		if len(fields) == 2 && len(fields[0]) >= 2 && fields[0][1] == 'i' {
 			versions[d.Package] = fields[1]
 		} else {
 			versions[d.Package] = ""
@@ -139,7 +147,12 @@ func packageState(debs []deb, version func(deb) string) string {
 	return sum([]byte(b.String()))
 }
 
-func (ex *executor) usrWritable() error {
+// debPreflight refuses read-only /usr and an already broken dpkg database,
+// so the plan fails instead of the apply after a change.
+func (ex *executor) debPreflight(audit bool) error {
+	if err := ex.recoverServiceStarts(); err != nil {
+		return err
+	}
 	out, err := ex.hostStep(10*time.Second, nil, "findmnt", "-n", "-o", "OPTIONS", "--target", "/usr")
 	if err != nil {
 		return err
@@ -147,7 +160,28 @@ func (ex *executor) usrWritable() error {
 	if slices.Contains(strings.Split(strings.TrimSpace(string(out)), ","), "ro") {
 		return errors.New("/usr is read-only on this node; deb payloads are not supported here")
 	}
+	if !audit {
+		return nil
+	}
+	return ex.dpkgAudit("before the change")
+}
+
+func (ex *executor) dpkgAudit(when string) error {
+	out, err := ex.hostStep(time.Minute, nil, "dpkg", "--audit")
+	if err != nil {
+		return fmt.Errorf("dpkg --audit %s: %w", when, err)
+	}
+	if text := strings.TrimSpace(string(out)); text != "" {
+		return fmt.Errorf("dpkg --audit reports problems %s: %s", when, truncateText(text, 300))
+	}
 	return nil
+}
+
+func truncateText(text string, limit int) string {
+	if len(text) > limit {
+		return text[:limit]
+	}
+	return text
 }
 
 func (ex *executor) debs(req *request) (*result, error) {
@@ -169,7 +203,7 @@ func (ex *executor) debs(req *request) (*result, error) {
 		if before == target {
 			return &result{Result: "planned", Action: "skip", BeforeSHA256: before, AfterSHA256: target}, nil
 		}
-		if err := ex.usrWritable(); err != nil {
+		if err := ex.debPreflight(true); err != nil {
 			return nil, err
 		}
 		paths, err := ex.stageDebs(req, debs)
@@ -192,17 +226,14 @@ func (ex *executor) debs(req *request) (*result, error) {
 		if before != req.Expected.BeforeSHA256 || target != req.Expected.AfterSHA256 {
 			return nil, errors.New("installed package versions changed since the plan")
 		}
-		if err := ex.usrWritable(); err != nil {
+		if err := ex.debPreflight(true); err != nil {
 			return nil, err
 		}
 		paths, err := ex.stageDebs(req, debs)
 		if err != nil {
 			return nil, err
 		}
-		if err := ex.dpkgInstall(debs, paths); err != nil {
-			return nil, err
-		}
-		if err := ex.verifyDebs(debs, func(d deb) string { return d.Version }); err != nil {
+		if err := ex.dpkgInstall(req, debs, paths, false); err != nil {
 			return nil, err
 		}
 		if err := ex.restart(req.Payload.Restart); err != nil {
@@ -218,31 +249,36 @@ func (ex *executor) debs(req *request) (*result, error) {
 // dpkgInstall installs debs in one transaction. policy-rc.d stops maintainer
 // scripts from (re)starting services; --force-hold keeps held packages
 // installable, and their holds are re-asserted afterwards.
-func (ex *executor) dpkgInstall(debs []deb, paths []string) error {
-	if err := ex.fits(10 * time.Minute); err != nil {
+func (ex *executor) dpkgInstall(req *request, debs []deb, paths []string, downgrade bool) error {
+	if err := ex.fits(12 * time.Minute); err != nil {
 		return err
 	}
 	held, err := ex.heldPackages(debs)
 	if err != nil {
 		return err
 	}
-	restorePolicy, err := ex.blockServiceStarts()
+	if err := ex.blockServiceStarts(req); err != nil {
+		return err
+	}
+	args := []string{"--force-hold", "--force-confold"}
+	if downgrade {
+		args = append(args, "--force-downgrade")
+	}
+	_, installErr := ex.hostStep(10*time.Minute, []string{"DEBIAN_FRONTEND=noninteractive"}, "dpkg", append(append(args, "-i"), paths...)...)
+	if err := errors.Join(installErr, ex.recoverServiceStarts(), ex.hold(held)); err != nil {
+		return fmt.Errorf("%w; run dpkg --audit and dpkg --configure -a before a rollback", err)
+	}
+	if err := ex.dpkgAudit("after the install"); err != nil {
+		return err
+	}
+	versions, err := ex.installed(debs)
 	if err != nil {
 		return err
 	}
-	_, installErr := ex.hostStep(10*time.Minute, []string{"DEBIAN_FRONTEND=noninteractive"}, "dpkg",
-		append([]string{"--force-hold", "--force-confold", "-i"}, paths...)...)
-	policyErr := restorePolicy()
-	holdErr := ex.hold(held)
-	if installErr != nil {
-		return errors.Join(installErr, policyErr, holdErr)
-	}
-	if err := errors.Join(policyErr, holdErr); err != nil {
-		return err
-	}
-	out, err := ex.hostStep(time.Minute, nil, "dpkg", "--audit")
-	if err != nil || strings.TrimSpace(string(out)) != "" {
-		return fmt.Errorf("dpkg --audit reports problems after the install: %s %w", strings.TrimSpace(string(out)), err)
+	for _, d := range debs {
+		if versions[d.Package] != d.Version {
+			return fmt.Errorf("%s has version %q after the install, want %q", d.Package, versions[d.Package], d.Version)
+		}
 	}
 	return nil
 }
@@ -250,7 +286,10 @@ func (ex *executor) dpkgInstall(debs []deb, paths []string) error {
 func (ex *executor) heldPackages(debs []deb) ([]string, error) {
 	var held []string
 	for _, d := range debs {
-		out, _ := ex.hostStep(30*time.Second, nil, "dpkg-query", "-W", "-f=${Status}", d.Package)
+		out, err := ex.hostStep(30*time.Second, nil, "dpkg-query", "-W", "-f=${Status}", d.Package)
+		if err != nil && !strings.Contains(err.Error(), "no packages found matching") {
+			return nil, err
+		}
 		if strings.HasPrefix(string(out), "hold ") {
 			held = append(held, d.Package)
 		}
@@ -267,41 +306,65 @@ func (ex *executor) hold(packages []string) error {
 	return nil
 }
 
-const policyRC = "/usr/sbin/policy-rc.d"
+const (
+	policyRC       = "/usr/sbin/policy-rc.d"
+	policyRCMarker = "# breakglass hotfix: no service starts during dpkg"
+	// policyRCSaved keeps the previous policy-rc.d on the node, so a killed
+	// executor's denial can be undone by the next hotfix run.
+	policyRCSaved = stateDir + "/policy-rc.d.previous"
+	policyRCNone  = stateDir + "/policy-rc.d.absent"
+)
 
-// blockServiceStarts installs a policy-rc.d that denies every service action
-// and returns a function that restores the previous state.
-func (ex *executor) blockServiceStarts() (func() error, error) {
-	target := ex.host(policyRC)
-	previous, readErr := os.ReadFile(target)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return nil, readErr
-	}
-	if err := os.WriteFile(target, []byte("#!/bin/sh\n# breakglass hotfix: no service starts during dpkg\nexit 101\n"), 0o755); err != nil {
-		return nil, err
-	}
-	return func() error {
-		if readErr == nil {
-			return os.WriteFile(target, previous, 0o755)
-		}
-		return os.Remove(target)
-	}, nil
-}
-
-func (ex *executor) verifyDebs(debs []deb, want func(deb) string) error {
-	versions, err := ex.installed(debs)
-	if err != nil {
+// blockServiceStarts installs a policy-rc.d that denies every service action.
+// The previous state is saved on the node first.
+func (ex *executor) blockServiceStarts(req *request) error {
+	if err := ex.recoverServiceStarts(); err != nil {
 		return err
 	}
-	for _, d := range debs {
-		if versions[d.Package] != want(d) {
-			return fmt.Errorf("%s has version %q, want %q", d.Package, versions[d.Package], want(d))
+	target := ex.host(policyRC)
+	if err := os.MkdirAll(ex.host(stateDir), 0o700); err != nil {
+		return err
+	}
+	previous, readErr := os.ReadFile(target)
+	switch {
+	case readErr == nil:
+		if err := writeSynced(ex.host(policyRCSaved), previous, 0o600); err != nil {
+			return err
+		}
+	case os.IsNotExist(readErr):
+		if err := writeSynced(ex.host(policyRCNone), nil, 0o600); err != nil {
+			return err
+		}
+	default:
+		return readErr
+	}
+	return writeSynced(target, []byte("#!/bin/sh\n"+policyRCMarker+"\nexit 101\n"), 0o755)
+}
+
+// recoverServiceStarts removes a policy-rc.d left by this executor and
+// restores the saved previous one. It runs before and after every dpkg step.
+func (ex *executor) recoverServiceStarts() error {
+	target := ex.host(policyRC)
+	current, err := os.ReadFile(target)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil && strings.Contains(string(current), policyRCMarker) {
+		if previous, readErr := os.ReadFile(ex.host(policyRCSaved)); readErr == nil {
+			if err := writeSynced(target, previous, 0o755); err != nil {
+				return err
+			}
+		} else if err := os.Remove(target); err != nil {
+			return err
 		}
 	}
+	_ = os.Remove(ex.host(policyRCSaved))
+	_ = os.Remove(ex.host(policyRCNone))
 	return nil
 }
 
-// rollbackDebs reinstalls rollbackDebs and purges packages the hotfix added.
+// rollbackDebs reinstalls rollbackDebs, purges packages the hotfix added and
+// verifies that every package is back at its pre-hotfix version.
 func (ex *executor) rollbackDebs(req *request, current string) (*result, error) {
 	if current == req.Expected.BeforeSHA256 {
 		return &result{Result: "skipped", BeforeSHA256: current, AfterSHA256: current}, nil
@@ -309,15 +372,15 @@ func (ex *executor) rollbackDebs(req *request, current string) (*result, error) 
 	if current != req.Expected.AfterSHA256 {
 		return nil, errors.New("installed versions changed after the hotfix; not rolling back automatically")
 	}
+	if err := ex.debPreflight(false); err != nil {
+		return nil, err
+	}
 	if len(req.Payload.RollbackDebs) != 0 {
-		if err := ex.usrWritable(); err != nil {
-			return nil, err
-		}
 		paths, err := ex.stageDebs(req, req.Payload.RollbackDebs)
 		if err != nil {
 			return nil, err
 		}
-		if err := ex.dpkgInstallDowngrade(req.Payload.RollbackDebs, paths); err != nil {
+		if err := ex.dpkgInstall(req, req.Payload.RollbackDebs, paths, true); err != nil {
 			return nil, err
 		}
 	}
@@ -325,39 +388,25 @@ func (ex *executor) rollbackDebs(req *request, current string) (*result, error) 
 		if err := ex.fits(5 * time.Minute); err != nil {
 			return nil, err
 		}
-		restorePolicy, err := ex.blockServiceStarts()
-		if err != nil {
+		if err := ex.blockServiceStarts(req); err != nil {
 			return nil, err
 		}
 		_, purgeErr := ex.hostStep(5*time.Minute, []string{"DEBIAN_FRONTEND=noninteractive"}, "dpkg", "--purge", name)
-		if err := errors.Join(purgeErr, restorePolicy()); err != nil {
+		if err := errors.Join(purgeErr, ex.recoverServiceStarts()); err != nil {
 			return nil, err
 		}
+	}
+	versions, err := ex.installed(req.Payload.Debs)
+	if err != nil {
+		return nil, err
+	}
+	if after := packageState(req.Payload.Debs, func(d deb) string { return versions[d.Package] }); after != req.Expected.BeforeSHA256 {
+		return nil, errors.New("packages still differ from the pre-hotfix state after the rollback; replace the node")
 	}
 	if err := ex.restart(req.Payload.Restart); err != nil {
 		return nil, err
 	}
 	return &result{Result: "rolledBack", BeforeSHA256: current, AfterSHA256: req.Expected.BeforeSHA256}, nil
-}
-
-func (ex *executor) dpkgInstallDowngrade(debs []deb, paths []string) error {
-	if err := ex.fits(10 * time.Minute); err != nil {
-		return err
-	}
-	held, err := ex.heldPackages(debs)
-	if err != nil {
-		return err
-	}
-	restorePolicy, err := ex.blockServiceStarts()
-	if err != nil {
-		return err
-	}
-	_, installErr := ex.hostStep(10*time.Minute, []string{"DEBIAN_FRONTEND=noninteractive"}, "dpkg",
-		append([]string{"--force-hold", "--force-confold", "--force-downgrade", "-i"}, paths...)...)
-	if err := errors.Join(installErr, restorePolicy(), ex.hold(held)); err != nil {
-		return err
-	}
-	return ex.verifyDebs(debs, func(d deb) string { return d.Version })
 }
 
 // ---- static-pod-image ----
@@ -410,28 +459,36 @@ func (ex *executor) imageID(image string) (string, error) {
 	return inspected.Status.ID, nil
 }
 
-// waitStaticPod waits until exactly the static Pod's container runs the image ID.
-func (ex *executor) waitStaticPod(pod, id string, budget time.Duration) error {
+// waitStaticPod waits until exactly the static Pod's container runs the
+// image. containerd reports imageRef as the image ID or as repo@digest.
+func (ex *executor) waitStaticPod(pod, id, digest string, budget time.Duration) error {
 	if err := ex.fits(budget); err != nil {
 		return err
 	}
 	end := ex.now().Add(budget)
 	for {
-		out, err := ex.hostStep(15*time.Second, nil, "crictl", "ps", "--name", "^"+pod+"$", "--state", "running", "-o", "json")
+		out, err := ex.hostStep(15*time.Second, nil, "crictl", "ps", "--name", "^"+pod+"$", "--label", staticPodLabel, "--state", "running", "-o", "json")
 		var running crictlContainers
-		if err == nil && json.Unmarshal(out, &running) == nil && len(running.Containers) == 1 && running.Containers[0].ImageRef == id {
+		if err == nil && json.Unmarshal(out, &running) == nil && len(running.Containers) == 1 &&
+			(running.Containers[0].ImageRef == id || strings.HasSuffix(running.Containers[0].ImageRef, digest)) {
 			return nil
 		}
 		if ex.now().After(end) {
 			return fmt.Errorf("%s did not run image %s within %s", pod, id, budget)
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(ex.poll)
 	}
 }
+
+// staticPodLabel limits crictl to kube-system static Pod containers.
+const staticPodLabel = "io.kubernetes.pod.namespace=kube-system"
 
 type etcdStatus struct {
 	Endpoint string `json:"Endpoint"`
 	Status   struct {
+		Header struct {
+			MemberID uint64 `json:"member_id"`
+		} `json:"header"`
 		Leader uint64 `json:"leader"`
 	} `json:"Status"`
 }
@@ -439,10 +496,13 @@ type etcdStatus struct {
 // etcdHealthy requires every member to answer and to agree on one leader.
 // Changing one member at a time then keeps quorum.
 func (ex *executor) etcdHealthy() error {
-	out, err := ex.hostStep(15*time.Second, nil, "crictl", "ps", "--name", "^etcd$", "--state", "running", "-q")
+	out, err := ex.hostStep(15*time.Second, nil, "crictl", "ps", "--name", "^etcd$", "--label", staticPodLabel, "--state", "running", "-q")
+	if err != nil {
+		return fmt.Errorf("list the local etcd container: %w", err)
+	}
 	ids := strings.Fields(string(out))
-	if err != nil || len(ids) != 1 {
-		return fmt.Errorf("local etcd container is not running: %w", err)
+	if len(ids) != 1 {
+		return fmt.Errorf("found %d running local etcd containers, want 1", len(ids))
 	}
 	etcdctl := []string{"exec", ids[0], "etcdctl", "--endpoints=https://127.0.0.1:2379",
 		"--cacert=/etc/kubernetes/pki/etcd/ca.crt", "--cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt",
@@ -452,7 +512,9 @@ func (ex *executor) etcdHealthy() error {
 		return err
 	}
 	var list struct {
-		Members []json.RawMessage `json:"members"`
+		Members []struct {
+			ID uint64 `json:"ID"`
+		} `json:"members"`
 	}
 	if err := json.Unmarshal(members, &list); err != nil || len(list.Members) == 0 {
 		return errors.New("etcd member list is unreadable")
@@ -462,12 +524,19 @@ func (ex *executor) etcdHealthy() error {
 		return fmt.Errorf("etcd endpoint status: %w", err)
 	}
 	var statuses []etcdStatus
-	if err := json.Unmarshal(out, &statuses); err != nil || len(statuses) != len(list.Members) {
-		return fmt.Errorf("only %d of %d etcd members answer", len(statuses), len(list.Members))
+	if err := json.Unmarshal(out, &statuses); err != nil || len(statuses) == 0 {
+		return errors.New("etcd endpoint status is unreadable")
 	}
+	answered := map[uint64]bool{}
 	for _, s := range statuses {
 		if s.Status.Leader == 0 || s.Status.Leader != statuses[0].Status.Leader {
 			return errors.New("etcd members do not agree on one leader")
+		}
+		answered[s.Status.Header.MemberID] = true
+	}
+	for _, member := range list.Members {
+		if !answered[member.ID] {
+			return fmt.Errorf("etcd member %x does not answer; %d of %d answer", member.ID, len(answered), len(list.Members))
 		}
 	}
 	return nil
@@ -484,7 +553,7 @@ func (ex *executor) waitEtcdHealthy(budget time.Duration) error {
 		if ex.now().After(end) {
 			return err
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(ex.poll)
 	}
 }
 
@@ -534,7 +603,7 @@ func (ex *executor) staticPod(req *request) (*result, error) {
 		if err := ex.replaceFile(req, p, old, updated, info); err != nil {
 			return nil, err
 		}
-		if err := ex.waitStaticPod(pod, id, 5*time.Minute); err != nil {
+		if err := ex.waitStaticPod(pod, id, req.Payload.Image.Image[strings.LastIndex(req.Payload.Image.Image, "@"):], 5*time.Minute); err != nil {
 			return nil, err
 		}
 		if pod == "etcd" {
@@ -593,6 +662,19 @@ func (ex *executor) hostContainer(req *request) (*result, error) {
 		if err := ex.fits(4 * time.Minute); err != nil {
 			return nil, err
 		}
+		// nerdctl reports the image as it normalised it on start; keep the
+		// running reference so rollback can verify the previous image. A
+		// crashed container has none; a hotfix may be its repair.
+		running, err := ex.runningImage(c)
+		if err != nil {
+			running = ""
+		}
+		if err := os.MkdirAll(ex.host(path.Join(stateDir, req.HotfixID)), 0o700); err != nil {
+			return nil, err
+		}
+		if err := writeSynced(ex.host(ex.runningImagePath(req, c)), []byte(running), 0o600); err != nil {
+			return nil, err
+		}
 		if err := ex.replaceFile(req, c.ImageRefFile, old, updated, info); err != nil {
 			return nil, err
 		}
@@ -605,16 +687,36 @@ func (ex *executor) hostContainer(req *request) (*result, error) {
 		if err != nil || out.Result == "skipped" {
 			return out, err
 		}
-		saved, err := os.ReadFile(ex.host(c.ImageRefFile))
+		previous, err := os.ReadFile(ex.host(ex.runningImagePath(req, c)))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read the image %s ran before the hotfix: %w", c.Name, err)
 		}
-		if err := ex.restartHostContainer(c, strings.TrimSpace(string(saved))); err != nil {
+		// An empty reference means the container was not running before the
+		// hotfix; then rollback only requires it to run again.
+		if err := ex.restartHostContainer(c, strings.TrimSpace(string(previous))); err != nil {
 			return nil, err
 		}
 		return out, nil
 	}
 	return nil, fmt.Errorf("unsupported stage %q", req.Stage)
+}
+
+func (ex *executor) runningImagePath(req *request, c *hostContainer) string {
+	return path.Join(stateDir, req.HotfixID, c.Name+".running-image")
+}
+
+// runningImage returns the image reference of the running host container.
+func (ex *executor) runningImage(c *hostContainer) (string, error) {
+	out, err := ex.hostStep(30*time.Second, nil, "nerdctl", "--namespace", c.ContainerdNamespace, "inspect",
+		"--format", "{{.Image}} {{.State.Running}}", c.Name)
+	if err != nil {
+		return "", err
+	}
+	image, running, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+	if running != "true" || image == "" {
+		return "", fmt.Errorf("%s is not running (%q)", c.Name, strings.TrimSpace(string(out)))
+	}
+	return image, nil
 }
 
 // restartHostContainer restarts the unit and requires the container to run
@@ -623,13 +725,12 @@ func (ex *executor) restartHostContainer(c *hostContainer, image string) error {
 	if _, err := ex.hostStep(3*time.Minute, nil, "systemctl", "restart", c.Unit); err != nil {
 		return err
 	}
-	out, err := ex.hostStep(30*time.Second, nil, "nerdctl", "--namespace", c.ContainerdNamespace, "inspect",
-		"--format", "{{.Image}} {{.State.Running}}", c.Name)
+	got, err := ex.runningImage(c)
 	if err != nil {
 		return err
 	}
-	if got := strings.TrimSpace(string(out)); got != image+" true" {
-		return fmt.Errorf("%s runs %q after the restart, want %q", c.Name, got, image+" true")
+	if image != "" && got != image {
+		return fmt.Errorf("%s runs %q after the restart, want %q", c.Name, got, image)
 	}
 	return nil
 }

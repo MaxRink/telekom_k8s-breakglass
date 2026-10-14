@@ -66,7 +66,7 @@ expected=$(jq -c '{beforeSHA256, afterSHA256}' <<<"$plan")
 applied=$(run apply "$fix" "$expected")
 [[ $(jq -r .result <<<"$applied") == applied ]] || fail "apply: $applied"
 grep -qx 'PermitRootLogin no' "$work/host/etc/ssh/sshd_config" || fail "file not patched"
-[[ $(find "$work/host/etc/ssh" -mindepth 1 | wc -l) == 1 ]] || fail "temporary file left in the target directory"
+[[ $(find "$work/host/etc/ssh" -mindepth 1 | wc -l) -eq 1 ]] || fail "temporary file left in the target directory"
 
 again=$(run apply "$fix" "$expected")
 [[ $(jq -r .result <<<"$again") == skipped ]] || fail "re-apply must skip: $again"
