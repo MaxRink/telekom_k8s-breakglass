@@ -2902,6 +2902,63 @@ var schemaYAML = typed.YAMLObject(`types:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeState
   scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeStatus
+  map:
+    fields:
+    - name: action
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedAction
+    - name: activeDeadlineSeconds
+      type:
+        scalar: numeric
+    - name: afterSHA256
+      type:
+        scalar: string
+    - name: batch
+      type:
+        scalar: numeric
+    - name: beforeSHA256
+      type:
+        scalar: string
+    - name: controlPlane
+      type:
+        scalar: boolean
+    - name: createAttempted
+      type:
+        scalar: boolean
+    - name: deadlineUnix
+      type:
+        scalar: numeric
+    - name: jobUID
+      type:
+        scalar: string
+    - name: leaseUID
+      type:
+        scalar: string
+    - name: message
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: newPackages
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: podUID
+      type:
+        scalar: string
+    - name: released
+      type:
+        scalar: boolean
+    - name: result
+      type:
+        scalar: string
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayload
   map:
     fields:
@@ -2933,6 +2990,8 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayloadType
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayloadType
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPhase
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlan
   map:
@@ -3164,6 +3223,39 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: appliedBy
       type:
         scalar: string
+    - name: auxiliaryDeployed
+      type:
+        scalar: boolean
+    - name: batchCompletedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: clusterLeaseUID
+      type:
+        scalar: string
+    - name: currentBatch
+      type:
+        scalar: numeric
+    - name: gatePassedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: intentAudited
+      type:
+        scalar: boolean
+    - name: namespaceUID
+      type:
+        scalar: string
+    - name: nodes
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeStatus
+          elementRelationship: atomic
+    - name: operationID
+      type:
+        scalar: string
+    - name: phase
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPhase
     - name: plan
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlan
@@ -3173,6 +3265,18 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: plannedAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: reason
+      type:
+        scalar: string
+    - name: recordName
+      type:
+        scalar: string
+    - name: released
+      type:
+        scalar: boolean
+    - name: resultAudited
+      type:
+        scalar: boolean
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProvider
   map:
     fields:

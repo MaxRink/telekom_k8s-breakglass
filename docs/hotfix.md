@@ -11,9 +11,9 @@ regular release or a node image rebuild is too slow. A hotfix is a bridge: the
 regular release must still ship the fix, and the hotfix is tracked as drift
 until it is closed.
 
-The field is absent by default. A controller version that does not serve the
-hotfix executor refuses hotfix templates at request time and fails any
-hotfix session closed.
+The field is absent by default. This controller version serves the `plan`,
+`apply` and `rollback` stages; `reconfirm` and `close` are refused at request
+time until the record lifecycle is served.
 
 ## Scope
 
@@ -141,6 +141,61 @@ The API rejects a request before approval when any rule fails:
 - **Plan size.** A plan stores each distinct diff once (one per pre-image) and
   must stay below 512 KiB.
 - `fixedIn` (1..256 characters) names the release that will contain the fix.
+
+## How the controller runs a stage
+
+- **Executors.** Each node gets exactly one executor Pod (the `hotfix-action`
+  command of the node-maintenance image) inside a Job envelope with
+  `managedBy: breakglass.t-caas.telekom.com/hotfix`, in the
+  `breakglass-node-maintenance` namespace. The attempt is persisted before the
+  Pod is created; a missing Pod is reported as `unknown` and never recreated.
+  The node's name and UID, the session approval and the template are checked
+  again immediately before each Pod is created.
+- **Pod shapes.** `node-file` without restarts runs unprivileged with only
+  `CHOWN`, `FOWNER` and `DAC_OVERRIDE`, the target directory and
+  `/var/lib/breakglass-hotfix` mounted (read-only for a plan), plus
+  `/etc/ssl/certs` read-only for a `url` source. Every other payload runs
+  privileged with host PID and network and uses host tools through `nsenter`.
+  A mutating executor is never deleted while it runs: on a stop, a
+  termination or a deletion of the session the controller waits until it
+  ends at its own deadline, records its result and only then removes it. Its
+  grace period equals its deadline as a second guard. Read-only plan
+  executors are stopped at once.
+- **Locks.** Apply and rollback hold one `breakglass-hotfix` Lease per cluster.
+  Each executor holds the per-node Lease that node maintenance also uses. No
+  Lease is ever taken over.
+- **Stops.** A failed node, a failed health gate, a suspended or removed
+  template, a replaced node, an executor Pod rejected by admission, an
+  expired session or a terminated session stop the stage for good: the reason is kept in `status.hotfix.reason`, no further
+  executor starts, and started executors are observed to the end (a stopped
+  plan reports its unfinished nodes as `interrupted`). Only the
+  revocation stages (`rollback`, `reconfirm`, `close`) run with a suspended
+  template.
+- **Batches.** The plan lays out worker nodes as canary, then
+  `maxUnavailable` batches (or one batch for `all-at-once`), and every
+  control-plane node in a batch of its own. A plan runs its read-only
+  executors 20 nodes at a time.
+- **Health gate.** After a batch, every node changed so far must be Ready with
+  no pressure or network condition; for a control-plane node its
+  `tier=control-plane` Pods must be Ready and the API server `/readyz` must
+  answer. The gate must pass within 5 minutes, then the soak time runs before
+  the next batch. A failed node or gate stops the rollout: no further batch
+  starts and the session fails.
+- **Audit.** The stage intent, every node intent and result, and the stage
+  result are emitted synchronously with severity Critical. Without a durable
+  audit sink nothing runs.
+- **Admission.** Templates can declare per-session admission exceptions as
+  required `auxiliaryResources` (create before, delete after, fail closed);
+  they exist only while the session runs.
+- **Record.** Apply creates the `HotfixRecord` before the first node changes
+  and records every node result. Applied nodes get the annotation
+  `hotfix.breakglass.t-caas.telekom.com/<hash of the record name>`; rollback
+  removes it and closes the record when no node carries the hotfix.
+
+Target cluster permissions for the controller's ClusterConfig identity:
+get/list Nodes and patch Node annotations; get the
+`breakglass-node-maintenance` namespace; create/get/delete Jobs, Pods and
+Leases in it; get/list Pods in `kube-system`; the non-resource URL `/readyz`.
 
 ## Revoking a hotfix
 
