@@ -26,6 +26,8 @@ type HotfixRecordSpecApplyConfiguration struct {
 	Payload *HotfixPayloadApplyConfiguration `json:"payload,omitempty"`
 	// planHash is the reviewed plan hash of the apply session.
 	PlanHash *string `json:"planHash,omitempty"`
+	// rollout is the effective rollout of the apply stage; rollback reuses it.
+	Rollout *HotfixRolloutApplyConfiguration `json:"rollout,omitempty"`
 	// nodeSelection is the original selection, used to detect uncovered nodes.
 	NodeSelection *HotfixNodeSelectionApplyConfiguration `json:"nodeSelection,omitempty"`
 	// fixedIn names the regular release that will contain the fix.
@@ -72,6 +74,14 @@ func (b *HotfixRecordSpecApplyConfiguration) WithPayload(value *HotfixPayloadApp
 // If called multiple times, the PlanHash field is set to the value of the last call.
 func (b *HotfixRecordSpecApplyConfiguration) WithPlanHash(value string) *HotfixRecordSpecApplyConfiguration {
 	b.PlanHash = &value
+	return b
+}
+
+// WithRollout sets the Rollout field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Rollout field is set to the value of the last call.
+func (b *HotfixRecordSpecApplyConfiguration) WithRollout(value *HotfixRolloutApplyConfiguration) *HotfixRecordSpecApplyConfiguration {
+	b.Rollout = value
 	return b
 }
 

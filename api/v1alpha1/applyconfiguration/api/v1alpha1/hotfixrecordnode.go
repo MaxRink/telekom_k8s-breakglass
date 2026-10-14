@@ -24,8 +24,14 @@ type HotfixRecordNodeApplyConfiguration struct {
 	UID *string `json:"uid,omitempty"`
 	// state is the tracked state.
 	State *apiv1alpha1.HotfixNodeState `json:"state,omitempty"`
+	// controlPlane marks control-plane nodes, which change one at a time.
+	ControlPlane *bool `json:"controlPlane,omitempty"`
+	// beforeSHA256 is the pre-image hash on this node; rollback restores it.
+	BeforeSHA256 *string `json:"beforeSHA256,omitempty"`
 	// afterSHA256 is the verified result hash on this node.
 	AfterSHA256 *string `json:"afterSHA256,omitempty"`
+	// newPackages are Debian packages the hotfix added; rollback purges them.
+	NewPackages []string `json:"newPackages,omitempty"`
 	// at is the last state change.
 	At *v1.Time `json:"at,omitempty"`
 	// message explains failed, reverted and uncovered states.
@@ -62,11 +68,37 @@ func (b *HotfixRecordNodeApplyConfiguration) WithState(value apiv1alpha1.HotfixN
 	return b
 }
 
+// WithControlPlane sets the ControlPlane field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ControlPlane field is set to the value of the last call.
+func (b *HotfixRecordNodeApplyConfiguration) WithControlPlane(value bool) *HotfixRecordNodeApplyConfiguration {
+	b.ControlPlane = &value
+	return b
+}
+
+// WithBeforeSHA256 sets the BeforeSHA256 field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the BeforeSHA256 field is set to the value of the last call.
+func (b *HotfixRecordNodeApplyConfiguration) WithBeforeSHA256(value string) *HotfixRecordNodeApplyConfiguration {
+	b.BeforeSHA256 = &value
+	return b
+}
+
 // WithAfterSHA256 sets the AfterSHA256 field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the AfterSHA256 field is set to the value of the last call.
 func (b *HotfixRecordNodeApplyConfiguration) WithAfterSHA256(value string) *HotfixRecordNodeApplyConfiguration {
 	b.AfterSHA256 = &value
+	return b
+}
+
+// WithNewPackages adds the given value to the NewPackages field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the NewPackages field.
+func (b *HotfixRecordNodeApplyConfiguration) WithNewPackages(values ...string) *HotfixRecordNodeApplyConfiguration {
+	for i := range values {
+		b.NewPackages = append(b.NewPackages, values[i])
+	}
 	return b
 }
 

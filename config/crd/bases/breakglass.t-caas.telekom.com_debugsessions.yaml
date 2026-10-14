@@ -1795,9 +1795,39 @@ spec:
               hotfix:
                 description: hotfix records the plan and rollout of a hotfix session.
                 properties:
+                  appliedBy:
+                    description: appliedBy is the apply session that consumed this
+                      plan. A plan is applied at most once.
+                    type: string
                   plan:
                     description: plan is set by a succeeded plan session.
                     properties:
+                      diffs:
+                        description: diffs are the distinct reviewed changes, one
+                          per pre-image hash.
+                        items:
+                          description: HotfixPlannedDiff is one reviewed change shared
+                            by all nodes with the same pre-image.
+                          properties:
+                            afterSHA256:
+                              description: afterSHA256 is the planned result hash.
+                              type: string
+                            beforeSHA256:
+                              description: beforeSHA256 is the pre-image hash.
+                              type: string
+                            diff:
+                              description: diff is the unified diff for review, truncated
+                                to about 2.5 KiB.
+                              maxLength: 4096
+                              type: string
+                          required:
+                          - afterSHA256
+                          - beforeSHA256
+                          - diff
+                          type: object
+                        maxItems: 16
+                        type: array
+                        x-kubernetes-list-type: atomic
                       fixedIn:
                         description: fixedIn names the regular release that will contain
                           the fix.
@@ -1833,10 +1863,6 @@ spec:
                               description: controlPlane marks nodes that run in their
                                 own batch with control-plane gates.
                               type: boolean
-                            diff:
-                              description: diff is the per-node unified diff for review,
-                                truncated to about 2.5 KiB.
-                              type: string
                             name:
                               description: name is the Node name.
                               type: string

@@ -65,6 +65,8 @@ type HotfixRecordSpec struct {
 	Payload HotfixPayload `json:"payload"`
 	// planHash is the reviewed plan hash of the apply session.
 	PlanHash string `json:"planHash"`
+	// rollout is the effective rollout of the apply stage; rollback reuses it.
+	Rollout HotfixRollout `json:"rollout"`
 	// nodeSelection is the original selection, used to detect uncovered nodes.
 	NodeSelection HotfixNodeSelection `json:"nodeSelection"`
 	// fixedIn names the regular release that will contain the fix.
@@ -85,9 +87,19 @@ type HotfixRecordNode struct {
 	UID string `json:"uid"`
 	// state is the tracked state.
 	State HotfixNodeState `json:"state"`
+	// controlPlane marks control-plane nodes, which change one at a time.
+	// +optional
+	ControlPlane bool `json:"controlPlane,omitempty"`
+	// beforeSHA256 is the pre-image hash on this node; rollback restores it.
+	// +optional
+	BeforeSHA256 string `json:"beforeSHA256,omitempty"`
 	// afterSHA256 is the verified result hash on this node.
 	// +optional
 	AfterSHA256 string `json:"afterSHA256,omitempty"`
+	// newPackages are Debian packages the hotfix added; rollback purges them.
+	// +optional
+	// +listType=atomic
+	NewPackages []string `json:"newPackages,omitempty"`
 	// at is the last state change.
 	At metav1.Time `json:"at"`
 	// message explains failed, reverted and uncovered states.

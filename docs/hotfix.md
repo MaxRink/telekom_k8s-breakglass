@@ -42,12 +42,13 @@ Self-approval is always blocked, in every environment.
 | Stage | Request fields | Effect |
 |---|---|---|
 | `plan` | `payload`, `nodes`, `rollout`, `lifetime`, `fixedIn` | Read-only dry run on every selected node. Resolves the selection to Node name and UID, records the pre-image hash, the planned result hash and a per-node diff, and computes `planHash`. |
-| `apply` | `planRef`, `planHash` | Executes exactly the referenced plan. The plan must have succeeded less than 2 h ago, for the same cluster and template, and its hash must equal `planHash`. Creates a `HotfixRecord`. |
+| `apply` | `planRef`, `planHash` | Executes exactly the referenced plan. The plan must have succeeded less than 2 h ago, for the same cluster and template, its hash must equal `planHash`, it must still fit the template as it is now, and it is applied at most once. Creates a `HotfixRecord`. |
 | `rollback` | `recordName` | Reverts the recorded nodes: file restore, `rollbackDebs` (new packages are purged), previous image. |
-| `reconfirm` | `recordName`, `lifetime` | Extends the expiry, at most to the template `maxLifetime` (default 30 days). |
+| `reconfirm` | `recordName`, `lifetime` | Extends the expiry, at most to the template `maxLifetime` (at most 30 days). |
 | `close` | `recordName` | Ends drift tracking after the regular release contains the fix. |
 
-Production approval routing (for example FLM or a platform peer, never the
+The template must set `blockSelfApproval: true`, and a binding cannot relax
+it. Production approval routing (for example FLM or a platform peer, never the
 requester) is configured with the template or binding approvers and the
 ClusterConfig `blockSelfApproval` contract.
 
@@ -68,7 +69,6 @@ spec:
     allowedPaths:
       - /etc/containerd/config.toml
       - /etc/ssh/                    # directory prefix
-      - /etc/kubernetes/manifests/
     restartableServices: [containerd.service, kubelet.service, ssh.service, chrony.service]
     staticPods: [kube-apiserver, kube-controller-manager, kube-scheduler, etcd]
     hostContainers:
@@ -81,8 +81,12 @@ spec:
     minSoakSeconds: 60     # default 60
     maxNodes: 2000         # default 2000
     nodeDeadlineSeconds: 900
-    maxLifetime: 30d       # default 30d
+    maxLifetime: 30d       # default and maximum 30d
 ```
+
+Do not allow `/etc/kubernetes/manifests/` for `node-file` unless you need to
+change flags of a static Pod: a file payload there can change any part of the
+Pod, while `static-pod-image` changes only the digest-pinned image.
 
 `systemd-networkd.service` can be restarted only if the template lists it.
 
@@ -92,14 +96,17 @@ The API rejects a request before approval when any rule fails:
 
 - **Pinning.** Images are `repository@sha256:<64 hex>` without a tag. Files and
   debs are pinned by lowercase SHA-256. The executor image is digest-pinned.
-- **Sources.** URLs must be `https` without credentials or fragment. Any
+- **Sources.** URLs must be `https` without credentials, query string or
+  fragment (presigned URLs would put tokens into the audit trail). Any
   pinned source is allowed; the plan, approval, audit trail and record show the
   exact source and digest. Inline content is at most 64 KiB and is recorded in
   the audit trail, so it must not contain secrets.
 - **Paths.** Absolute, clean, no `..`, characters `[A-Za-z0-9._@+/-]` only,
   inside `allowedPaths` (exact path or directory prefix ending in `/`). The
   executor also refuses symlinks and non-regular files. A hard denylist applies
-  even if `allowedPaths` covers it: `/etc/kubernetes/pki/`, kubeconfigs in
+  even if `allowedPaths` covers it. The executor checks every component of the
+  path on the node with `lstat` and refuses any symlink, so a symlinked
+  directory inside an allowed prefix cannot redirect the write. Denylist: `/etc/kubernetes/pki/`, kubeconfigs in
   `/etc/kubernetes/*.conf` and `/var/lib/kubelet/kubeconfig`,
   `/var/lib/kubelet/pki/`, `/etc/shadow*`, `/etc/gshadow*`, `/etc/sudoers*`,
   `/root/`, any `.ssh/` directory, `/etc/ssh/*_key*`, `/proc/`, `/sys/`,
@@ -117,12 +124,18 @@ The API rejects a request before approval when any rule fails:
   the apply stage reviews the per-node diff and hashes. Apply refuses a node
   whose pre-image hash changed since the plan, and the result hash must equal
   the planned hash.
+- **Nodes.** Exactly one of `names` or a non-empty `selector`; select all
+  nodes explicitly with an `Exists` expression.
 - **Rollout.** `canary` (default): `canaryNodes` (default 1), then batches of
-  `maxUnavailable` (default 10%, capped by `maxBatchPercent`), each followed by
-  at least `soakSeconds`. `all-at-once` needs `allowAllAtOnce` in the template
+  `maxUnavailable` (a count, or 1..100%; default 10%, capped by
+  `maxBatchPercent`), each followed by at least `soakSeconds` (default and
+  minimum: the template `minSoakSeconds`, or 60 s if unset). `all-at-once` needs `allowAllAtOnce` in the template
   and an `allAtOnceReason` of 30..700 characters, and is never allowed for
   `static-pod-image`. Control-plane nodes always run one at a time.
-- **Lifetime.** At most the template `maxLifetime`; default 14 days.
+- **Lifetime.** At most the template `maxLifetime` (itself at most 30 days);
+  default 14 days or the template maximum, whichever is shorter.
+- **Plan size.** A plan stores each distinct diff once (one per pre-image) and
+  must stay below 512 KiB.
 - `fixedIn` (1..256 characters) names the release that will contain the fix.
 
 ## Revoking a hotfix
