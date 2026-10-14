@@ -24,7 +24,9 @@ const hostPath = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/
 // runCommand runs one binary without a shell and returns stdout. On failure
 // stdout is still returned (diff exits 1 when files differ).
 func runCommand(ctx context.Context, env []string, stdin []byte, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	// Callers pass fixed binary names (sed, diff, nsenter) and arguments built
+	// from validated, typed request fields; no shell is involved.
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- fixed binaries, validated arguments, no shell
 	cmd.Env = env
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
