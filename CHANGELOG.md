@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Platform hotfix record lifecycle: `reconfirm` and `close` sessions, and a
+  HotfixRecord reconciler that keeps `Expiring`, `Expired`, `Reverted` and
+  `Uncovered` current (alert only, never a rollback), with the metrics
+  `breakglass_hotfix_active`, `breakglass_hotfix_expires_timestamp_seconds`,
+  `breakglass_hotfix_uncovered_nodes`, `breakglass_hotfix_reverted_nodes` and
+  an example PrometheusRule in `config/samples/prometheusrule-hotfix.yaml`.
 - The controller serves the `plan`, `apply` and `rollback` stages of platform
   hotfix sessions: one single-attempt executor Pod per node, canary and batch
   layout with control-plane nodes one at a time, health gates (node

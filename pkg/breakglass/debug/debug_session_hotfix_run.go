@@ -18,6 +18,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
@@ -83,13 +84,16 @@ func (c *DebugSessionController) initHotfix(ctx context.Context, ds *breakglassv
 			}
 			status.Nodes = append(status.Nodes, node)
 		}
-	case breakglassv1alpha1.HotfixStageRollback:
-		record := &breakglassv1alpha1.HotfixRecord{}
-		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Namespace: ds.Namespace, Name: request.RecordName}, record); err != nil {
-			return errHotfixStop{fmt.Sprintf("read HotfixRecord %s: %v", request.RecordName, err)}
+	case breakglassv1alpha1.HotfixStageReconfirm, breakglassv1alpha1.HotfixStageClose:
+		record, err := c.openHotfixRecord(ctx, ds)
+		if err != nil {
+			return err
 		}
-		if record.Spec.Cluster != ds.Spec.Cluster || record.Spec.TemplateRef != ds.Spec.TemplateRef {
-			return errHotfixStop{"HotfixRecord belongs to another cluster or template"}
+		status.RecordName = record.Name
+	case breakglassv1alpha1.HotfixStageRollback:
+		record, err := c.openHotfixRecord(ctx, ds)
+		if err != nil {
+			return err
 		}
 		status.RecordName = record.Name
 		status.Plan = &breakglassv1alpha1.HotfixPlan{Payload: record.Spec.Payload, Rollout: record.Spec.Rollout}
@@ -111,9 +115,35 @@ func (c *DebugSessionController) initHotfix(ctx context.Context, ds *breakglassv
 		}
 		status.Nodes = laid
 	default:
-		return errHotfixStop{fmt.Sprintf("stage %s is not served by this controller version", request.Stage)}
+		return errHotfixStop{fmt.Sprintf("unsupported hotfix stage %s", request.Stage)}
 	}
 	return c.patchHotfixStatus(ctx, ds, func(current *breakglassv1alpha1.HotfixStatus) { *current = status })
+}
+
+// openHotfixRecord returns the session's record if it belongs to the same
+// cluster and template and is not closed.
+func (c *DebugSessionController) openHotfixRecord(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.HotfixRecord, error) {
+	record := &breakglassv1alpha1.HotfixRecord{}
+	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Namespace: ds.Namespace, Name: ds.Spec.Hotfix.RecordName}, record); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, errHotfixStop{fmt.Sprintf("HotfixRecord %s does not exist", ds.Spec.Hotfix.RecordName)}
+		}
+		return nil, err
+	}
+	if err := hotfixRecordUsable(record, ds); err != nil {
+		return nil, errHotfixStop{err.Error()}
+	}
+	return record, nil
+}
+
+func hotfixRecordUsable(record *breakglassv1alpha1.HotfixRecord, ds *breakglassv1alpha1.DebugSession) error {
+	if record.Spec.Cluster != ds.Spec.Cluster || record.Spec.TemplateRef != ds.Spec.TemplateRef {
+		return fmt.Errorf("HotfixRecord %s belongs to another cluster or template", record.Name)
+	}
+	if meta.IsStatusConditionTrue(record.Status.Conditions, string(breakglassv1alpha1.HotfixRecordConditionClosed)) {
+		return fmt.Errorf("HotfixRecord %s is closed", record.Name)
+	}
+	return nil
 }
 
 // handleHotfixActive advances a hotfix session by at most one step per node.
@@ -147,6 +177,17 @@ func (c *DebugSessionController) handleHotfixActive(ctx context.Context, ds *bre
 		if err := c.patchHotfixStatus(ctx, ds, func(s *breakglassv1alpha1.HotfixStatus) { s.IntentAudited = true }); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+	switch ds.Spec.Hotfix.Stage {
+	case breakglassv1alpha1.HotfixStageReconfirm, breakglassv1alpha1.HotfixStageClose:
+		if err := c.updateHotfixRecordLifecycle(ctx, ds); err != nil {
+			var stop errHotfixStop
+			if errors.As(err, &stop) {
+				return c.stopHotfix(ctx, ds, target, fence, breakglassv1alpha1.HotfixPhaseFailed, stop.reason)
+			}
+			return ctrl.Result{}, err
+		}
+		return c.stopHotfix(ctx, ds, target, fence, breakglassv1alpha1.HotfixPhaseSucceeded, "")
 	}
 	if hotfixMutates(ds) && status.ClusterLeaseUID == "" {
 		lease, err := acquireHotfixLease(ctx, target, hotfixClusterLease, status.OperationID, "", "")
