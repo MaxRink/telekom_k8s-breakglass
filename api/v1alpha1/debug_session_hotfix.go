@@ -156,7 +156,7 @@ type DebugSessionHotfix struct {
 	// maxNodes caps the number of nodes one hotfix may select.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=5000
+	// +kubebuilder:validation:Maximum=1000
 	MaxNodes int32 `json:"maxNodes,omitempty"`
 	// nodeDeadlineSeconds bounds each per-node executor Pod.
 	// +optional
@@ -334,7 +334,7 @@ type HotfixImagePayload struct {
 type HotfixNodeSelection struct {
 	// names are exact Node names.
 	// +optional
-	// +kubebuilder:validation:MaxItems=5000
+	// +kubebuilder:validation:MaxItems=1000
 	// +listType=set
 	Names []string `json:"names,omitempty"`
 	// selector selects Nodes by labels.
@@ -383,7 +383,7 @@ type HotfixPlan struct {
 	// +listType=atomic
 	Diffs []HotfixPlannedDiff `json:"diffs,omitempty"`
 	// nodes are the planned nodes in batch order.
-	// +kubebuilder:validation:MaxItems=5000
+	// +kubebuilder:validation:MaxItems=1000
 	// +listType=atomic
 	Nodes []HotfixPlannedNode `json:"nodes"`
 }
@@ -456,7 +456,7 @@ var (
 	hotfixSHA256Pattern     = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	hotfixPackagePattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]{1,62}$`)
 	hotfixVersionPattern    = regexp.MustCompile(`^[0-9A-Za-z.+~:-]{1,128}$`)
-	hotfixImagePattern      = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]*[a-z0-9])?(:[0-9]{1,5})?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}$`)
+	hotfixImagePattern      = regexp.MustCompile(`^((localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:[0-9]{1,5})?|[a-z0-9-]+:[0-9]{1,5})(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}$`)
 	hotfixPathPattern       = regexp.MustCompile(`^/[A-Za-z0-9._@+/-]*$`)
 	hotfixUnitPattern       = regexp.MustCompile(`^[a-zA-Z0-9@_.-]{1,240}\.service$`)
 	hotfixSedFlagsPattern   = regexp.MustCompile(`^[gI0-9]*$`)
@@ -519,7 +519,7 @@ func hotfixPathAllowed(allowed []string, p string) bool {
 
 func validateHotfixImage(image string) error {
 	if len(image) > 512 || !hotfixImagePattern.MatchString(image) {
-		return fmt.Errorf("image %q must be repository@sha256:<64 hex> without a tag", image)
+		return fmt.Errorf("image %q must be registry-host/repository@sha256:<64 hex> without a tag", image)
 	}
 	return nil
 }
@@ -607,6 +607,9 @@ func validateHotfixDiff(diff string) error {
 		}
 		if match[2] != "" {
 			newLeft, _ = strconv.Atoi(match[2])
+		}
+		if oldLeft == 0 && newLeft == 0 {
+			return fmt.Errorf("diff has an empty hunk")
 		}
 		hunks++
 	}
@@ -939,7 +942,7 @@ func validateHotfixNodes(profile *DebugSessionHotfix, nodes *HotfixNodeSelection
 	}
 	maxNodes := int(profile.MaxNodes)
 	if maxNodes == 0 {
-		maxNodes = 2000
+		maxNodes = 500
 	}
 	if len(nodes.Names) > maxNodes {
 		return fmt.Errorf("hotfix selects more than %d nodes", maxNodes)

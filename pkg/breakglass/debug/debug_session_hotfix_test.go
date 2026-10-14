@@ -50,19 +50,27 @@ func TestHotfixTemplateRefusedUntilServed(t *testing.T) {
 // A session created directly with spec.hotfix, or resolved from a hotfix
 // template, fails before any lease or target write.
 func TestHotfixSessionFailsClosedOnActivation(t *testing.T) {
-	c, ds, template, _ := newDeploymentFenceFixture(t)
-	ds.Spec.Hotfix = &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageClose, RecordName: "hf-1"}
-	require.NoError(t, c.client.Update(t.Context(), ds))
-	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
-	ds.Status.ResolvedTemplateIdentityCaptured = true
-	ds.Status.ResolvedBindingSnapshotCaptured = true
-	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
-	require.NoError(t, c.client.Status().Update(t.Context(), ds))
-	_, err := c.activateSession(t.Context(), ds, template, nil)
-	require.NoError(t, err)
-	live := &breakglassv1alpha1.DebugSession{}
-	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), live))
-	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, live.Status.State)
-	require.Contains(t, live.Status.Message, "hotfix sessions are not supported")
-	require.Nil(t, live.Status.ConnectionLease)
+	for name, viaTemplate := range map[string]bool{"session spec": false, "template": true} {
+		t.Run(name, func(t *testing.T) {
+			c, ds, template, _ := newDeploymentFenceFixture(t)
+			if viaTemplate {
+				template.Spec.Hotfix = &breakglassv1alpha1.DebugSessionHotfix{}
+			} else {
+				ds.Spec.Hotfix = &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageClose, RecordName: "hf-1"}
+				require.NoError(t, c.client.Update(t.Context(), ds))
+			}
+			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			ds.Status.ResolvedTemplateIdentityCaptured = true
+			ds.Status.ResolvedBindingSnapshotCaptured = true
+			ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+			require.NoError(t, c.client.Status().Update(t.Context(), ds))
+			_, err := c.activateSession(t.Context(), ds, template, nil)
+			require.NoError(t, err)
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), live))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, live.Status.State)
+			require.Contains(t, live.Status.Message, "hotfix sessions are not supported")
+			require.Nil(t, live.Status.ConnectionLease)
+		})
+	}
 }
