@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -40,6 +41,8 @@ type executor struct {
 	now      func() time.Time
 	deadline time.Time
 	client   *http.Client
+	// poll is the wait between health checks.
+	poll time.Duration
 }
 
 func sum(data []byte) string {
@@ -95,12 +98,70 @@ func (ex *executor) checkRegular(p string) (os.FileInfo, error) {
 }
 
 func (ex *executor) read(p string) ([]byte, os.FileInfo, error) {
-	info, err := ex.checkRegular(p)
+	if _, err := ex.checkRegular(p); err != nil {
+		return nil, nil, err
+	}
+	// O_NOFOLLOW closes the window between the lstat walk and the open for
+	// the final component; the directories were checked component by component.
+	file, err := os.OpenFile(ex.host(p), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, nil, err
 	}
-	data, err := os.ReadFile(ex.host(p))
-	return data, info, err
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxFileBytes {
+		return nil, nil, fmt.Errorf("%s is not a regular file of at most %d bytes", p, maxFileBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxFileBytes+1))
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, info, nil
+}
+
+// fileMode keeps permission and setuid/setgid/sticky bits.
+func fileMode(info os.FileInfo) os.FileMode {
+	return info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+}
+
+// writeSynced writes data to a hidden temporary file next to target, syncs
+// it, renames it over target and syncs the directory.
+func writeSynced(target string, data []byte, mode os.FileMode) error {
+	tmp := filepath.Join(filepath.Dir(target), "."+filepath.Base(target)+".breakglass-hotfix.tmp")
+	_ = os.Remove(tmp)
+	file, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+	_, writeErr := file.Write(data)
+	if err := errors.Join(writeErr, file.Chmod(mode), file.Sync(), file.Close()); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(target))
+	if err != nil {
+		return err
+	}
+	return errors.Join(dir.Sync(), dir.Close())
+}
+
+func fileSHA256(name string) (string, error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 // writeAtomic replaces p with data, keeping owner and mode. The temporary
@@ -114,25 +175,13 @@ func (ex *executor) writeAtomic(p string, data []byte, info os.FileInfo) error {
 		return err
 	}
 	defer func() { _ = os.Remove(tmp) }()
+	var chownErr error
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		if err := file.Chown(int(stat.Uid), int(stat.Gid)); err != nil {
-			_ = file.Close()
-			return err
-		}
+		chownErr = file.Chown(int(stat.Uid), int(stat.Gid))
 	}
-	if err := file.Chmod(info.Mode().Perm()); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
+	_, writeErr := file.Write(data)
+	// Chmod after Chown: chown clears setuid/setgid bits.
+	if err := errors.Join(chownErr, writeErr, file.Chmod(fileMode(info)), file.Sync(), file.Close()); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp, target); err != nil {
@@ -142,8 +191,7 @@ func (ex *executor) writeAtomic(p string, data []byte, info os.FileInfo) error {
 	if err != nil {
 		return err
 	}
-	syncErr := dir.Sync()
-	return errors.Join(syncErr, dir.Close())
+	return errors.Join(dir.Sync(), dir.Close())
 }
 
 type backupMeta struct {
@@ -174,55 +222,91 @@ func (ex *executor) backup(req *request, p string, data []byte, info os.FileInfo
 		}
 		return nil
 	}
-	meta := backupMeta{Path: p, BeforeSHA256: sum(data), AfterSHA256: req.Expected.AfterSHA256, Mode: uint32(info.Mode().Perm()), ModTime: info.ModTime().UTC().Format(time.RFC3339)}
+	meta := backupMeta{Path: p, BeforeSHA256: sum(data), AfterSHA256: req.Expected.AfterSHA256, Mode: uint32(fileMode(info)), ModTime: info.ModTime().UTC().Format(time.RFC3339)}
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		meta.UID, meta.GID = stat.Uid, stat.Gid
 	}
 	encoded, _ := json.Marshal(meta)
-	if err := os.WriteFile(target+".json", encoded, 0o600); err != nil {
+	if err := writeSynced(target+".json", encoded, 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(target+".tmp", data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(target+".tmp", target)
+	return writeSynced(target, data, 0o600)
 }
 
-// fetch downloads an HTTPS source with the node's CA bundle and checks its hash.
-func (ex *executor) fetch(source, want string) ([]byte, error) {
+func (ex *executor) httpClient() (*http.Client, error) {
+	if ex.client != nil {
+		return ex.client, nil
+	}
+	bundle := ex.host("/etc/ssl/certs/ca-certificates.crt")
+	pool := x509.NewCertPool()
+	pem, err := os.ReadFile(bundle)
+	if err != nil || !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("node CA bundle %s is missing or empty; the controller mounts it for URL sources", bundle)
+	}
+	ex.client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}
+	return ex.client, nil
+}
+
+// fetchToFile streams an HTTPS source into dest and keeps it only if its
+// SHA-256 matches; the node's CA bundle verifies TLS.
+func (ex *executor) fetchToFile(source, want, dest string, limit int64) error {
 	ctx, cancel, err := ex.step(5 * time.Minute)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer cancel()
-	if ex.client == nil {
-		pool := x509.NewCertPool()
-		if pem, err := os.ReadFile(ex.host("/etc/ssl/certs/ca-certificates.crt")); err == nil {
-			pool.AppendCertsFromPEM(pem)
-		}
-		ex.client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}
+	client, err := ex.httpClient()
+	if err != nil {
+		return err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	response, err := ex.client.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download %s: HTTP %d", source, response.StatusCode)
+		return fmt.Errorf("download %s: HTTP %d", source, response.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, 512<<20))
+	tmp := dest + ".download"
+	file, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+	digest := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(file, digest), io.LimitReader(response.Body, limit+1))
+	if copyErr == nil && written > limit {
+		copyErr = fmt.Errorf("download %s is larger than %d bytes", source, limit)
+	}
+	if err := errors.Join(copyErr, file.Sync(), file.Close()); err != nil {
+		return err
+	}
+	if got := hex.EncodeToString(digest.Sum(nil)); got != want {
+		return fmt.Errorf("download %s: sha256 %s, want %s", source, got, want)
+	}
+	return os.Rename(tmp, dest)
+}
+
+// fetch downloads a replace source of at most maxFileBytes into memory.
+func (ex *executor) fetch(source, want string) ([]byte, error) {
+	dest := filepath.Join(ex.work, "replace.download")
+	if err := ex.fetchToFile(source, want, dest, maxFileBytes); err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.Remove(dest) }()
+	info, err := os.Stat(dest)
 	if err != nil {
 		return nil, err
 	}
-	if got := sum(data); got != want {
-		return nil, fmt.Errorf("download %s: sha256 %s, want %s", source, got, want)
+	if info.Size() > maxFileBytes {
+		return nil, fmt.Errorf("download %s is larger than %d bytes", source, maxFileBytes)
 	}
-	return data, nil
+	return os.ReadFile(dest)
 }
 
 // newContent computes the planned file content.
@@ -244,7 +328,7 @@ func (ex *executor) newContent(f *filePayload, old []byte) ([]byte, error) {
 			args = append(args, "-e", expression)
 		}
 		// GNU sed in the executor image, never the host's, and only on stdin.
-		return runLocal(ctx, old, "sed", args...)
+		return runCommand(ctx, nil, old, "sed", args...)
 	case "diff":
 		return applyUnifiedDiff(old, f.Diff)
 	}
@@ -340,7 +424,12 @@ func (ex *executor) reviewDiff(p string, old, updated []byte) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, _ := runLocal(ctx, nil, "diff", "-u", "-L", "a"+p, "-L", "b"+p, a, b)
+	out, err := runCommand(ctx, nil, nil, "diff", "-u", "-L", "a"+p, "-L", "b"+p, a, b)
+	// diff exits 1 when the files differ; anything else is trouble.
+	var exitErr *exec.ExitError
+	if err != nil && (!errors.As(err, &exitErr) || exitErr.ExitCode() != 1) {
+		return "[diff unavailable: " + err.Error() + "]"
+	}
 	if len(out) > maxDiffBytes {
 		out = append(out[:maxDiffBytes], []byte("\n[truncated]\n")...)
 	}
@@ -450,9 +539,4 @@ func (ex *executor) restoreFile(req *request, p, current string, info os.FileInf
 		return nil, err
 	}
 	return &result{Result: "rolledBack", BeforeSHA256: current, AfterSHA256: req.Expected.BeforeSHA256}, nil
-}
-
-// runLocal runs a binary of the executor image with stdin and returns stdout.
-func runLocal(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
-	return runCommand(ctx, nil, stdin, name, args...)
 }

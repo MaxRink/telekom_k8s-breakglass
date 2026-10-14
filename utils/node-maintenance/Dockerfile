@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS network-action-builder
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -88,13 +88,9 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.base.name="alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
-<<<<<<< ours
-      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery" \
-=======
-      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,hotfix-action" \
->>>>>>> theirs
+      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery,hotfix-action" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
-      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT"
+      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT; hotfix-action: CHOWN,FOWNER,DAC_OVERRIDE or privileged host namespaces"
 
 # The image is root only for the explicitly allowlisted host-network operation.
 # Controller-owned immutable templates must use a no-capabilities preflight
