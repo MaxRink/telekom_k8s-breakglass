@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"strconv"
@@ -135,7 +136,20 @@ func (c *dbusConn) authLine() (string, error) {
 // peer credentials on its private bus and does not dispatch a method call that
 // arrives without them.
 func credentials() []byte {
-	return syscall.UnixCredentials(&syscall.Ucred{Pid: int32(os.Getpid()), Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid())})
+	pid := os.Getpid()
+	if pid < 0 || pid > math.MaxInt32 {
+		panic("process ID outside the kernel pid_t range")
+	}
+	return syscall.UnixCredentials(&syscall.Ucred{Pid: int32(pid), Uid: u32(os.Getuid()), Gid: u32(os.Getgid())})
+}
+
+// u32 converts a length or ID that the protocol carries as uint32. Every
+// caller passes a value bounded by the argument length or a kernel ID.
+func u32(n int) uint32 {
+	if n < 0 || uint64(n) > math.MaxUint32 {
+		panic("value outside the D-Bus uint32 range")
+	}
+	return uint32(n)
 }
 
 func (c *dbusConn) authenticate(uid int) error {
@@ -158,8 +172,11 @@ func (c *dbusConn) authenticate(uid int) error {
 	if _, err := io.WriteString(c.conn, "NEGOTIATE_UNIX_FD\r\n"); err != nil {
 		return fmt.Errorf("send D-Bus NEGOTIATE_UNIX_FD: %w", err)
 	}
-	if line, err = c.authLine(); err != nil || !strings.HasPrefix(line, "AGREE_UNIX_FD") {
-		return fmt.Errorf("D-Bus NEGOTIATE_UNIX_FD not agreed: %q %v", strings.TrimSpace(line), err)
+	if line, err = c.authLine(); err != nil {
+		return fmt.Errorf("read D-Bus NEGOTIATE_UNIX_FD reply: %w", err)
+	}
+	if !strings.HasPrefix(line, "AGREE_UNIX_FD") {
+		return fmt.Errorf("D-Bus NEGOTIATE_UNIX_FD not agreed: %q", strings.TrimSpace(line))
 	}
 	if _, err := io.WriteString(c.conn, "BEGIN\r\n"); err != nil {
 		return fmt.Errorf("send D-Bus BEGIN: %w", err)
@@ -182,12 +199,16 @@ func (e *encoder) uint32(v uint32) {
 	_ = binary.Write(&e.buf, binary.LittleEndian, v)
 }
 func (e *encoder) string(v string) {
-	e.uint32(uint32(len(v)))
+	e.uint32(u32(len(v)))
 	e.buf.WriteString(v)
 	e.buf.WriteByte(0)
 }
 func (e *encoder) signature(v string) {
-	e.byte(byte(len(v)))
+	n := len(v)
+	if n > math.MaxUint8 {
+		panic("D-Bus signature longer than 255 bytes")
+	}
+	e.byte(byte(n))
 	e.buf.WriteString(v)
 	e.buf.WriteByte(0)
 }
@@ -211,7 +232,7 @@ func encodeMessage(serial uint32, fields []headerField, bodySig string, bodyStri
 	head.byte(msgMethodCall)
 	head.byte(0)
 	head.byte(1)
-	head.uint32(uint32(body.buf.Len()))
+	head.uint32(u32(body.buf.Len()))
 	head.uint32(serial)
 	// Array of struct(byte, variant): length placeholder, filled below.
 	head.uint32(0)
@@ -231,7 +252,7 @@ func encodeMessage(serial uint32, fields []headerField, bodySig string, bodyStri
 			head.uint32(f.value.(uint32))
 		}
 	}
-	binary.LittleEndian.PutUint32(head.buf.Bytes()[lengthOffset:], uint32(head.buf.Len()-start))
+	binary.LittleEndian.PutUint32(head.buf.Bytes()[lengthOffset:], u32(head.buf.Len()-start))
 	head.align(8)
 	return append(head.buf.Bytes(), body.buf.Bytes()...)
 }
