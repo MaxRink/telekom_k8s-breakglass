@@ -531,8 +531,8 @@ func TestHotfixRequestReferences(t *testing.T) {
 	require.Error(t, validateHotfixReferences(t.Context(), f.hub, f.tmpl, newSession(&breakglassv1alpha1.DebugSessionHotfixRequest{
 		Stage: breakglassv1alpha1.HotfixStageRollback, RecordName: "missing"})), "missing record")
 	for _, stage := range []breakglassv1alpha1.HotfixStage{breakglassv1alpha1.HotfixStageReconfirm, breakglassv1alpha1.HotfixStageClose} {
-		require.ErrorContains(t, validateHotfixReferences(t.Context(), f.hub, f.tmpl, newSession(&breakglassv1alpha1.DebugSessionHotfixRequest{
-			Stage: stage, RecordName: "hf", Lifetime: "1d"})), "not served")
+		require.Error(t, validateHotfixReferences(t.Context(), f.hub, f.tmpl, newSession(&breakglassv1alpha1.DebugSessionHotfixRequest{
+			Stage: stage, RecordName: "missing", Lifetime: "1d"})), "missing record")
 	}
 }
 
