@@ -204,6 +204,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.HotfixPayloadApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPlan"):
 		return &apiv1alpha1.HotfixPlanApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPlannedDiff"):
+		return &apiv1alpha1.HotfixPlannedDiffApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPlannedNode"):
 		return &apiv1alpha1.HotfixPlannedNodeApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HotfixRecord"):
