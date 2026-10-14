@@ -23,7 +23,7 @@ type HotfixPlanApplyConfiguration struct {
 	FixedIn *string `json:"fixedIn,omitempty"`
 	// diffs are the distinct reviewed changes, one per pre-image hash.
 	Diffs []HotfixPlannedDiffApplyConfiguration `json:"diffs,omitempty"`
-	// nodes are the planned nodes in batch order.
+	// nodes are the planned nodes in batch order. A plan in progress has none yet.
 	Nodes []HotfixPlannedNodeApplyConfiguration `json:"nodes,omitempty"`
 }
 

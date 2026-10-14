@@ -1836,7 +1836,8 @@ spec:
                         description: lifetime is the effective lifetime.
                         type: string
                       nodes:
-                        description: nodes are the planned nodes in batch order.
+                        description: nodes are the planned nodes in batch order. A
+                          plan in progress has none yet.
                         items:
                           description: HotfixPlannedNode is the planned action on
                             one Node incarnation.
@@ -2115,9 +2116,6 @@ spec:
                             type: string
                         type: object
                     required:
-                    - fixedIn
-                    - lifetime
-                    - nodes
                     - payload
                     - rollout
                     type: object
