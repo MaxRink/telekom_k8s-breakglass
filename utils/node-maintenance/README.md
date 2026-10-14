@@ -28,6 +28,10 @@ incident interfaces:
   private socket with the fixed `service-action` helper (no capabilities, no
   generic D-Bus surface), then waits for the unit and, on a CRA node, for the
   router container links; see `runbooks/service-restart.md`.
+* `module-load` loads exactly one allowlisted kernel module with
+  `modprobe --ignore-install` from the host module tree (read-only
+  `/lib/modules`, `SYS_MODULE` only) until the next reboot; see
+  `runbooks/module-load.md`.
 
 The `node-recovery` preflight invokes `ethtool` against the exact controller-
 selected interface and records its result as `ethtool.txt`; the integration

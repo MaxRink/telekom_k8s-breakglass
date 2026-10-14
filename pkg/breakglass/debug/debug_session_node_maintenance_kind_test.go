@@ -44,7 +44,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 	nodeName, image := os.Getenv("NODE_MAINTENANCE_KIND_NODE"), os.Getenv("NODE_MAINTENANCE_KIND_IMAGE")
 	containerID := os.Getenv("NODE_MAINTENANCE_KIND_CONTAINER_ID")
 	actionFilter := os.Getenv("NODE_MAINTENANCE_KIND_ACTION")
-	require.Contains(t, []string{"", "neighbor", "fdb", "link", "kexec", "service"}, actionFilter)
+	require.Contains(t, []string{"", "neighbor", "fdb", "link", "kexec", "service", "module"}, actionFilter)
 	require.Regexp(t, "^[0-9a-f]{64}$", containerID)
 	require.True(t, strings.HasPrefix(nodeName, "node-maintenance-proof-") && strings.HasSuffix(nodeName, "-control-plane"))
 	require.Contains(t, image, "@sha256:")
@@ -405,6 +405,87 @@ func TestNodeMaintenanceKind(t *testing.T) {
 			}, &coordinationv1.Lease{})))
 		})
 	}
+	// module-load loads one real, unloaded module of the runner kernel through
+	// the real approval flow, and a module outside the allowlist is refused.
+	t.Run("module-load", func(t *testing.T) {
+		if actionFilter != "module" {
+			t.Skip("module-load runs in its own CI lane")
+		}
+		module := os.Getenv("NODE_MAINTENANCE_KIND_MODULE")
+		require.Regexp(t, "^[a-z0-9_]+$", module)
+		target := breakglassv1alpha1.NodeMaintenanceTarget{TargetNode: nodeName, TargetNodeUID: string(node.UID), Module: module}
+		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "maintenance-module-load"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				TargetNamespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+				Allowed:         &breakglassv1alpha1.DebugSessionAllowed{Users: []string{"requester@example.com"}, Clusters: []string{cc.Name}},
+				Approvers:       &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
+				Constraints:     &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "5m", DefaultDuration: "5m"},
+				NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{Action: breakglassv1alpha1.NodeMaintenanceActionModuleLoad, Image: image,
+					AllowedTargets: []breakglassv1alpha1.NodeMaintenanceTarget{target}},
+			}}
+		require.NoError(t, hub.Create(ctx, template))
+		request := func(target breakglassv1alpha1.NodeMaintenanceTarget, expectedStatus int) *breakglassv1alpha1.DebugSession {
+			t.Helper()
+			body, err := json.Marshal(CreateDebugSessionRequest{TemplateRef: template.Name, Cluster: cc.Name, RequestedDuration: "5m",
+				Reason: "Disposable module load proof", NodeMaintenance: &target})
+			require.NoError(t, err)
+			previousActor := approver
+			approver = "requester@example.com"
+			httpRequest := httptest.NewRequest(http.MethodPost, "/debugSessions", bytes.NewReader(body))
+			httpRequest.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httpRequest)
+			approver = previousActor
+			require.Equal(t, expectedStatus, response.Code, response.Body.String())
+			if expectedStatus != http.StatusCreated {
+				return nil
+			}
+			var created DebugSessionDetailResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
+			return &created.DebugSession
+		}
+		other := target
+		other.Module = "nbd"
+		request(other, http.StatusBadRequest)
+		loaded := func() bool {
+			return exec.CommandContext(ctx, "docker", "exec", containerID, "test", "-d", "/sys/module/"+module).Run() == nil
+		}
+		require.False(t, loaded(), "the lane picked an unloaded module")
+		session := request(target, http.StatusCreated)
+		reconcile(session)
+		approver = "requester@example.com"
+		approve(session, http.StatusForbidden)
+		approver = "approver@example.com"
+		approve(session, http.StatusOK)
+		require.Eventually(t, func() bool {
+			reconcile(session)
+			return session.Status.NodeMaintenance != nil && session.Status.NodeMaintenance.Result != ""
+		}, 3*time.Minute, 2*time.Second)
+		require.Equal(t, "succeeded", session.Status.NodeMaintenance.Result, session.Status.Message)
+		require.True(t, loaded(), "the allowlisted module is loaded")
+		pod := &corev1.Pod{}
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: session.Status.NodeMaintenance.OperationID}, pod))
+		require.Equal(t, []corev1.Capability{"SYS_MODULE"}, pod.Spec.Containers[0].SecurityContext.Capabilities.Add)
+		require.False(t, pod.Spec.HostNetwork)
+		require.Eventually(t, func() bool {
+			err := controller.cleanupResources(ctx, session)
+			return err == nil && session.Status.NodeMaintenance.Released
+		}, 90*time.Second, time.Second)
+		// A second approved request finds the module loaded and changes nothing.
+		again := request(target, http.StatusCreated)
+		reconcile(again)
+		approve(again, http.StatusOK)
+		require.Eventually(t, func() bool {
+			reconcile(again)
+			return again.Status.NodeMaintenance != nil && again.Status.NodeMaintenance.Result != ""
+		}, 3*time.Minute, 2*time.Second)
+		require.Equal(t, "succeeded", again.Status.NodeMaintenance.Result, again.Status.Message)
+		require.Eventually(t, func() bool {
+			err := controller.cleanupResources(ctx, again)
+			return err == nil && again.Status.NodeMaintenance.Released
+		}, 90*time.Second, time.Second)
+	})
+
 	// service-restart restarts containerd on the Kind node through the real
 	// approval flow. The single Kind node is the control plane, so the lane
 	// first proves the refusal, then removes the role label of this

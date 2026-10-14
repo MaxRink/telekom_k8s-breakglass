@@ -35,6 +35,7 @@ network_repair="$root_dir/lib/network-repair.sh"
 preflight="$root_dir/lib/node-recovery-preflight.sh"
 kexec_validate="$root_dir/lib/kexec-recovery-validate.sh"
 service_restart="$root_dir/lib/service-restart.sh"
+module_load="$root_dir/lib/module-load.sh"
 
 assert_neighbor_literal_accepted() {
 	address=$1
@@ -300,5 +301,23 @@ assert_rejected 'service-restart approval is bound to the exact unit' 'controlle
 assert_rejected 'service-restart rejects duplicate options' '--unit may be supplied only once' \
 	"$service_restart" --target-node node-a --unit kubelet.service --unit containerd.service \
 	--evidence-dir /evidence --confirm SERVICE-RESTART
+
+# module-load: exact module name, its own confirmation, action and tuple binding.
+module_env() {
+	env BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+		BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION="$1" \
+		BREAKGLASS_APPROVED_MODULE_REQUEST="$2" "$module_load" \
+		--target-node node-a --module "$3" --evidence-dir /evidence --confirm "$4"
+}
+module_tuple='target_node=node-a&module=ip6_gre&confirmation=MODULE-LOAD'
+assert_rejected 'module-load rejects a path' 'module must be an exact kernel module name' module_env module-load "$module_tuple" ../ip6_gre MODULE-LOAD
+assert_rejected 'module-load rejects module parameters' 'module must be an exact kernel module name' module_env module-load "$module_tuple" 'ip6_gre debug=1' MODULE-LOAD
+long_module=$(awk 'BEGIN { for (i = 0; i < 57; i++) printf "m" }')
+assert_rejected 'module-load rejects a name over 56 bytes' 'module name exceeds 56 bytes' module_env module-load "$module_tuple" "$long_module" MODULE-LOAD
+assert_rejected 'module-load requires its own confirmation' "confirmation must be exactly 'MODULE-LOAD'" module_env module-load "$module_tuple" ip6_gre SERVICE-RESTART
+assert_rejected 'module-load requires a module-load approval' "controller-approved action 'service-restart' does not match requested action 'module-load'" \
+	module_env service-restart "$module_tuple" ip6_gre MODULE-LOAD
+assert_rejected 'module-load approval is bound to the exact module' 'controller-approved module request does not exactly match the requested tuple' \
+	module_env module-load "$module_tuple" gre MODULE-LOAD
 
 printf 'PASS: node-maintenance fast behavioral guards completed\n'

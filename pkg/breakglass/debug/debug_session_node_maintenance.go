@@ -336,6 +336,10 @@ func acquireMaintenanceLease(ctx context.Context, target ctrlclient.Client, ds *
 // image. Optional segments are appended only when set, so tuples without a VRF
 // or preview stay byte-identical to the original executor contract.
 func maintenanceTuple(profile *breakglassv1alpha1.DebugSessionNodeMaintenance, target *breakglassv1alpha1.NodeMaintenanceTarget) string {
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionModuleLoad {
+		// Must match the BREAKGLASS_APPROVED_MODULE_REQUEST check in module-load.
+		return fmt.Sprintf("target_node=%s&module=%s&confirmation=MODULE-LOAD", target.TargetNode, target.Module)
+	}
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart {
 		// Must match the BREAKGLASS_APPROVED_SERVICE_REQUEST check in service-restart.
 		return fmt.Sprintf("target_node=%s&unit=%s&confirmation=SERVICE-RESTART", target.TargetNode, target.Unit)
@@ -371,6 +375,9 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	}
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart {
 		return servicePod(ds)
+	}
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionModuleLoad {
+		return modulePod(ds)
 	}
 	seconds := status.ActiveDeadlineSeconds
 	args := []string{"network-repair", "--target-node", target.TargetNode, "--interface", target.Interface, "--action", profile.Action}
@@ -417,6 +424,51 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 					{Name: "BREAKGLASS_APPROVAL_ID", Value: status.OperationID},
 					{Name: "BREAKGLASS_APPROVED_ACTION", Value: profile.Action},
 					{Name: "BREAKGLASS_APPROVED_NETWORK_REQUEST", Value: maintenanceTuple(profile, target)},
+					{Name: "BREAKGLASS_ACTION_DEADLINE_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
+				},
+			}},
+		},
+	}
+}
+
+// modulePod loads one allowlisted kernel module with modprobe from the host's
+// module tree, mounted read-only at /lib/modules. It adds only SYS_MODULE and
+// uses neither the host network nor the host PID namespace.
+func modulePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
+	profile, target, status := ds.Status.ResolvedTemplate.NodeMaintenance, ds.Spec.NodeMaintenance, ds.Status.NodeMaintenance
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: status.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+			Labels:      map[string]string{DebugSessionLabelKey: ds.Name},
+			Annotations: map[string]string{"breakglass.t-caas.telekom.com/session-uid": string(ds.UID), "breakglass.t-caas.telekom.com/node-uid": target.TargetNodeUID}},
+		Spec: corev1.PodSpec{
+			NodeName: target.TargetNode, DNSPolicy: corev1.DNSDefault,
+			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false),
+			ActiveDeadlineSeconds: ptr.To(status.ActiveDeadlineSeconds), TerminationGracePeriodSeconds: ptr.To(int64(1)),
+			SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr.To(int64(0)), RunAsGroup: ptr.To(int64(0)),
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+			Volumes: []corev1.Volume{
+				{Name: "evidence", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: ptr.To(resource.MustParse("32Mi"))}}},
+				{Name: "modules", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/lib/modules", Type: ptr.To(corev1.HostPathDirectory)}}},
+			},
+			Containers: []corev1.Container{{
+				Name: "node-maintenance", Image: profile.Image, ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/node-maintenance"},
+				Args: []string{"module-load", "--target-node", target.TargetNode, "--module", target.Module,
+					"--confirm", "MODULE-LOAD", "--evidence-dir", "/evidence"},
+				SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(false), AllowPrivilegeEscalation: ptr.To(false),
+					ReadOnlyRootFilesystem: ptr.To(true),
+					Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"SYS_MODULE"}}},
+				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Mi")}},
+				VolumeMounts: []corev1.VolumeMount{{Name: "evidence", MountPath: "/evidence"},
+					{Name: "modules", MountPath: "/lib/modules", ReadOnly: true}},
+				Env: []corev1.EnvVar{
+					{Name: "BREAKGLASS_NODE_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"}}},
+					{Name: "BREAKGLASS_OPERATION_ID", Value: status.OperationID},
+					{Name: "BREAKGLASS_RECORDING_ID", Value: status.OperationID},
+					{Name: "BREAKGLASS_APPROVAL_ID", Value: status.OperationID},
+					{Name: "BREAKGLASS_APPROVED_ACTION", Value: profile.Action},
+					{Name: "BREAKGLASS_APPROVED_MODULE_REQUEST", Value: maintenanceTuple(profile, target)},
 					{Name: "BREAKGLASS_ACTION_DEADLINE_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 				},
 			}},

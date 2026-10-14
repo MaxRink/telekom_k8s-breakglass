@@ -38,6 +38,9 @@ type NodeMaintenanceTargetApplyConfiguration struct {
 	// every other action. On a CRA node a containerd.service restart also
 	// restarts cra.service (systemd Requires=).
 	Unit *string `json:"unit,omitempty"`
+	// module is the exact kernel module name for module-load and forbidden
+	// for every other action. Each allowlist entry names one module.
+	Module *string `json:"module,omitempty"`
 }
 
 // NodeMaintenanceTargetApplyConfiguration constructs a declarative configuration of the NodeMaintenanceTarget type for use with
@@ -115,5 +118,13 @@ func (b *NodeMaintenanceTargetApplyConfiguration) WithVRF(value string) *NodeMai
 // If called multiple times, the Unit field is set to the value of the last call.
 func (b *NodeMaintenanceTargetApplyConfiguration) WithUnit(value string) *NodeMaintenanceTargetApplyConfiguration {
 	b.Unit = &value
+	return b
+}
+
+// WithModule sets the Module field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Module field is set to the value of the last call.
+func (b *NodeMaintenanceTargetApplyConfiguration) WithModule(value string) *NodeMaintenanceTargetApplyConfiguration {
+	b.Module = &value
 	return b
 }
