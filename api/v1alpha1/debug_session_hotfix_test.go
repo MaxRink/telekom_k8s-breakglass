@@ -89,6 +89,29 @@ func TestHotfixRequestValidation(t *testing.T) {
 			r.Nodes = &HotfixNodeSelection{Names: []string{"worker-1", "worker-2"}}
 		}, true},
 		{"lifetime at cap", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) { r.Lifetime = "30d" }, true},
+		{"diff removing a line that reads like a header", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			r.Payload.File = &HotfixFilePayload{Path: "/etc/ssh/sshd_config", Mode: HotfixFileDiff,
+				Diff: "--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n--- old\n+++ new\n x\n"}
+		}, true},
+		{"url with query", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			r.Payload.File.Content, r.Payload.File.URL = "", "https://s3.example/config.toml?X-Amz-Signature=secret"
+		}, false},
+		{"empty selector", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			r.Nodes = &HotfixNodeSelection{Selector: &metav1.LabelSelector{}}
+		}, false},
+		{"maxUnavailable 0%", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			r.Rollout = &HotfixRollout{MaxUnavailable: kptr.To(intstr.FromString("0%"))}
+		}, false},
+		{"maxUnavailable 150%", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			r.Rollout = &HotfixRollout{MaxUnavailable: kptr.To(intstr.FromString("150%"))}
+		}, false},
+		{"template maxLifetime above 30d", func(p *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			p.MaxLifetime = "60d"
+			r.Lifetime = "40d"
+		}, false},
+		{"truncated hunk", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
+			r.Payload.File = &HotfixFilePayload{Path: "/etc/ssh/sshd_config", Mode: HotfixFileDiff, Diff: "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n x\n-y\n+z\n"}
+		}, false},
 
 		// Pinning.
 		{"image tag", func(_ *DebugSessionHotfix, r *DebugSessionHotfixRequest) {
@@ -342,6 +365,11 @@ func TestHotfixBatchSize(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tc.want, size)
 	}
+	profile.MaxLifetime = "7d"
+	lifetime, err := HotfixLifetime(profile, "")
+	require.NoError(t, err)
+	require.Equal(t, 7*24*time.Hour, lifetime, "default is capped by the template maximum")
+	profile.MaxLifetime = ""
 	effective := HotfixEffectiveRollout(profile, nil)
 	require.Equal(t, HotfixRolloutCanary, effective.Strategy)
 	require.EqualValues(t, 1, effective.CanaryNodes)
@@ -365,6 +393,7 @@ func TestHotfixTemplateContract(t *testing.T) {
 		"no approvers":           func(s *DebugSessionTemplateSpec) { s.Approvers = nil },
 		"auto approve":           func(s *DebugSessionTemplateSpec) { s.Approvers.AutoApproveFor = &AutoApproveConfig{} },
 		"self approval":          func(s *DebugSessionTemplateSpec) { s.BlockSelfApproval = kptr.To(false) },
+		"self approval unset":    func(s *DebugSessionTemplateSpec) { s.BlockSelfApproval = nil },
 		"no max duration":        func(s *DebugSessionTemplateSpec) { s.Constraints = nil },
 		"max duration over 6h":   func(s *DebugSessionTemplateSpec) { s.Constraints.MaxDuration = "7h" },
 		"idle timeout":           func(s *DebugSessionTemplateSpec) { s.Constraints.IdleTimeout = "10m" },
@@ -385,6 +414,9 @@ func TestHotfixTemplateContract(t *testing.T) {
 	require.NoError(t, ValidateHotfixSession(spec, session))
 	session.NodeSelector = map[string]string{"kubernetes.io/hostname": "x"}
 	require.Error(t, ValidateHotfixSession(spec, session), "generic overrides are refused")
+	session.NodeSelector = nil
+	session.TargetNamespace = "kube-system"
+	require.Error(t, ValidateHotfixSession(spec, session), "the fixed namespace cannot be overridden")
 	require.Error(t, ValidateHotfixSession(&DebugSessionTemplateSpec{}, &DebugSessionSpec{Hotfix: testHotfixPlanRequest()}))
 }
 
@@ -407,7 +439,7 @@ func TestHotfixPlanBinding(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "apply-1", Namespace: "breakglass"},
 		Spec:       DebugSessionSpec{Cluster: "c1", TemplateRef: "hotfix", Hotfix: &DebugSessionHotfixRequest{Stage: HotfixStageApply, PlanRef: "plan-1", PlanHash: hash}},
 	}
-	require.NoError(t, ValidateHotfixPlanBinding(apply, planSession(), now))
+	require.NoError(t, ValidateHotfixPlanBinding(testHotfixProfile(), apply, planSession(), now))
 
 	for name, mutate := range map[string]func(*DebugSession){
 		"stale plan":       func(p *DebugSession) { p.Status.Hotfix.PlannedAt.Time = now.Add(-3 * time.Hour) },
@@ -419,14 +451,26 @@ func TestHotfixPlanBinding(t *testing.T) {
 		"payload changed":  func(p *DebugSession) { p.Status.Hotfix.Plan.Payload.Restart = nil },
 		"not a plan":       func(p *DebugSession) { p.Spec.Hotfix.Stage = HotfixStageApply },
 		"other name":       func(p *DebugSession) { p.Name = "plan-2" },
+		"other namespace":  func(p *DebugSession) { p.Namespace = "other" },
+		"tampered hash":    func(p *DebugSession) { p.Status.Hotfix.PlanHash = strings.Repeat("1", 64) },
+		"already applied":  func(p *DebugSession) { p.Status.Hotfix.AppliedBy = "apply-0" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := planSession()
 			mutate(p)
-			require.Error(t, ValidateHotfixPlanBinding(apply, p, now))
+			require.Error(t, ValidateHotfixPlanBinding(testHotfixProfile(), apply, p, now))
 		})
 	}
+	applied := planSession()
+	applied.Status.Hotfix.AppliedBy = "apply-1"
+	require.NoError(t, ValidateHotfixPlanBinding(testHotfixProfile(), apply, applied, now), "the consuming session may re-check its own plan")
+	narrowed := testHotfixProfile()
+	narrowed.AllowedPaths = []string{"/etc/ssh/"}
+	require.Error(t, ValidateHotfixPlanBinding(narrowed, apply, planSession(), now), "plan must still fit a narrowed template")
+	suspended := testHotfixProfile()
+	suspended.Suspended = true
+	require.Error(t, ValidateHotfixPlanBinding(suspended, apply, planSession(), now))
 	wrongHash := apply.DeepCopy()
 	wrongHash.Spec.Hotfix.PlanHash = strings.Repeat("0", 64)
-	require.Error(t, ValidateHotfixPlanBinding(wrongHash, planSession(), now))
+	require.Error(t, ValidateHotfixPlanBinding(testHotfixProfile(), wrongHash, planSession(), now))
 }

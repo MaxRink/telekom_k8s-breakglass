@@ -12,6 +12,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,11 +88,13 @@ const (
 	HotfixMaxSessionDuration = 6 * time.Hour
 	// HotfixPlanValidity is how long a succeeded plan can be applied.
 	HotfixPlanValidity = 2 * time.Hour
-	// HotfixDefaultMaxLifetime caps the lifetime of a hotfix before it must be
+	// HotfixMaxLifetime caps the lifetime of a hotfix before it must be
 	// reconfirmed, rolled back or closed.
-	HotfixDefaultMaxLifetime = 30 * 24 * time.Hour
+	HotfixMaxLifetime = 30 * 24 * time.Hour
 	// HotfixDefaultLifetime is used when a plan does not request a lifetime.
 	HotfixDefaultLifetime = 14 * 24 * time.Hour
+	// HotfixMaxPlanBytes bounds the canonical plan so it fits in a DebugSession status.
+	HotfixMaxPlanBytes = 512 * 1024
 	// HotfixStateDir holds per-hotfix backups and evidence on each node.
 	HotfixStateDir = "/var/lib/breakglass-hotfix"
 )
@@ -374,11 +377,38 @@ type HotfixPlan struct {
 	Lifetime string `json:"lifetime"`
 	// fixedIn names the regular release that will contain the fix.
 	FixedIn string `json:"fixedIn"`
+	// diffs are the distinct reviewed changes, one per pre-image hash.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=atomic
+	Diffs []HotfixPlannedDiff `json:"diffs,omitempty"`
 	// nodes are the planned nodes in batch order.
 	// +kubebuilder:validation:MaxItems=5000
 	// +listType=atomic
 	Nodes []HotfixPlannedNode `json:"nodes"`
 }
+
+// HotfixPlannedDiff is one reviewed change shared by all nodes with the same pre-image.
+type HotfixPlannedDiff struct {
+	// beforeSHA256 is the pre-image hash.
+	BeforeSHA256 string `json:"beforeSHA256"`
+	// afterSHA256 is the planned result hash.
+	AfterSHA256 string `json:"afterSHA256"`
+	// diff is the unified diff for review, truncated to about 2.5 KiB.
+	// +kubebuilder:validation:MaxLength=4096
+	Diff string `json:"diff"`
+}
+
+// HotfixPlannedAction is the planned action on one node.
+// +kubebuilder:validation:Enum=apply;skip
+type HotfixPlannedAction string
+
+const (
+	// HotfixPlannedApply changes the node.
+	HotfixPlannedApply HotfixPlannedAction = "apply"
+	// HotfixPlannedSkip leaves a node that already has the result.
+	HotfixPlannedSkip HotfixPlannedAction = "skip"
+)
 
 // HotfixPlannedNode is the planned action on one Node incarnation.
 type HotfixPlannedNode struct {
@@ -392,17 +422,13 @@ type HotfixPlannedNode struct {
 	// batch is the zero-based batch index.
 	Batch int32 `json:"batch"`
 	// action is apply, or skip when the node already has the target state.
-	// +kubebuilder:validation:Enum=apply;skip
-	Action string `json:"action"`
+	Action HotfixPlannedAction `json:"action"`
 	// beforeSHA256 is the observed pre-image hash (file, manifest or image reference).
 	// +optional
 	BeforeSHA256 string `json:"beforeSHA256,omitempty"`
 	// afterSHA256 is the planned result hash.
 	// +optional
 	AfterSHA256 string `json:"afterSHA256,omitempty"`
-	// diff is the per-node unified diff for review, truncated to about 2.5 KiB.
-	// +optional
-	Diff string `json:"diff,omitempty"`
 	// newPackages lists the Debian packages that are new on this node (node-deb),
 	// so rollback can purge them.
 	// +optional
@@ -421,6 +447,9 @@ type HotfixStatus struct {
 	// plannedAt is when the plan succeeded.
 	// +optional
 	PlannedAt *metav1.Time `json:"plannedAt,omitempty"`
+	// appliedBy is the apply session that consumed this plan. A plan is applied at most once.
+	// +optional
+	AppliedBy string `json:"appliedBy,omitempty"`
 }
 
 var (
@@ -431,8 +460,13 @@ var (
 	hotfixPathPattern       = regexp.MustCompile(`^/[A-Za-z0-9._@+/-]*$`)
 	hotfixUnitPattern       = regexp.MustCompile(`^[a-zA-Z0-9@_.-]{1,240}\.service$`)
 	hotfixSedFlagsPattern   = regexp.MustCompile(`^[gI0-9]*$`)
-	hotfixDiffHunkPattern   = regexp.MustCompile(`^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@`)
+	hotfixDiffHunkPattern   = regexp.MustCompile(`^@@ -[0-9]+(?:,([0-9]+))? \+[0-9]+(?:,([0-9]+))? @@`)
 	hotfixDefaultMaxUnavail = intstr.FromString("10%")
+)
+
+var (
+	hotfixServices   = []HotfixService{"containerd.service", "kubelet.service", "ssh.service", "chrony.service", "systemd-networkd.service"}
+	hotfixStaticPods = []HotfixStaticPod{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd"}
 )
 
 // hotfixDeniedPrefixes are never writable by a hotfix, whatever the profile
@@ -495,8 +529,8 @@ func validateHotfixImage(image string) error {
 func validateHotfixURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || len(raw) > 2048 || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
-		parsed.Fragment != "" || strings.ContainsAny(raw, " \t\r\n") {
-		return fmt.Errorf("url %q must be an https URL without credentials or fragment", raw)
+		parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery || strings.ContainsAny(raw, " \t\r\n") {
+		return fmt.Errorf("url %q must be an https URL without credentials, query or fragment", raw)
 	}
 	return nil
 }
@@ -539,19 +573,45 @@ func validateHotfixDiff(diff string) error {
 	if len(lines) < 4 || !strings.HasPrefix(lines[0], "--- ") || !strings.HasPrefix(lines[1], "+++ ") {
 		return fmt.Errorf("diff must start with one ---/+++ header pair")
 	}
-	hunks := 0
+	hunks, oldLeft, newLeft := 0, 0, 0
 	for _, line := range lines[2:] {
-		switch {
-		case hotfixDiffHunkPattern.MatchString(line):
-			hunks++
-		case hunks > 0 && line != "" && strings.ContainsRune(" +-", rune(line[0])) &&
-			!strings.HasPrefix(line, "--- ") && !strings.HasPrefix(line, "+++ "):
-		default:
+		// Inside a hunk, its header counts decide what is content, so a
+		// removed line that reads "--- x" is still content.
+		if oldLeft > 0 || newLeft > 0 {
+			if line == "" {
+				return fmt.Errorf("diff has an empty line inside a hunk; context lines start with a space")
+			}
+			switch line[0] {
+			case ' ':
+				oldLeft--
+				newLeft--
+			case '-':
+				oldLeft--
+			case '+':
+				newLeft--
+			default:
+				return fmt.Errorf("unexpected diff line %q", line)
+			}
+			if oldLeft < 0 || newLeft < 0 {
+				return fmt.Errorf("hunk line counts do not match its header")
+			}
+			continue
+		}
+		match := hotfixDiffHunkPattern.FindStringSubmatch(line)
+		if match == nil {
 			return fmt.Errorf("diff must contain only hunks of one file; unexpected line %q", line)
 		}
+		oldLeft, newLeft = 1, 1
+		if match[1] != "" {
+			oldLeft, _ = strconv.Atoi(match[1])
+		}
+		if match[2] != "" {
+			newLeft, _ = strconv.Atoi(match[2])
+		}
+		hunks++
 	}
-	if hunks == 0 {
-		return fmt.Errorf("diff has no hunks")
+	if hunks == 0 || oldLeft != 0 || newLeft != 0 {
+		return fmt.Errorf("diff has no hunks or a truncated hunk")
 	}
 	return nil
 }
@@ -569,11 +629,11 @@ func validateHotfixDeb(deb *HotfixDeb) error {
 
 func hotfixMaxLifetime(profile *DebugSessionHotfix) (time.Duration, error) {
 	if profile.MaxLifetime == "" {
-		return HotfixDefaultMaxLifetime, nil
+		return HotfixMaxLifetime, nil
 	}
 	lifetime, err := ParseDuration(profile.MaxLifetime)
-	if err != nil || lifetime <= 0 {
-		return 0, fmt.Errorf("invalid hotfix maxLifetime %q", profile.MaxLifetime)
+	if err != nil || lifetime <= 0 || lifetime > HotfixMaxLifetime {
+		return 0, fmt.Errorf("hotfix maxLifetime %q must be positive and at most %s", profile.MaxLifetime, HotfixMaxLifetime)
 	}
 	return lifetime, nil
 }
@@ -633,18 +693,18 @@ func ValidateHotfixProfile(profile *DebugSessionHotfix) error {
 		}
 	}
 	for _, service := range profile.RestartableServices {
-		if !slices.Contains([]HotfixService{"containerd.service", "kubelet.service", "ssh.service", "chrony.service", "systemd-networkd.service"}, service) {
+		if !slices.Contains(hotfixServices, service) {
 			return fmt.Errorf("unsupported restartable service %q", service)
 		}
 	}
 	for _, pod := range profile.StaticPods {
-		if !slices.Contains([]HotfixStaticPod{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd"}, pod) {
+		if !slices.Contains(hotfixStaticPods, pod) {
 			return fmt.Errorf("unsupported static Pod %q", pod)
 		}
 	}
 	for _, container := range profile.HostContainers {
-		if len(validation.IsDNS1123Label(container.Name)) != 0 || len(validation.IsDNS1123Label(container.ContainerdNamespace)) != 0 ||
-			container.ContainerdNamespace == "k8s.io" || !hotfixUnitPattern.MatchString(container.Unit) {
+		if len(validation.IsDNS1123Label(container.Name)) != 0 || len(validation.IsDNS1123Subdomain(container.ContainerdNamespace)) != 0 ||
+			container.ContainerdNamespace == "k8s.io" || container.ContainerdNamespace == "moby" || !hotfixUnitPattern.MatchString(container.Unit) {
 			return fmt.Errorf("hotfix host container %q needs a DNS label name, a non-Kubernetes containerd namespace and a .service unit", container.Name)
 		}
 		if err := validateHotfixPath(container.ImageRefFile); err != nil {
@@ -840,7 +900,11 @@ func HotfixEffectiveRollout(profile *DebugSessionHotfix, rollout *HotfixRollout)
 			effective.MaxUnavailable = &value
 		}
 	}
-	effective.SoakSeconds = max(effective.SoakSeconds, profile.MinSoakSeconds, 60)
+	floor := profile.MinSoakSeconds
+	if floor == 0 {
+		floor = 60
+	}
+	effective.SoakSeconds = max(effective.SoakSeconds, floor)
 	return effective
 }
 
@@ -851,8 +915,11 @@ func HotfixBatchSize(profile *DebugSessionHotfix, rollout *HotfixRollout, n int)
 	if rollout.MaxUnavailable != nil {
 		value = *rollout.MaxUnavailable
 	}
-	if value.Type == intstr.String && (!strings.HasSuffix(value.StrVal, "%") || strings.HasPrefix(value.StrVal, "-")) {
-		return 0, fmt.Errorf("maxUnavailable %q must be a count or a percentage", value.StrVal)
+	if value.Type == intstr.String {
+		percent, err := strconv.Atoi(strings.TrimSuffix(value.StrVal, "%"))
+		if !strings.HasSuffix(value.StrVal, "%") || err != nil || percent < 1 || percent > 100 {
+			return 0, fmt.Errorf("maxUnavailable %q must be a count or a percentage of 1..100", value.StrVal)
+		}
 	}
 	size, err := intstr.GetScaledValueFromIntOrPercent(&value, n, false)
 	if err != nil || size < 0 || (value.Type == intstr.Int && value.IntVal < 1) {
@@ -883,6 +950,9 @@ func validateHotfixNodes(profile *DebugSessionHotfix, nodes *HotfixNodeSelection
 		}
 	}
 	if nodes.Selector != nil {
+		if len(nodes.Selector.MatchLabels)+len(nodes.Selector.MatchExpressions) == 0 {
+			return fmt.Errorf("nodes.selector must not be empty; select all nodes explicitly with an Exists expression")
+		}
 		if _, err := metav1.LabelSelectorAsSelector(nodes.Selector); err != nil {
 			return fmt.Errorf("invalid node selector: %w", err)
 		}
@@ -960,6 +1030,9 @@ func ValidateHotfixTemplate(spec *DebugSessionTemplateSpec) error {
 	if err := validateFixedExecutorTemplate(spec, "hotfix"); err != nil {
 		return err
 	}
+	if spec.BlockSelfApproval == nil || !*spec.BlockSelfApproval {
+		return fmt.Errorf("hotfix requires blockSelfApproval: true; self-approval is never allowed")
+	}
 	if duration, _ := ParseDuration(spec.Constraints.MaxDuration); duration > HotfixMaxSessionDuration {
 		return fmt.Errorf("hotfix maxDuration must be at most %s", HotfixMaxSessionDuration)
 	}
@@ -997,15 +1070,21 @@ func HotfixPlanHash(plan *HotfixPlan) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if len(data) > HotfixMaxPlanBytes {
+		return "", fmt.Errorf("hotfix plan is %d bytes; at most %d fit in a session status", len(data), HotfixMaxPlanBytes)
+	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
 }
 
 // ValidateHotfixPlanBinding checks that an apply request names an unexpired,
 // succeeded plan of the same cluster and template whose hash matches.
-func ValidateHotfixPlanBinding(apply *DebugSession, plan *DebugSession, now time.Time) error {
-	if apply.Spec.Hotfix == nil || apply.Spec.Hotfix.Stage != HotfixStageApply {
+func ValidateHotfixPlanBinding(profile *DebugSessionHotfix, apply *DebugSession, plan *DebugSession, now time.Time) error {
+	if profile == nil || apply.Spec.Hotfix == nil || apply.Spec.Hotfix.Stage != HotfixStageApply {
 		return fmt.Errorf("not a hotfix apply request")
+	}
+	if profile.Suspended {
+		return fmt.Errorf("hotfix template is suspended")
 	}
 	if plan == nil || plan.Name != apply.Spec.Hotfix.PlanRef || plan.Namespace != apply.Namespace ||
 		plan.Spec.Hotfix == nil || plan.Spec.Hotfix.Stage != HotfixStagePlan {
@@ -1027,6 +1106,16 @@ func ValidateHotfixPlanBinding(apply *DebugSession, plan *DebugSession, now time
 	}
 	if hash != status.PlanHash || hash != apply.Spec.Hotfix.PlanHash {
 		return fmt.Errorf("planHash does not match the reviewed plan")
+	}
+	if status.AppliedBy != "" && status.AppliedBy != apply.Name {
+		return fmt.Errorf("plan was already applied by %s; plan again", status.AppliedBy)
+	}
+	// The template may have been narrowed since the plan; the plan must still fit it.
+	if err := ValidateHotfixPayload(profile, &status.Plan.Payload); err != nil {
+		return fmt.Errorf("plan no longer fits the template: %w", err)
+	}
+	if err := ValidateHotfixRollout(profile, &status.Plan.Payload, &status.Plan.Rollout); err != nil {
+		return fmt.Errorf("plan no longer fits the template: %w", err)
 	}
 	return nil
 }

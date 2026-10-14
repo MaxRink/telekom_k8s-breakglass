@@ -21,6 +21,8 @@ type HotfixPlanApplyConfiguration struct {
 	Lifetime *string `json:"lifetime,omitempty"`
 	// fixedIn names the regular release that will contain the fix.
 	FixedIn *string `json:"fixedIn,omitempty"`
+	// diffs are the distinct reviewed changes, one per pre-image hash.
+	Diffs []HotfixPlannedDiffApplyConfiguration `json:"diffs,omitempty"`
 	// nodes are the planned nodes in batch order.
 	Nodes []HotfixPlannedNodeApplyConfiguration `json:"nodes,omitempty"`
 }
@@ -60,6 +62,19 @@ func (b *HotfixPlanApplyConfiguration) WithLifetime(value string) *HotfixPlanApp
 // If called multiple times, the FixedIn field is set to the value of the last call.
 func (b *HotfixPlanApplyConfiguration) WithFixedIn(value string) *HotfixPlanApplyConfiguration {
 	b.FixedIn = &value
+	return b
+}
+
+// WithDiffs adds the given value to the Diffs field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Diffs field.
+func (b *HotfixPlanApplyConfiguration) WithDiffs(values ...*HotfixPlannedDiffApplyConfiguration) *HotfixPlanApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDiffs")
+		}
+		b.Diffs = append(b.Diffs, *values[i])
+	}
 	return b
 }
 

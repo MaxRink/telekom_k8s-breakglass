@@ -14,6 +14,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Until the hotfix executor is served, a hotfix template must never fall
@@ -44,4 +45,24 @@ func TestHotfixTemplateRefusedUntilServed(t *testing.T) {
 	router.ServeHTTP(response, request)
 	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), "hotfix templates are not supported")
+}
+
+// A session created directly with spec.hotfix, or resolved from a hotfix
+// template, fails before any lease or target write.
+func TestHotfixSessionFailsClosedOnActivation(t *testing.T) {
+	c, ds, template, _ := newDeploymentFenceFixture(t)
+	ds.Spec.Hotfix = &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageClose, RecordName: "hf-1"}
+	require.NoError(t, c.client.Update(t.Context(), ds))
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedTemplateIdentityCaptured = true
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	_, err := c.activateSession(t.Context(), ds, template, nil)
+	require.NoError(t, err)
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), live))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, live.Status.State)
+	require.Contains(t, live.Status.Message, "hotfix sessions are not supported")
+	require.Nil(t, live.Status.ConnectionLease)
 }
