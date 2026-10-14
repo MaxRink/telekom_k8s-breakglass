@@ -18,6 +18,8 @@ image:
     network-repair-preview: []
     kexec-recovery-validate: []
     kexec-recovery: [SYS_BOOT]
+    hotfix-action-file: [CHOWN, FOWNER, DAC_OVERRIDE]
+    hotfix-action-host: [privileged, hostPID]
   controllerDeadline:
     environment: BREAKGLASS_ACTION_DEADLINE_UNIX
     operation: [network-repair, kexec-recovery]
