@@ -6,6 +6,7 @@ package v1alpha1
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -476,4 +477,18 @@ func TestHotfixPlanBinding(t *testing.T) {
 	wrongHash := apply.DeepCopy()
 	wrongHash.Spec.Hotfix.PlanHash = strings.Repeat("0", 64)
 	require.Error(t, ValidateHotfixPlanBinding(testHotfixProfile(), wrongHash, planSession(), now))
+}
+
+// The node executor carries its own copy of the denylist so a tampered Pod
+// spec cannot widen it; both copies must stay equal.
+func TestHotfixDenylistMatchesExecutor(t *testing.T) {
+	data, err := os.ReadFile("../../utils/node-maintenance/cmd/hotfix-action/denylist.txt")
+	require.NoError(t, err)
+	var executor []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			executor = append(executor, line)
+		}
+	}
+	require.Equal(t, hotfixDeniedPrefixes, executor)
 }
