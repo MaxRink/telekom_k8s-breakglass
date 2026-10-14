@@ -90,7 +90,7 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.base.name="alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
       io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery,hotfix-action" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
-      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT"
+      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT; hotfix-action: CHOWN,FOWNER,DAC_OVERRIDE or privileged host namespaces"
 
 # The image is root only for the explicitly allowlisted host-network operation.
 # Controller-owned immutable templates must use a no-capabilities preflight

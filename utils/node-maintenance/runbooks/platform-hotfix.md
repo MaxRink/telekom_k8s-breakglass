@@ -32,7 +32,8 @@ with an independent approver; self-approval is never possible.
 
 Request a `plan` session with the payload, the node selection, the rollout
 and `fixedIn`. The plan changes nothing on the node except caching debs in
-`/var/lib/breakglass-hotfix/<id>/`.
+`/var/lib/breakglass-hotfix/<id>/` and restoring a `policy-rc.d` that an
+earlier, killed hotfix executor left behind.
 
 The approver of the **apply** stage checks the plan:
 
@@ -57,6 +58,11 @@ Effects to expect:
 - static Pod image: the component on that node restarts; etcd only with all
   members healthy;
 - cra-vsr: the node's network is interrupted while the container restarts.
+
+If a deb apply fails half-way, run `dpkg --audit` and `dpkg --configure -a`
+on the node (emergency node debug session) before a rollback. A
+`/usr/sbin/policy-rc.d` that a killed executor left behind is restored by the
+next hotfix run on that node.
 
 ## 5. Revoke at any time
 
