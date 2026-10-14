@@ -87,9 +87,13 @@ func serveFake(conn *net.UnixConn, states map[string]map[string]any, calls chan 
 					continue
 				}
 				var args []string
-				for range r.signature {
-					value, _ := d.string()
-					args = append(args, value)
+				if member == "StartTransientUnit" {
+					args = decodeTransient(d)
+				} else {
+					for range r.signature {
+						value, _ := d.string()
+						args = append(args, value)
+					}
 				}
 				calls <- fakeCall{member: member, args: args}
 				serial := binary.LittleEndian.Uint32(r.body[8:12])
@@ -98,10 +102,32 @@ func serveFake(conn *net.UnixConn, states map[string]map[string]any, calls chan 
 					_, _ = conn.Write(fakeReply(serial, "", nil))
 				case "LoadUnit", "RestartUnit":
 					_, _ = conn.Write(fakeReply(serial, "o", "/org/freedesktop/systemd1/unit/"+strings.ReplaceAll(args[0], ".", "_2e")))
+				case "StartTransientUnit":
+					// A command whose argv names "bad0" fails like a nonzero exit; "slow0"
+					// runs for 6 reads (1.5 s), "hang0" never finishes.
+					state := map[string]any{"LoadState": "loaded", "ActiveState": "active", "Result": "success", "ExecMainStatus": int32(0)}
+					switch {
+					case strings.Contains(args[2], "bad0"):
+						state = map[string]any{"LoadState": "loaded", "ActiveState": "failed", "Result": "exit-code", "ExecMainStatus": int32(1)}
+					case strings.Contains(args[2], "slow0"):
+						state["_activating"] = 6
+					case strings.Contains(args[2], "hang0"):
+						state["_activating"] = 1 << 30
+					}
+					states[args[0]] = state
+					_, _ = conn.Write(fakeReply(serial, "o", "/org/freedesktop/systemd1/job/7"))
+				case "StopUnit", "ResetFailedUnit":
+					delete(states, args[0])
+					_, _ = conn.Write(fakeReply(serial, "o", "/org/freedesktop/systemd1/job/8"))
 				case "Get":
 					unit := strings.TrimPrefix(fields[fieldPath], "/org/freedesktop/systemd1/unit/")
 					unit = strings.ReplaceAll(unit, "_2e", ".")
 					value, ok := states[unit][args[1]]
+					// "_activating" makes the next N ActiveState reads report a running command.
+					if n, _ := states[unit]["_activating"].(int); n > 0 && args[1] == "ActiveState" {
+						states[unit]["_activating"] = n - 1
+						value = "activating"
+					}
 					if !ok {
 						value = map[string]any{"LoadState": "not-found", "ActiveState": "inactive", "SubState": "dead", "ActiveEnterTimestampMonotonic": uint64(0), "NRestarts": uint32(0)}[args[1]]
 					}
@@ -148,6 +174,9 @@ func fakeReply(replySerial uint32, sig string, value any) []byte {
 		case uint32:
 			body.signature("u")
 			body.uint32(v)
+		case int32:
+			body.signature("i")
+			body.uint32(uint32(v))
 		case uint64:
 			body.signature("t")
 			body.align(8)
@@ -270,4 +299,168 @@ func TestReadMessageRejectsMalformedReplies(t *testing.T) {
 	if _, err := d.value("a{sv}"); err == nil {
 		t.Fatal("an unsupported type was decoded")
 	}
+}
+
+// decodeTransient returns [unit, mode, "path|argv..."] and checks the fixed
+// property set of a StartTransientUnit body.
+func decodeTransient(d *decoder) []string {
+	unit, _ := d.string()
+	mode, _ := d.string()
+	propsLen, _ := d.uint32()
+	_ = d.align(8)
+	end := d.pos + int(propsLen)
+	exec := ""
+	names := []string{}
+	for d.pos < end {
+		_ = d.align(8)
+		name, _ := d.string()
+		sig, _ := d.signature()
+		names = append(names, name)
+		switch sig {
+		case "s":
+			_, _ = d.string()
+		case "b":
+			_, _ = d.uint32()
+		case "t":
+			if v, _ := d.uint64(); v != 15_000_000 {
+				return []string{unit, mode, "unexpected TimeoutStopUSec"}
+			}
+		case "a(sasb)":
+			_, _ = d.uint32()
+			_ = d.align(8)
+			path, _ := d.string()
+			argvLen, _ := d.uint32()
+			argvEnd := d.pos + int(argvLen)
+			argv := []string{path}
+			for d.pos < argvEnd {
+				arg, _ := d.string()
+				argv = append(argv, arg)
+			}
+			_, _ = d.uint32()
+			exec = strings.Join(argv, "|")
+		default:
+			return []string{unit, mode, "unexpected property type " + sig}
+		}
+	}
+	auxLen, _ := d.uint32()
+	if strings.Join(names, ",") != "Description,Type,RemainAfterExit,TimeoutStopUSec,ExecStart" || auxLen != 0 {
+		return []string{unit, mode, "unexpected properties " + strings.Join(names, ",")}
+	}
+	return []string{unit, mode, exec}
+}
+
+func TestParseRequestNetplan(t *testing.T) {
+	for _, args := range [][]string{{"netplan-sriov-apply"}, {"netplan-rebind", "enp1s0"}, {"netplan-rebind", "ens1f0np0"}} {
+		if _, err := parseRequest(args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{{"netplan-sriov-apply", "x"}, {"netplan-rebind"}, {"netplan-rebind", "a", "b"},
+		{"netplan-rebind", "../x"}, {"netplan-rebind", "."}, {"netplan-rebind", "-h"}, {"netplan-rebind", "toolonginterface0"}, {"netplan-rebind", "-x y"},
+		{"netplan", "apply"}, {"netplan-apply"}} {
+		if _, err := parseRequest(args); err == nil {
+			t.Fatalf("%v was accepted", args)
+		}
+	}
+}
+
+func TestNetplanCommandsRunAsTransientUnits(t *testing.T) {
+	socket, calls := fakeSystemd(t, map[string]map[string]any{})
+	if err := run(request{command: "netplan-sriov-apply"}, socket); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(request{command: "netplan-rebind", pf: "enp1s0"}, socket); err != nil {
+		t.Fatal(err)
+	}
+	err := run(request{command: "netplan-rebind", pf: "bad0"}, socket)
+	if err == nil || !strings.Contains(err.Error(), "exec_main_status=1") {
+		t.Fatalf("failed command: %v", err)
+	}
+	var started []string
+	timeout := time.After(5 * time.Second)
+	for len(started) < 3 {
+		select {
+		case call := <-calls:
+			if call.member == "StartTransientUnit" {
+				started = append(started, strings.Join(call.args, " "))
+			}
+		case <-timeout:
+			t.Fatalf("started only %v", started)
+		}
+	}
+	want := []string{
+		"breakglass-netplan-sriov-apply.service fail /usr/sbin/netplan|/usr/sbin/netplan|apply|--sriov-only",
+		"breakglass-netplan-rebind.service fail /usr/sbin/netplan|/usr/sbin/netplan|rebind|enp1s0",
+		"breakglass-netplan-rebind.service fail /usr/sbin/netplan|/usr/sbin/netplan|rebind|bad0",
+	}
+	if strings.Join(started, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("StartTransientUnit calls:\n%s\nwant:\n%s", strings.Join(started, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestTransientRunPollsBeyondOneCallDeadlineAndClearsLeftovers(t *testing.T) {
+	saved := callTimeout
+	callTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { callTimeout = saved })
+	// A leftover unit of an interrupted run is stopped before the new run.
+	socket, calls := fakeSystemd(t, map[string]map[string]any{
+		"breakglass-netplan-rebind.service": {"LoadState": "loaded", "ActiveState": "activating"},
+	})
+	c, err := dialSystemd(socket, os.Getuid(), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	// The run takes 1.5 s, three times the per-call deadline.
+	if err := runTransient(c, "breakglass-netplan-rebind.service", []string{netplanBinary, "rebind", "slow0"}, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	var members []string
+	timeout := time.After(5 * time.Second)
+	for len(members) == 0 || members[len(members)-1] != "StopUnit" || !contains(members, "StartTransientUnit") {
+		select {
+		case call := <-calls:
+			if call.member == "StopUnit" || call.member == "StartTransientUnit" {
+				members = append(members, call.member)
+			}
+		case <-timeout:
+			t.Fatalf("calls %v", members)
+		}
+	}
+	if members[0] != "StopUnit" || members[1] != "StartTransientUnit" {
+		t.Fatalf("the leftover unit was not stopped first: %v", members)
+	}
+}
+
+func TestTransientRunTimeoutStopsTheUnit(t *testing.T) {
+	socket, calls := fakeSystemd(t, map[string]map[string]any{})
+	c, err := dialSystemd(socket, os.Getuid(), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	err = runTransient(c, "breakglass-netplan-rebind.service", []string{netplanBinary, "rebind", "hang0"}, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "did not finish within 1s") {
+		t.Fatalf("hanging command: %v", err)
+	}
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case call := <-calls:
+			if call.member == "StopUnit" {
+				return
+			}
+		case <-timeout:
+			t.Fatal("the timed-out unit was never stopped")
+		}
+	}
+}
+
+func contains(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }

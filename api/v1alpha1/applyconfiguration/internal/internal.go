@@ -3472,6 +3472,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: unit
       type:
         scalar: string
+    - name: virtualFunctions
+      type:
+        scalar: numeric
     - name: vlan
       type:
         scalar: numeric

@@ -2380,6 +2380,7 @@ spec:
                     - kexec-recovery
                     - service-restart
                     - module-load
+                    - sriov-reprovision
                     type: string
                   allowedTargets:
                     description: allowedTargets is an exact allowlist, not a selector
@@ -2401,8 +2402,9 @@ spec:
                           type: string
                         interface:
                           description: |-
-                            interface is the neighbour interface or bridge FDB port. It is required
-                            for network repair and forbidden for kexec-recovery.
+                            interface is the neighbour interface or bridge FDB port, or the SR-IOV
+                            physical function for sriov-reprovision. It is required for network
+                            repair and sriov-reprovision and forbidden for the other actions.
                           maxLength: 15
                           type: string
                         module:
@@ -2435,6 +2437,16 @@ spec:
                           - kubelet.service
                           - cra.service
                           type: string
+                        virtualFunctions:
+                          description: |-
+                            virtualFunctions is the exact number of SR-IOV virtual functions that
+                            the node's netplan configuration creates on the physical function named
+                            by interface. It is required for sriov-reprovision and forbidden for
+                            every other action.
+                          format: int32
+                          maximum: 256
+                          minimum: 1
+                          type: integer
                         vlan:
                           description: vlan is required only for an FDB operation.
                           format: int32
@@ -2516,8 +2528,9 @@ spec:
                     type: object
                   service:
                     description: |-
-                      service bounds a service-restart profile. It is required for
-                      service-restart and forbidden for every other action.
+                      service bounds a drained host action that runs through systemd. It is
+                      required for service-restart and sriov-reprovision and forbidden for
+                      every other action.
                     properties:
                       drainTimeoutSeconds:
                         description: |-

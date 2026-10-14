@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed node-maintenance `action: sriov-reprovision` re-creates the SR-IOV
+  virtual functions of one allowlisted physical function (exact PF and VF
+  count) on a cordoned and drained worker Node. The executor is the
+  capability-free `service-restart` Pod; the `service-action` helper runs the
+  fixed host commands `netplan apply --sriov-only` and `netplan rebind <PF>`
+  as transient systemd units and the helper requires exactly the approved
+  number of driver-bound VFs. The controller then recreates the template's
+  `restartPods` (for example the SR-IOV device plugin) and uncordons only on
+  success. See `docs/node-maintenance-controller.md#sr-iov-re-provision-profiles`.
+
 - Typed node-maintenance `action: module-load` loads one allowlisted kernel
   module (exact name, no parameters) of the running kernel until the next
   reboot. The executor adds only `SYS_MODULE` and reads the host module tree

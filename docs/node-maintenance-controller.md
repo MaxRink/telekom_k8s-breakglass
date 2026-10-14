@@ -8,8 +8,9 @@ SPDX-License-Identifier: CC-BY-4.0
 `DebugSessionTemplate.spec.nodeMaintenance` opts a profile into the controller's
 fixed executor. It is absent by default. Only `neighbor-replace`,
 `bridge-fdb-replace`, `kexec-recovery` (each optionally as a preview),
-`service-restart` of an allowlisted systemd unit and `module-load` of an
-allowlisted kernel module are supported; this does
+`service-restart` of an allowlisted systemd unit, `module-load` of an
+allowlisted kernel module and `sriov-reprovision` of one allowlisted SR-IOV
+physical function are supported; this does
 **not** enable broad flushes, link cycling, a caller-selected kernel or unit,
 arbitrary host commands or traffic mirroring.
 
@@ -330,6 +331,53 @@ option, softdep or install line applies; the name must resolve to itself
 is recorded unchanged. Persist a needed module through node configuration; a replacement
 node otherwise misses it again.
 
+### SR-IOV re-provision profiles
+
+`action: sriov-reprovision` re-creates the SR-IOV virtual functions (VFs) of one
+physical function (PF) from the node's own netplan configuration, for a node
+whose VFs were not created at boot. Each allowlist entry carries `targetNode`,
+`targetNodeUID`, `interface` (the PF) and `virtualFunctions` (the exact VF
+count, 1 through 256, that netplan creates for that PF). The profile needs the
+same `service` bounds as `service-restart`; there is no preview.
+
+```yaml
+  nodeMaintenance:
+    action: sriov-reprovision
+    image: YOUR_VERIFIED_NODE_MAINTENANCE_IMAGE_BY_DIGEST
+    allowedTargets:
+      - targetNode: exact-node-name
+        targetNodeUID: exact-live-node-uid
+        interface: ens1f0
+        virtualFunctions: 8
+    service:
+      drainTimeoutSeconds: 300
+      restartPods:
+        - namespace: kube-system
+          matchLabels:
+            app: sriov-device-plugin
+```
+
+The controller cordons and drains the worker Node as for `service-restart`
+(control-plane Nodes are refused). The executor Pod is the `service-restart`
+Pod: no capabilities, RuntimeDefault seccomp, a read-only root filesystem, the
+host network (to read the PF in sysfs) and only `/run/systemd/private` as a
+read-only `Socket` hostPath. The helper asks systemd to run two fixed commands
+as transient oneshot units on the host, `netplan apply --sriov-only` and
+`netplan rebind <PF>`, and requires exit status 0 from both within 120 seconds
+each (a unit that runs longer is stopped; a leftover unit of an interrupted run
+is stopped and reported before the next run). It then waits up to 120 seconds
+until `sriov_numvfs` of the PF equals `virtualFunctions` and every VF exists and
+is bound to a driver. As for `service-restart`, `maxDuration` must cover
+`drainTimeoutSeconds` plus 600 seconds. The controller recreates the
+`restartPods` (typically the SR-IOV device plugin) once and requires a Ready
+Node and Ready replacements before it reports success and uncordons. Anything
+else keeps the Node cordoned with the advisory to replace it.
+
+`netplan apply --sriov-only` applies the SR-IOV settings of every PF in the
+node's netplan configuration and changes no other network setting; `netplan
+rebind` acts on the allowlisted PF only. Nothing is persisted: the next boot
+creates the VFs from netplan again.
+
 ## Approval, execution and cleanup
 
 The server validates the request and live Node UID before PendingApproval.
@@ -344,7 +392,7 @@ session UID. API-server atomic Create and UID/resourceVersion-fenced Delete
 arbitrate ownership; **Lease age alone never permits takeover**. A contender
 remains PendingApproval with an exclusive-Lease wait message and no executor.
 
-The single network-repair Pod has (see above for the kexec, service-restart and module-load Pods):
+The single network-repair Pod has (see above for the kexec, service-restart, module-load and sriov-reprovision Pods):
 
 - exact `nodeName`, `hostNetwork: true`, no host PID/IPC;
 - root UID/GID, NET_ADMIN only, all other capabilities dropped;
