@@ -23,6 +23,8 @@ type HotfixStatusApplyConfiguration struct {
 	PlanHash *string `json:"planHash,omitempty"`
 	// plannedAt is when the plan succeeded.
 	PlannedAt *v1.Time `json:"plannedAt,omitempty"`
+	// appliedBy is the apply session that consumed this plan. A plan is applied at most once.
+	AppliedBy *string `json:"appliedBy,omitempty"`
 }
 
 // HotfixStatusApplyConfiguration constructs a declarative configuration of the HotfixStatus type for use with
@@ -52,5 +54,13 @@ func (b *HotfixStatusApplyConfiguration) WithPlanHash(value string) *HotfixStatu
 // If called multiple times, the PlannedAt field is set to the value of the last call.
 func (b *HotfixStatusApplyConfiguration) WithPlannedAt(value v1.Time) *HotfixStatusApplyConfiguration {
 	b.PlannedAt = &value
+	return b
+}
+
+// WithAppliedBy sets the AppliedBy field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AppliedBy field is set to the value of the last call.
+func (b *HotfixStatusApplyConfiguration) WithAppliedBy(value string) *HotfixStatusApplyConfiguration {
+	b.AppliedBy = &value
 	return b
 }

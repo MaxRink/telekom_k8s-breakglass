@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+)
+
 // HotfixPlannedNodeApplyConfiguration represents a declarative configuration of the HotfixPlannedNode type for use
 // with apply.
 //
@@ -22,13 +26,11 @@ type HotfixPlannedNodeApplyConfiguration struct {
 	// batch is the zero-based batch index.
 	Batch *int32 `json:"batch,omitempty"`
 	// action is apply, or skip when the node already has the target state.
-	Action *string `json:"action,omitempty"`
+	Action *apiv1alpha1.HotfixPlannedAction `json:"action,omitempty"`
 	// beforeSHA256 is the observed pre-image hash (file, manifest or image reference).
 	BeforeSHA256 *string `json:"beforeSHA256,omitempty"`
 	// afterSHA256 is the planned result hash.
 	AfterSHA256 *string `json:"afterSHA256,omitempty"`
-	// diff is the per-node unified diff for review, truncated to about 2.5 KiB.
-	Diff *string `json:"diff,omitempty"`
 	// newPackages lists the Debian packages that are new on this node (node-deb),
 	// so rollback can purge them.
 	NewPackages []string `json:"newPackages,omitempty"`
@@ -75,7 +77,7 @@ func (b *HotfixPlannedNodeApplyConfiguration) WithBatch(value int32) *HotfixPlan
 // WithAction sets the Action field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Action field is set to the value of the last call.
-func (b *HotfixPlannedNodeApplyConfiguration) WithAction(value string) *HotfixPlannedNodeApplyConfiguration {
+func (b *HotfixPlannedNodeApplyConfiguration) WithAction(value apiv1alpha1.HotfixPlannedAction) *HotfixPlannedNodeApplyConfiguration {
 	b.Action = &value
 	return b
 }
@@ -93,14 +95,6 @@ func (b *HotfixPlannedNodeApplyConfiguration) WithBeforeSHA256(value string) *Ho
 // If called multiple times, the AfterSHA256 field is set to the value of the last call.
 func (b *HotfixPlannedNodeApplyConfiguration) WithAfterSHA256(value string) *HotfixPlannedNodeApplyConfiguration {
 	b.AfterSHA256 = &value
-	return b
-}
-
-// WithDiff sets the Diff field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Diff field is set to the value of the last call.
-func (b *HotfixPlannedNodeApplyConfiguration) WithDiff(value string) *HotfixPlannedNodeApplyConfiguration {
-	b.Diff = &value
 	return b
 }
 
