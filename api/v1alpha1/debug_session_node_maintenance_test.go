@@ -319,3 +319,33 @@ func TestNodeMaintenanceServiceRestartMaxDurationCoversDrainAndChecks(t *testing
 	spec.Constraints.MaxDuration = "11m"
 	require.NoError(t, ValidateNodeMaintenanceTemplate(spec))
 }
+
+func TestNodeMaintenanceModuleLoadIsModuleOnly(t *testing.T) {
+	image := "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64)
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Module: "ip6_gre"}
+	profile := &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionModuleLoad, Image: image, AllowedTargets: []NodeMaintenanceTarget{target}}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile, &target))
+	for _, change := range []struct {
+		name   string
+		mutate func(*NodeMaintenanceTarget)
+	}{
+		{"other module", func(v *NodeMaintenanceTarget) { v.Module = "gre" }},
+		{"path", func(v *NodeMaintenanceTarget) { v.Module = "../ip6_gre" }},
+		{"parameters", func(v *NodeMaintenanceTarget) { v.Module = "ip6_gre debug=1" }},
+		{"dash form", func(v *NodeMaintenanceTarget) { v.Module = "ip6-gre" }},
+		{"no module", func(v *NodeMaintenanceTarget) { v.Module = "" }},
+		{"unit", func(v *NodeMaintenanceTarget) { v.Unit = "kubelet.service" }},
+		{"interface", func(v *NodeMaintenanceTarget) { v.Interface = "eth0" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			request := *target.DeepCopy()
+			change.mutate(&request)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile, &request))
+		})
+	}
+	preview := profile.DeepCopy()
+	preview.DryRun = true
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(preview, &target), "no preview")
+	withModule := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service", Module: "gre"}
+	require.Error(t, ValidateNodeMaintenanceTarget(NodeMaintenanceActionServiceRestart, &withModule))
+}

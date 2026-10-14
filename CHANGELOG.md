@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed node-maintenance `action: module-load` loads one allowlisted kernel
+  module (exact name, no parameters) of the running kernel until the next
+  reboot. The executor adds only `SYS_MODULE` and reads the host module tree
+  from a read-only `/lib/modules` hostPath; modprobe runs with an empty
+  configuration directory and `--ignore-install`, and the name must resolve
+  to the module itself. The node-maintenance image adds `kmod`. See
+  `docs/node-maintenance-controller.md#module-load-profiles`.
+
 - Typed node-maintenance `action: service-restart` restarts one allowlisted
   host systemd unit (`containerd.service`, `kubelet.service`, `cra.service`)
   on a cordoned and drained worker Node. The executor has no capabilities and

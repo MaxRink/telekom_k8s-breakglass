@@ -7,8 +7,9 @@ SPDX-License-Identifier: CC-BY-4.0
 
 `DebugSessionTemplate.spec.nodeMaintenance` opts a profile into the controller's
 fixed executor. It is absent by default. Only `neighbor-replace`,
-`bridge-fdb-replace`, `kexec-recovery` (each optionally as a preview) and
-`service-restart` of an allowlisted systemd unit are supported; this does
+`bridge-fdb-replace`, `kexec-recovery` (each optionally as a preview),
+`service-restart` of an allowlisted systemd unit and `module-load` of an
+allowlisted kernel module are supported; this does
 **not** enable broad flushes, link cycling, a caller-selected kernel or unit,
 arbitrary host commands or traffic mirroring.
 
@@ -299,6 +300,36 @@ Node `patch`). Admission
 policies that forbid hostPath volumes need a per-session exception for the
 executor Pod in the template's auxiliary resources.
 
+### Module load profiles
+
+`action: module-load` loads one kernel module of the running kernel, with the
+dependencies and soft dependencies the host module tree lists, until the next
+reboot. Each allowlist entry
+carries `targetNode`, `targetNodeUID` and `module` (an exact name matching
+`^[a-z0-9_]{1,56}$`, no parameters); there is no preview and no drain.
+
+```yaml
+  nodeMaintenance:
+    action: module-load
+    image: YOUR_VERIFIED_NODE_MAINTENANCE_IMAGE_BY_DIGEST
+    allowedTargets:
+      - targetNode: exact-node-name
+        targetNodeUID: exact-live-node-uid
+        module: ip6_gre
+```
+
+The executor Pod adds only `SYS_MODULE`, uses RuntimeDefault seccomp, a
+read-only root filesystem, neither the host network nor the host PID
+namespace, and mounts the host `/lib/modules` read-only from a `Directory`
+hostPath (admission policies that forbid hostPath volumes need the same
+per-session exception as the other host executors). The helper runs modprobe
+with an empty configuration directory (`-C`), so no image `modprobe.d` alias,
+option, softdep or install line applies; the name must resolve to itself
+(`--resolve-alias`), and `--ignore-install` is set. It succeeds only when
+`/sys/module/<module>` exists afterwards; an already loaded or built-in module
+is recorded unchanged. Persist a needed module through node configuration; a replacement
+node otherwise misses it again.
+
 ## Approval, execution and cleanup
 
 The server validates the request and live Node UID before PendingApproval.
@@ -313,7 +344,7 @@ session UID. API-server atomic Create and UID/resourceVersion-fenced Delete
 arbitrate ownership; **Lease age alone never permits takeover**. A contender
 remains PendingApproval with an exclusive-Lease wait message and no executor.
 
-The single network-repair Pod has (see above for the kexec and service-restart Pods):
+The single network-repair Pod has (see above for the kexec, service-restart and module-load Pods):
 
 - exact `nodeName`, `hostNetwork: true`, no host PID/IPC;
 - root UID/GID, NET_ADMIN only, all other capabilities dropped;

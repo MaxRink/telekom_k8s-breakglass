@@ -22,7 +22,7 @@ import (
 // It deliberately has no command, environment, capability or shell overrides.
 type DebugSessionNodeMaintenance struct {
 	// action is the one executor operation enabled by this profile.
-	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;kexec-recovery;service-restart
+	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;kexec-recovery;service-restart;module-load
 	Action string `json:"action"`
 	// image must be an immutable node-maintenance helper image.
 	// +kubebuilder:validation:Pattern=`^.+@sha256:[a-f0-9]{64}$`
@@ -149,6 +149,11 @@ type NodeMaintenanceTarget struct {
 	// +optional
 	// +kubebuilder:validation:Enum=containerd.service;kubelet.service;cra.service
 	Unit string `json:"unit,omitempty"`
+	// module is the exact kernel module name for module-load and forbidden
+	// for every other action. Each allowlist entry names one module.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9_]{1,56}$`
+	Module string `json:"module,omitempty"`
 }
 
 var maintenanceInterfacePattern = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
@@ -167,6 +172,11 @@ const NodeMaintenanceActionServiceRestart = "service-restart"
 // serviceRestartMarginSeconds is the minimum session time left after a full
 // drain for the helper (at most 240s), a Ready Node and recreated Pods.
 const serviceRestartMarginSeconds = 600
+
+// NodeMaintenanceActionModuleLoad loads one allowlisted kernel module (non-persistent).
+const NodeMaintenanceActionModuleLoad = "module-load"
+
+var maintenanceModulePattern = regexp.MustCompile(`^[a-z0-9_]{1,56}$`)
 
 // nodeMaintenanceServiceUnits is the complete service-restart unit allowlist.
 var nodeMaintenanceServiceUnits = []string{"containerd.service", "kubelet.service", "cra.service"}
@@ -291,6 +301,19 @@ func ValidateNodeMaintenanceTarget(action string, target *NodeMaintenanceTarget)
 		!maintenanceUIDPattern.MatchString(target.TargetNodeUID) {
 		return fmt.Errorf("an exact Node name and UID are required")
 	}
+	if action == NodeMaintenanceActionModuleLoad {
+		if !maintenanceModulePattern.MatchString(target.Module) {
+			return fmt.Errorf("module-load requires an exact kernel module name")
+		}
+		if target.Unit != "" || target.Interface != "" || target.EntryMAC != "" || target.NeighborAddress != "" ||
+			target.Bridge != "" || target.VLAN != nil || target.VRF != "" {
+			return fmt.Errorf("module-load targets only an exact Node name, UID and module")
+		}
+		return nil
+	}
+	if target.Module != "" {
+		return fmt.Errorf("module is valid only for module-load")
+	}
 	if action == NodeMaintenanceActionServiceRestart {
 		if !slices.Contains(nodeMaintenanceServiceUnits, target.Unit) {
 			return fmt.Errorf("service-restart requires a unit from %v", nodeMaintenanceServiceUnits)
@@ -360,6 +383,9 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 	if err := validateNodeMaintenanceService(profile); err != nil {
 		return err
 	}
+	if profile.Action == NodeMaintenanceActionModuleLoad && profile.DryRun {
+		return fmt.Errorf("module-load has no preview; dryRun is not supported")
+	}
 	if err := ValidateNodeMaintenanceTarget(profile.Action, target); err != nil {
 		return err
 	}
@@ -375,7 +401,7 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 		if target.TargetNode == allowed.TargetNode && target.TargetNodeUID == allowed.TargetNodeUID &&
 			target.Interface == allowed.Interface && target.EntryMAC == allowed.EntryMAC &&
 			target.NeighborAddress == allowed.NeighborAddress && target.Bridge == allowed.Bridge &&
-			target.VRF == allowed.VRF && target.Unit == allowed.Unit && vlanMatches {
+			target.VRF == allowed.VRF && target.Unit == allowed.Unit && target.Module == allowed.Module && vlanMatches {
 			return nil
 		}
 	}
