@@ -1799,6 +1799,140 @@ spec:
                     description: appliedBy is the apply session that consumed this
                       plan. A plan is applied at most once.
                     type: string
+                  auxiliaryDeployed:
+                    description: auxiliaryDeployed is set after the template's auxiliary
+                      resources exist.
+                    type: boolean
+                  batchCompletedAt:
+                    description: |-
+                      batchCompletedAt is when every executor of the current batch finished;
+                      the health gate must pass within the gate timeout after it.
+                    format: date-time
+                    type: string
+                  clusterLeaseUID:
+                    description: clusterLeaseUID is the per-cluster hotfix Lease held
+                      by apply and rollback.
+                    type: string
+                  currentBatch:
+                    description: currentBatch is the batch in progress.
+                    format: int32
+                    type: integer
+                  gatePassedAt:
+                    description: |-
+                      gatePassedAt is when the current batch first passed its health gate;
+                      the next batch starts after the soak time.
+                    format: date-time
+                    type: string
+                  intentAudited:
+                    description: intentAudited records the durable audit receipt of
+                      the stage intent.
+                    type: boolean
+                  namespaceUID:
+                    description: namespaceUID fences the maintenance namespace on
+                      the target cluster.
+                    type: string
+                  nodes:
+                    description: nodes is the per-node executor inventory.
+                    items:
+                      description: HotfixNodeStatus is the single-attempt executor
+                        inventory of one node.
+                      properties:
+                        action:
+                          description: action is the planned action (plan stage).
+                          enum:
+                          - apply
+                          - skip
+                          type: string
+                        activeDeadlineSeconds:
+                          description: activeDeadlineSeconds is the executor Pod deadline,
+                            fixed before creation.
+                          format: int64
+                          type: integer
+                        afterSHA256:
+                          description: afterSHA256 is the result hash.
+                          type: string
+                        batch:
+                          description: batch is the zero-based batch index.
+                          format: int32
+                          type: integer
+                        beforeSHA256:
+                          description: beforeSHA256 is the observed pre-image hash.
+                          type: string
+                        controlPlane:
+                          description: controlPlane marks control-plane nodes.
+                          type: boolean
+                        createAttempted:
+                          description: createAttempted is persisted before the Pod
+                            is created; a missing Pod is never recreated.
+                          type: boolean
+                        deadlineUnix:
+                          description: deadlineUnix is the executor deadline, fixed
+                            before creation.
+                          format: int64
+                          type: integer
+                        jobUID:
+                          description: jobUID is the externally managed Job envelope.
+                          type: string
+                        leaseUID:
+                          description: leaseUID is the per-node Lease shared with
+                            node maintenance.
+                          type: string
+                        message:
+                          description: message explains failures.
+                          maxLength: 1024
+                          type: string
+                        name:
+                          description: name is the Node name.
+                          type: string
+                        newPackages:
+                          description: newPackages are Debian packages new on this
+                            node.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        podUID:
+                          description: podUID is the single executor Pod.
+                          type: string
+                        released:
+                          description: released is set after the executor is gone
+                            and the node Lease is released.
+                          type: boolean
+                        result:
+                          description: result is the executor result.
+                          enum:
+                          - planned
+                          - applied
+                          - skipped
+                          - rolledBack
+                          - failed
+                          - interrupted
+                          - unknown
+                          type: string
+                        uid:
+                          description: uid is the Node UID.
+                          type: string
+                      required:
+                      - batch
+                      - name
+                      - uid
+                      type: object
+                    maxItems: 1000
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  operationID:
+                    description: operationID correlates the session's executors, Leases
+                      and audit events.
+                    type: string
+                  phase:
+                    description: phase is the controller's progress.
+                    enum:
+                    - Running
+                    - Soaking
+                    - Succeeded
+                    - Stopped
+                    - Failed
+                    type: string
                   plan:
                     description: plan is set by a succeeded plan session.
                     properties:
@@ -2126,6 +2260,23 @@ spec:
                     description: plannedAt is when the plan succeeded.
                     format: date-time
                     type: string
+                  reason:
+                    description: reason explains a stopped or failed stage; it is
+                      set once and kept.
+                    maxLength: 1024
+                    type: string
+                  recordName:
+                    description: recordName is the HotfixRecord of apply, rollback,
+                      reconfirm and close.
+                    type: string
+                  released:
+                    description: released is set after every executor, auxiliary resource
+                      and Lease is gone.
+                    type: boolean
+                  resultAudited:
+                    description: resultAudited records the durable audit receipt of
+                      the stage result.
+                    type: boolean
                 type: object
               kubectlDebugStatus:
                 description: kubectlDebugStatus tracks kubectl debug operations for
