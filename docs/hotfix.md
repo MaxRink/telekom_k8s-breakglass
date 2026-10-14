@@ -79,7 +79,7 @@ spec:
     allowAllAtOnce: true
     maxBatchPercent: 25    # default 25
     minSoakSeconds: 60     # default 60
-    maxNodes: 2000         # default 2000
+    maxNodes: 500          # default 500, at most 1000
     nodeDeadlineSeconds: 900
     maxLifetime: 30d       # default and maximum 30d
 ```
@@ -94,7 +94,9 @@ Pod, while `static-pod-image` changes only the digest-pinned image.
 
 The API rejects a request before approval when any rule fails:
 
-- **Pinning.** Images are `repository@sha256:<64 hex>` without a tag. Files and
+- **Pinning.** Images are `registry-host/repository@sha256:<64 hex>` without a
+  tag; the registry host is required so the reference is not normalised to
+  `docker.io` on the node. Files and
   debs are pinned by lowercase SHA-256. The executor image is digest-pinned.
 - **Sources.** URLs must be `https` without credentials, query string or
   fragment (presigned URLs would put tokens into the audit trail). Any
@@ -106,7 +108,9 @@ The API rejects a request before approval when any rule fails:
   executor also refuses symlinks and non-regular files. A hard denylist applies
   even if `allowedPaths` covers it. The executor checks every component of the
   path on the node with `lstat` and refuses any symlink, so a symlinked
-  directory inside an allowed prefix cannot redirect the write. Denylist: `/etc/kubernetes/pki/`, kubeconfigs in
+  directory inside an allowed prefix cannot redirect the write. Use canonical
+  paths: on merged-/usr systems `/bin`, `/sbin` and `/lib` are symlinks, so
+  name `/usr/bin/...`. Denylist: `/etc/kubernetes/pki/`, kubeconfigs in
   `/etc/kubernetes/*.conf` and `/var/lib/kubelet/kubeconfig`,
   `/var/lib/kubelet/pki/`, `/etc/shadow*`, `/etc/gshadow*`, `/etc/sudoers*`,
   `/root/`, any `.ssh/` directory, `/etc/ssh/*_key*`, `/proc/`, `/sys/`,
