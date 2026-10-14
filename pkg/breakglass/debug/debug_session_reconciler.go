@@ -993,6 +993,10 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
 	}
 
+	if template.Spec.Hotfix != nil || ds.Spec.Hotfix != nil {
+		return c.failSession(ctx, ds, "hotfix sessions are not supported by this controller version")
+	}
+
 	// Establish the bounded lease durably before deploying any target resources.
 	// The session remains Pending/PendingApproval during deployment, so API
 	// authorization cannot use the lease until activation completes.
@@ -1014,9 +1018,6 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	ds.Status.Message = "Activating debug session"
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
-	}
-	if template.Spec.Hotfix != nil || ds.Spec.Hotfix != nil {
-		return c.failSession(ctx, ds, "hotfix sessions are not supported by this controller version")
 	}
 	if template.Spec.NodeMaintenance != nil {
 		// Install the cleanup finalizer before acquiring any hub lease: a

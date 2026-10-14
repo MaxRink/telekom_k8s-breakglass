@@ -320,6 +320,44 @@ spec:
               planHash:
                 description: planHash is the reviewed plan hash of the apply session.
                 type: string
+              rollout:
+                description: rollout is the effective rollout of the apply stage;
+                  rollback reuses it.
+                properties:
+                  allAtOnceReason:
+                    description: allAtOnceReason is mandatory for the all-at-once
+                      strategy.
+                    maxLength: 700
+                    type: string
+                  canaryNodes:
+                    description: canaryNodes is the size of the first batch (default
+                      1).
+                    format: int32
+                    maximum: 10
+                    minimum: 1
+                    type: integer
+                  maxUnavailable:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      maxUnavailable is the batch size after the canary, as a count or a
+                      percentage of selected nodes (default 10%).
+                    x-kubernetes-int-or-string: true
+                  soakSeconds:
+                    description: soakSeconds is the wait after each batch (at least
+                      the profile minimum).
+                    format: int32
+                    maximum: 3600
+                    minimum: 0
+                    type: integer
+                  strategy:
+                    description: strategy defaults to canary.
+                    enum:
+                    - canary
+                    - all-at-once
+                    type: string
+                type: object
               sessions:
                 description: sessions are the four-eyes sessions of this hotfix, in
                   order.
@@ -372,6 +410,7 @@ spec:
             - nodeSelection
             - payload
             - planHash
+            - rollout
             - sessions
             - templateRef
             type: object
@@ -452,6 +491,14 @@ spec:
                       description: at is the last state change.
                       format: date-time
                       type: string
+                    beforeSHA256:
+                      description: beforeSHA256 is the pre-image hash on this node;
+                        rollback restores it.
+                      type: string
+                    controlPlane:
+                      description: controlPlane marks control-plane nodes, which change
+                        one at a time.
+                      type: boolean
                     message:
                       description: message explains failed, reverted and uncovered
                         states.
@@ -460,6 +507,13 @@ spec:
                     name:
                       description: name is the Node name.
                       type: string
+                    newPackages:
+                      description: newPackages are Debian packages the hotfix added;
+                        rollback purges them.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
                     state:
                       description: state is the tracked state.
                       enum:

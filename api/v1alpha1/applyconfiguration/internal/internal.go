@@ -2937,6 +2937,12 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlan
   map:
     fields:
+    - name: diffs
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedDiff
+          elementRelationship: atomic
     - name: fixedIn
       type:
         scalar: string
@@ -2955,12 +2961,26 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: rollout
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRollout
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedAction
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedDiff
+  map:
+    fields:
+    - name: afterSHA256
+      type:
+        scalar: string
+    - name: beforeSHA256
+      type:
+        scalar: string
+    - name: diff
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedNode
   map:
     fields:
     - name: action
       type:
-        scalar: string
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedAction
     - name: afterSHA256
       type:
         scalar: string
@@ -2973,9 +2993,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: controlPlane
       type:
         scalar: boolean
-    - name: diff
-      type:
-        scalar: string
     - name: name
       type:
         scalar: string
@@ -3015,12 +3032,24 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: at
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: beforeSHA256
+      type:
+        scalar: string
+    - name: controlPlane
+      type:
+        scalar: boolean
     - name: message
       type:
         scalar: string
     - name: name
       type:
         scalar: string
+    - name: newPackages
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: state
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeState
@@ -3069,6 +3098,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: planHash
       type:
         scalar: string
+    - name: rollout
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRollout
     - name: sessions
       type:
         list:
@@ -3129,6 +3161,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStatus
   map:
     fields:
+    - name: appliedBy
+      type:
+        scalar: string
     - name: plan
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlan
