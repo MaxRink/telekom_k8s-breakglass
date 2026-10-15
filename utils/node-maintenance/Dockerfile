@@ -45,9 +45,9 @@ RUN apk add --no-cache \
     && rm -f /sbin/apk /sbin/apk.static
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance
-COPY --from=network-action-builder /out/network-action /usr/local/sbin/network-action
+COPY --from=builder /out/network-action /usr/local/sbin/network-action
 COPY --from=kexec-action-builder /out/kexec-action /usr/local/sbin/kexec-action
-COPY --from=network-action-builder /out/hotfix-action /usr/local/sbin/hotfix-action
+COPY --from=builder /out/hotfix-action /usr/local/sbin/hotfix-action
 COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
