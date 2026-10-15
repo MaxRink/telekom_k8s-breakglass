@@ -1139,6 +1139,42 @@ func ValidateHotfixRequest(profile *DebugSessionHotfix, request *DebugSessionHot
 	return nil
 }
 
+// validateFixedExecutorTemplate applies the common security contract shared by
+// fixed executors. The executor owns its pod, namespace and lifecycle; generic
+// workload inputs must never be allowed to alter those boundaries.
+func validateFixedExecutorTemplate(spec *DebugSessionTemplateSpec, executor string) error {
+	if spec.Mode != "" && spec.Mode != DebugSessionModeWorkload || spec.WorkloadType != "" ||
+		spec.TargetNamespace != NodeMaintenanceNamespace || (spec.FailMode != "" && spec.FailMode != "closed") ||
+		(spec.ExpirationBehavior != "" && spec.ExpirationBehavior != "terminate") {
+		return fmt.Errorf("%s requires workload mode, no generic workloadType, fixed maintenance namespace and closed termination", executor)
+	}
+	if spec.PodTemplateRef != nil || spec.PodTemplateString != "" || spec.PodOverridesTemplate != "" ||
+		spec.PodOverrides != nil || len(spec.ExtraDeployVariables) != 0 || spec.AffinityOverrides != nil ||
+		len(spec.AdditionalTolerations) != 0 || spec.SchedulingConstraints != nil || spec.SchedulingOptions != nil ||
+		spec.KubectlDebug != nil || spec.NamespaceConstraints != nil || spec.Impersonation != nil ||
+		spec.TerminalSharing != nil || spec.ArtifactCollection != nil || len(spec.AuxiliaryResourceDefaults) != 0 ||
+		spec.PodDisruptionBudget != nil || spec.ResourceQuota != nil ||
+		(spec.Audit != nil && spec.Audit.EnableTerminalRecording) {
+		return fmt.Errorf("%s cannot use generic workload, scheduling, interactive or auxiliary overrides", executor)
+	}
+	if err := validateNodeMaintenanceAuxiliaryResources(spec); err != nil {
+		return err
+	}
+	if spec.Approvers == nil || len(spec.Approvers.Users)+len(spec.Approvers.Groups) == 0 || spec.Approvers.AutoApproveFor != nil {
+		return fmt.Errorf("%s requires explicit independent approvers without auto-approval", executor)
+	}
+	if spec.Constraints == nil || spec.Constraints.MaxDuration == "" {
+		return fmt.Errorf("%s requires an explicit bounded maxDuration", executor)
+	}
+	if errs := validatePositiveDurationFormat(spec.Constraints.MaxDuration, field.NewPath("constraints", "maxDuration")); len(errs) > 0 {
+		return fmt.Errorf("%s requires a valid positive maxDuration: %w", executor, errs[0])
+	}
+	if spec.Constraints.IdleTimeout != "" {
+		return fmt.Errorf("%s does not support idleTimeout; bound the session with maxDuration", executor)
+	}
+	return nil
+}
+
 // ValidateHotfixTemplate applies the fixed-executor template contract to a hotfix profile.
 func ValidateHotfixTemplate(spec *DebugSessionTemplateSpec) error {
 	if spec.Hotfix == nil {
