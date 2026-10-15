@@ -180,6 +180,11 @@ func validateFixedExecutorTemplate(spec *DebugSessionTemplateSpec, kind string) 
 	if spec.Constraints.IdleTimeout != "" {
 		return fmt.Errorf("%s does not support idleTimeout; bound the session with maxDuration", kind)
 	}
+	// Hotfix templates do not carry a nodeMaintenance profile; only
+	// node-maintenance templates need the checks below.
+	if spec.NodeMaintenance == nil {
+		return nil
+	}
 	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
 		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
 	}
