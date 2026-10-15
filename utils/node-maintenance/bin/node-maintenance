@@ -42,6 +42,7 @@ case "$command_name" in
 		;;
 	kexec-recovery)
 		exec /usr/local/libexec/node-maintenance/kexec-recovery "$@"
+		;;
 	hotfix-action)
 		# Exec directly: hotfix steps carry their own deadlines and must never
 		# run under the 10 s capture timeout of the shell helpers.
