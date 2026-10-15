@@ -134,13 +134,14 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	if err := validateFixedExecutorTemplate(spec, "nodeMaintenance"); err != nil {
 		return err
 	}
-	// Hotfix templates do not carry a nodeMaintenance profile; only
-	// node-maintenance templates need the checks below.
-	if spec.NodeMaintenance == nil {
-		return nil
-	}
 	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
 		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
+	}
+	if kexec := spec.NodeMaintenance.Kexec; kexec != nil && !spec.NodeMaintenance.DryRun {
+		maxDuration, err := ParseDuration(spec.Constraints.MaxDuration)
+		if err != nil || maxDuration < time.Duration(int64(kexec.DrainTimeoutSeconds)+kexecReturnMarginSeconds)*time.Second {
+			return fmt.Errorf("kexec-recovery maxDuration must cover drainTimeoutSeconds plus %ds for the Node to return", kexecReturnMarginSeconds)
+		}
 	}
 	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
 }
@@ -185,16 +186,7 @@ func validateFixedExecutorTemplate(spec *DebugSessionTemplateSpec, kind string) 
 	if spec.Constraints.IdleTimeout != "" {
 		return fmt.Errorf("%s does not support idleTimeout; bound the session with maxDuration", kind)
 	}
-	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
-		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
-	}
-	if kexec := spec.NodeMaintenance.Kexec; kexec != nil && !spec.NodeMaintenance.DryRun {
-		maxDuration, err := ParseDuration(spec.Constraints.MaxDuration)
-		if err != nil || maxDuration < time.Duration(int64(kexec.DrainTimeoutSeconds)+kexecReturnMarginSeconds)*time.Second {
-			return fmt.Errorf("kexec-recovery maxDuration must cover drainTimeoutSeconds plus %ds for the Node to return", kexecReturnMarginSeconds)
-		}
-	}
-	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
+	return nil
 }
 
 // validateFixedExecutorAuxiliaryResources admits only resources that are
