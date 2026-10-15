@@ -118,10 +118,6 @@ var maintenanceSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 // NodeMaintenanceActionKexecRecovery reboots one drained Node into a pinned recovery kernel.
 const NodeMaintenanceActionKexecRecovery = "kexec-recovery"
 
-// kexecReturnMarginSeconds is the minimum session time left after a full
-// drain for the kexec, the reboot and the Node returning Ready.
-const kexecReturnMarginSeconds = 300
-
 // NodeMaintenanceNamespace is a single lock domain shared by all profiles and requesters.
 const NodeMaintenanceNamespace = "breakglass-node-maintenance"
 
