@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -118,6 +119,9 @@ var maintenanceSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 // NodeMaintenanceActionKexecRecovery reboots one drained Node into a pinned recovery kernel.
 const NodeMaintenanceActionKexecRecovery = "kexec-recovery"
 
+// kexecReturnMarginSeconds reserves time for the kexec, reboot and readiness recovery.
+const kexecReturnMarginSeconds = 300
+
 // NodeMaintenanceNamespace is a single lock domain shared by all profiles and requesters.
 const NodeMaintenanceNamespace = "breakglass-node-maintenance"
 
@@ -132,7 +136,17 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
 		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
 	}
-	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
+	if err := ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0]); err != nil {
+		return err
+	}
+	if !spec.NodeMaintenance.DryRun && spec.NodeMaintenance.Action == NodeMaintenanceActionKexecRecovery {
+		maxDuration, _ := ParseDuration(spec.Constraints.MaxDuration)
+		minimum := time.Duration(spec.NodeMaintenance.Kexec.DrainTimeoutSeconds+kexecReturnMarginSeconds) * time.Second
+		if maxDuration < minimum {
+			return fmt.Errorf("nodeMaintenance kexec maxDuration must cover drain and return (%s)", minimum)
+		}
+	}
+	return nil
 }
 
 // validateFixedExecutorTemplate is the template contract shared by the fixed
