@@ -67,6 +67,60 @@ func TestNodeMaintenanceExactAllowlist(t *testing.T) {
 	require.Error(t, ValidateNodeMaintenanceTarget("bridge-fdb-flush", &fdb))
 }
 
+func TestNodeMaintenanceLinkActionsAreInterfaceOnly(t *testing.T) {
+	link := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0"}
+	image := "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64)
+	for _, action := range []string{"link-cycle", "restart-autonegotiation"} {
+		t.Run(action, func(t *testing.T) {
+			profile := &DebugSessionNodeMaintenance{Action: action, Image: image, AllowedTargets: []NodeMaintenanceTarget{link}}
+			require.NoError(t, ValidateNodeMaintenanceRequest(profile, &link))
+			for _, change := range []struct {
+				name   string
+				mutate func(*NodeMaintenanceTarget)
+			}{
+				{"interface", func(v *NodeMaintenanceTarget) { v.Interface = "eth9" }},
+				{"no interface", func(v *NodeMaintenanceTarget) { v.Interface = "" }},
+				{"entryMAC", func(v *NodeMaintenanceTarget) { v.EntryMAC = "02:00:00:00:00:02" }},
+				{"neighbour", func(v *NodeMaintenanceTarget) { v.NeighborAddress = "192.0.2.2" }},
+				{"bridge", func(v *NodeMaintenanceTarget) { v.Bridge = "br0" }},
+				{"vlan", func(v *NodeMaintenanceTarget) { v.VLAN = kptr.To(int32(100)) }},
+				{"vrf", func(v *NodeMaintenanceTarget) { v.VRF = "vrf-red" }},
+			} {
+				t.Run("request "+change.name, func(t *testing.T) {
+					request := *link.DeepCopy()
+					change.mutate(&request)
+					require.Error(t, ValidateNodeMaintenanceRequest(profile, &request))
+				})
+				if change.name == "interface" {
+					continue // another exact interface is a valid allowlist entry
+				}
+				t.Run("allowlist "+change.name, func(t *testing.T) {
+					allowed := *link.DeepCopy()
+					change.mutate(&allowed)
+					broad := profile.DeepCopy()
+					broad.AllowedTargets = []NodeMaintenanceTarget{allowed}
+					require.Error(t, ValidateNodeMaintenanceRequest(broad, &allowed))
+				})
+			}
+			preview := profile.DeepCopy()
+			preview.DryRun = true
+			require.ErrorContains(t, ValidateNodeMaintenanceRequest(preview, &link), "no preview")
+		})
+	}
+	// The replace actions still need the MAC.
+	for _, target := range []NodeMaintenanceTarget{
+		{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0", NeighborAddress: "192.0.2.2"},
+		{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "port0", Bridge: "br0", VLAN: kptr.To(int32(100))},
+	} {
+		action := "neighbor-replace"
+		if target.Bridge != "" {
+			action = "bridge-fdb-replace"
+		}
+		profile := &DebugSessionNodeMaintenance{Action: action, Image: image, AllowedTargets: []NodeMaintenanceTarget{target}}
+		require.ErrorContains(t, ValidateNodeMaintenanceRequest(profile, &target), "entryMAC", action)
+	}
+}
+
 func TestNodeMaintenanceVRFTupleIsExact(t *testing.T) {
 	inVRF := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0", EntryMAC: "02:00:00:00:00:02", NeighborAddress: "192.0.2.2", VRF: "vrf-red"}
 	profile := &DebugSessionNodeMaintenance{Action: "neighbor-replace", Image: "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64), AllowedTargets: []NodeMaintenanceTarget{inVRF}}

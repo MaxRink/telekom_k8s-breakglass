@@ -15,6 +15,7 @@ package v1alpha1
 // It deliberately has no command, environment, capability or shell overrides.
 type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// action is the one executor operation enabled by this profile.
+	// link-cycle and restart-autonegotiation act on the exact interface only.
 	Action *string `json:"action,omitempty"`
 	// image must be an immutable node-maintenance helper image.
 	Image *string `json:"image,omitempty"`
@@ -23,6 +24,7 @@ type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// dryRun makes every session of this profile a preview: the executor runs
 	// the same exact tuple preflight and records the entry it would replace,
 	// but has no NET_ADMIN capability and never mutates the kernel table.
+	// link-cycle and restart-autonegotiation have no preview and reject it.
 	DryRun *bool `json:"dryRun,omitempty"`
 	// kexec pins the provider recovery bundle for a kexec-recovery profile.
 	// It is required for kexec-recovery and forbidden for every other action.
