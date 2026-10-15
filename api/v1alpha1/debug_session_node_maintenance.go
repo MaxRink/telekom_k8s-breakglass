@@ -134,6 +134,11 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	if err := validateFixedExecutorTemplate(spec, "nodeMaintenance"); err != nil {
 		return err
 	}
+	// Hotfix templates do not carry a nodeMaintenance profile; only
+	// node-maintenance templates need the checks below.
+	if spec.NodeMaintenance == nil {
+		return nil
+	}
 	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
 		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
 	}
