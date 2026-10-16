@@ -27,12 +27,15 @@ import (
 	"github.com/stretchr/testify/require"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 // TestOIDCFullIntegrationFlow tests the complete OIDC flow from ClusterConfig creation
@@ -52,7 +55,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
 	namespace := helpers.GetTestNamespace()
-	oidcClusterName := "e2e-oidc-integration-cluster"
+	oidcClusterName := helpers.GenerateUniqueName("e2e-oidc-integration")
 
 	t.Log("=== Test: Full OIDC Integration Flow (CC-OIDC-INT-001) ===")
 
@@ -68,7 +71,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 	// Step 1: Create OIDC client secret for client credentials flow
 	oidcSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-oidc-integration-secret",
+			Name:      helpers.GenerateUniqueName("e2e-oidc-integration-secret"),
 			Namespace: namespace,
 			Labels:    helpers.E2ETestLabels(),
 		},
@@ -116,6 +119,8 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(keycloakCA)
 	}
 	clusterConfig := ccBuilder.Build()
+	clusterConfig.Spec.UserIdentifierClaim = breakglassv1alpha1.UserIdentifierClaimPreferredUsername
+	clusterConfig.Spec.UserIdentifierPrefix = ptr.To("tdi_security_oidc:")
 	cleanup.Add(clusterConfig)
 	err = cli.Create(ctx, clusterConfig)
 	require.NoError(t, err, "Failed to create ClusterConfig")
@@ -131,9 +136,64 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 	}
 	t.Log("ClusterConfig is Ready")
 
+	// Grant only the tested operation to a unique group on the target cluster.
+	// Caller SARs deliberately contain no groups: access must come from the session.
+	targetClient := cli
+	if helpers.IsMultiClusterEnabled() {
+		targetClient = helpers.GetSpokeAClient(t)
+		require.NotNil(t, targetClient, "spoke A admin client is required for the target RBAC fixture")
+	}
+	targetCleanup := helpers.NewCleanup(t, targetClient)
+	targetNamespace := helpers.GenerateUniqueName("oidc-prefix-target")
+	targetNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: targetNamespace, Labels: helpers.E2ETestLabels()}}
+	// Register before creation so a failed subsequent fixture setup still cleans
+	// up the namespace. Cleanup tolerates the cascading deletion of its contents.
+	targetCleanup.Add(targetNS)
+	require.NoError(t, targetClient.Create(ctx, targetNS))
+	grantName := helpers.GenerateUniqueName("oidc-prefix-pod-reader")
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: grantName, Namespace: targetNamespace, Labels: helpers.E2ETestLabels()},
+		Rules:      []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}},
+	}
+	targetCleanup.Add(role)
+	require.NoError(t, targetClient.Create(ctx, role))
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: grantName, Namespace: targetNamespace, Labels: helpers.E2ETestLabels()},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: grantName},
+		Subjects:   []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: "Group", Name: grantName}},
+	}
+	targetCleanup.Add(binding)
+	require.NoError(t, targetClient.Create(ctx, binding))
+	// The ClusterConfig connects as the Keycloak fixture's OIDC service user,
+	// not the controller's Kubernetes service account. Give that connection only
+	// the permissions needed to evaluate this fixture's grant and namespace.
+	connectionRole := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: grantName + "-connection", Labels: helpers.E2ETestLabels()},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"users"}, ResourceNames: []string{breakglass.AuthCheckerUsername}, Verbs: []string{"impersonate"}},
+			{APIGroups: []string{""}, Resources: []string{"groups"}, ResourceNames: []string{grantName}, Verbs: []string{"impersonate"}},
+			{APIGroups: []string{""}, Resources: []string{"namespaces"}, ResourceNames: []string{targetNamespace}, Verbs: []string{"get"}},
+		},
+	}
+	targetCleanup.Add(connectionRole)
+	require.NoError(t, targetClient.Create(ctx, connectionRole))
+	connectionBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: connectionRole.Name, Labels: helpers.E2ETestLabels()},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: connectionRole.Name},
+		Subjects:   []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: "User", Name: "breakglass-group-sync@service.local"}},
+	}
+	targetCleanup.Add(connectionBinding)
+	require.NoError(t, targetClient.Create(ctx, connectionBinding))
+	targetUsername := "tdi_security_oidc:" + helpers.TestUsers.Requester.Username
+	sar := helpers.BuildResourceSAR(targetUsername, nil, "get", "pods", targetNamespace)
+	before, status, err := helpers.SendSARToWebhook(t, ctx, sar, oidcClusterName)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	require.False(t, before.Status.Allowed, "target principal must have no grant before session approval")
+
 	// Step 4: Create escalation for the OIDC cluster
-	escalation := helpers.NewEscalationBuilder("e2e-oidc-integration-escalation", namespace).
-		WithEscalatedGroup("breakglass-oidc-integration-group").
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-oidc-integration-escalation"), namespace).
+		WithEscalatedGroup(grantName).
 		WithMaxValidFor("4h").
 		WithApprovalTimeout("2h").
 		WithAllowedClusters(oidcClusterName).
@@ -156,6 +216,15 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
+	// The API authentication identity and the target Kubernetes username are
+	// separate contracts. Verify the signed OIDC request persisted immutable
+	// requester provenance and notification identity instead of inferring
+	// ownership from the target username.
+	require.NotEmpty(t, session.Spec.RequesterSubject, "OIDC session must persist the verified subject")
+	require.NotEmpty(t, session.Spec.RequesterUsername, "OIDC session must persist the authenticated API username")
+	require.Equal(t, sessionUser, session.Spec.RequesterEmail, "OIDC email should remain the notification identity")
+	require.Equal(t, targetUsername, session.Spec.User, "target username must use the configured preferred_username prefix")
+	require.NotEqual(t, targetUsername, session.Spec.RequesterUsername, "cluster-only prefix must not rewrite the authenticated API principal")
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err, "Failed to approve session via API")
@@ -171,20 +240,31 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   sessionUser,
-				Groups: []string{escalation.Spec.EscalatedGroup},
+				User: session.Spec.User,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace: "default",
+					Namespace: targetNamespace,
 					Verb:      "get",
 					Resource:  "pods",
 				},
 			},
 		}
 
-		sarResp, statusCode, err := helpers.SendSARToWebhook(t, ctx, sar, oidcClusterName)
-		require.NoError(t, err, "Failed to send SAR to webhook")
-		assert.Equal(t, http.StatusOK, statusCode, "Webhook should return 200 OK")
-		t.Logf("SAR result: allowed=%v, denied=%v", sarResp.Status.Allowed, sarResp.Status.Denied)
+		err := helpers.WaitForCondition(ctx, func() (bool, error) {
+			sarResp, statusCode, err := helpers.SendSARToWebhook(t, ctx, sar, oidcClusterName)
+			if err != nil {
+				return false, err
+			}
+			return statusCode == http.StatusOK && sarResp.Status.Allowed, nil
+		}, helpers.WaitForStateTimeout, time.Second)
+		require.NoError(t, err, "the exact prefixed target principal must be authorized after approval")
+
+		for _, wrongUsername := range []string{helpers.TestUsers.Requester.Username, sessionUser} {
+			wrongPrincipalSAR := helpers.BuildResourceSAR(wrongUsername, nil, "get", "pods", targetNamespace)
+			wrongResp, wrongStatus, err := helpers.SendSARToWebhook(t, ctx, wrongPrincipalSAR, oidcClusterName)
+			require.NoError(t, err, "Failed to send wrong-principal SAR")
+			require.Equal(t, http.StatusOK, wrongStatus, "wrong-principal SAR should still return an authorization response")
+			require.False(t, wrongResp.Status.Allowed, "unprefixed principal %q must not inherit the prefixed session grant", wrongUsername)
+		}
 	})
 
 	// Step 7: Verify ClusterConfig status reflects healthy state
