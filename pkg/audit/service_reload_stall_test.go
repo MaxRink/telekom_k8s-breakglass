@@ -92,7 +92,10 @@ func TestReloadStalledOnSecretDoesNotBlockDecisions(t *testing.T) {
 
 	kept := testutil.ToFloat64(metrics.AuditConfigReloads.WithLabelValues("kept_previous"))
 	reloaded := make(chan error, 1)
-	go func() { reloaded <- svc.Reload(context.Background(), kafkaTLSAuditConfig("new")) }()
+	// The running config is unchanged; a new config's Secret read stalls.
+	go func() {
+		reloaded <- svc.ReloadMultiple(context.Background(), []*breakglassv1alpha1.AuditConfig{logAuditConfig("old"), kafkaTLSAuditConfig("new")})
+	}()
 	<-entered
 
 	requireFast(t, "Emit", func() { svc.Emit(context.Background(), &Event{Type: EventAccessDenied}) })
@@ -104,6 +107,7 @@ func TestReloadStalledOnSecretDoesNotBlockDecisions(t *testing.T) {
 	select {
 	case err := <-reloaded:
 		require.ErrorContains(t, err, "context deadline exceeded")
+		require.ErrorIs(t, err, ErrKeptPreviousPipeline)
 	case <-time.After(10 * time.Second):
 		t.Fatal("a stalled secret get kept the reload running past its timeout")
 	}
@@ -178,5 +182,52 @@ func TestFullQueueSensitiveFallbackHonoursTheCallerDeadline(t *testing.T) {
 	defer cancel()
 	requireFast(t, "Emit of a sensitive event on a full queue", func() {
 		manager.Emit(ctx, &Event{Type: EventAccessDenied})
+	})
+}
+
+// A failed reload must never keep a sink that the admin removed or changed:
+// the previous pipeline stays only while its configs are unchanged.
+func TestFailedReloadNeverKeepsARemovedOrChangedSink(t *testing.T) {
+	newSvc := func() *Service {
+		svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+		t.Cleanup(func() { _ = svc.Close() })
+		running := logAuditConfig("cfg")
+		running.Spec.Sinks = append(running.Spec.Sinks, breakglassv1alpha1.AuditSinkConfig{Name: "second", Type: breakglassv1alpha1.AuditSinkTypeLog})
+		require.NoError(t, svc.Reload(context.Background(), running))
+		require.True(t, svc.IsEnabled())
+		return svc
+	}
+	failing := kafkaTLSAuditConfig("cfg") // same name, sinks replaced by one whose Secret is missing
+
+	t.Run("sink removed and another changed", func(t *testing.T) {
+		svc := newSvc()
+		err := svc.Reload(context.Background(), failing)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrKeptPreviousPipeline)
+		assert.False(t, svc.IsEnabled(), "the old sinks must stop")
+		assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+		assert.Error(t, svc.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}), "sensitive events fail closed")
+	})
+	t.Run("config rejected", func(t *testing.T) {
+		svc := newSvc()
+		require.Error(t, svc.ReloadMultipleWithAvailability(context.Background(), nil, true))
+		assert.False(t, svc.IsEnabled())
+		assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+	})
+	t.Run("config disabled while another is rejected", func(t *testing.T) {
+		svc := newSvc()
+		disabled := logAuditConfig("cfg")
+		disabled.Spec.Enabled = false
+		require.Error(t, svc.ReloadMultipleWithAvailability(context.Background(), []*breakglassv1alpha1.AuditConfig{disabled}, true))
+		assert.False(t, svc.IsEnabled())
+	})
+	t.Run("unchanged config kept while another is rejected", func(t *testing.T) {
+		svc := newSvc()
+		running := logAuditConfig("cfg")
+		running.Spec.Sinks = append(running.Spec.Sinks, breakglassv1alpha1.AuditSinkConfig{Name: "second", Type: breakglassv1alpha1.AuditSinkTypeLog})
+		err := svc.ReloadMultipleWithAvailability(context.Background(), []*breakglassv1alpha1.AuditConfig{running}, true)
+		require.ErrorIs(t, err, ErrKeptPreviousPipeline)
+		assert.True(t, svc.IsEnabled())
+		assert.Equal(t, ConfigurationReady, svc.ConfigurationState())
 	})
 }

@@ -49,6 +49,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -57,7 +58,12 @@ import (
 var systemCertPool = x509.SystemCertPool
 
 // reloadBuildTimeout bounds the API reads and sink construction of one reload.
+// Tests change it, so they must not run in parallel.
 var reloadBuildTimeout = 30 * time.Second
+
+// closeWaitTimeout bounds how long Close waits for previous pipelines that are
+// still closing in the background.
+const closeWaitTimeout = 10 * time.Second
 
 // Service manages the audit system lifecycle, including sink creation and event emission.
 // It watches AuditConfig changes and reconfigures the audit manager accordingly.
@@ -72,7 +78,11 @@ type Service struct {
 	// reloadMu serializes reloads; sink construction runs under it, not under mu.
 	reloadMu sync.Mutex
 	// closing tracks previous pipelines that are still closing in the background.
-	closing            sync.WaitGroup
+	closing sync.WaitGroup
+	// running holds copies of the AuditConfigs the current pipeline was
+	// built from; a failed reload keeps the pipeline only while all of them
+	// are still enabled with the same spec.
+	running            []*breakglassv1alpha1.AuditConfig
 	manager            *Manager
 	sinks              []Sink
 	isolatedMultiSink  *IsolatedMultiSink
@@ -137,8 +147,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 	}
 
 	if configuredUnavailable {
-		s.keepPreviousPipeline()
-		return errors.New("one or more enabled AuditConfigs are invalid or unavailable")
+		return s.keepPreviousPipeline(configs, errors.New("one or more enabled AuditConfigs are invalid or unavailable"))
 	}
 
 	// Filter to only enabled configs
@@ -150,7 +159,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 	}
 
 	if len(enabledConfigs) == 0 {
-		s.swap(nil, nil, nil, false, ConfigurationDisabled)
+		s.swap(nil, nil, nil, nil, false, ConfigurationDisabled)
 		s.logger.Info("audit system disabled (no enabled configs)")
 		metrics.AuditConfigReloads.WithLabelValues("disabled").Inc()
 		return nil
@@ -172,8 +181,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 			s.logger.Error("failed to build audit sinks from config",
 				zap.String("config", config.Name),
 				zap.String("error", err.Error()))
-			s.keepPreviousPipeline()
-			return fmt.Errorf("build audit sinks from config %q: %w", config.Name, err)
+			return s.keepPreviousPipeline(enabledConfigs, fmt.Errorf("build audit sinks from config %q: %w", config.Name, err))
 		}
 		allSinks = append(allSinks, sinks...)
 		for range sinks {
@@ -184,8 +192,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 
 	if len(allSinks) == 0 {
 		s.logger.Error("enabled AuditConfig produced no audit sinks")
-		s.keepPreviousPipeline()
-		return errors.New("enabled AuditConfig produced no audit sinks")
+		return s.keepPreviousPipeline(enabledConfigs, errors.New("enabled AuditConfig produced no audit sinks"))
 	}
 
 	// Use queue config from the first enabled config (or defaults)
@@ -261,7 +268,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 		DirectSinks: allSinks,
 	}
 
-	s.swap(NewManager(isolatedMultiSink, managerCfg, s.logger), allSinks, isolatedMultiSink, true, ConfigurationReady)
+	s.swap(NewManager(isolatedMultiSink, managerCfg, s.logger), allSinks, isolatedMultiSink, enabledConfigs, true, ConfigurationReady)
 
 	// Log detailed configuration summary
 	s.logger.Info("audit system configured with aggregated sinks",
@@ -515,7 +522,15 @@ func (s *Service) Close() error {
 	s.mu.Unlock()
 
 	closeErr := s.closePipeline(oldManager, oldSinks)
-	s.closing.Wait()
+	// Previous pipelines close in the background; a sink whose Close never
+	// returns must not hang the process shutdown.
+	closed := make(chan struct{})
+	go func() { s.closing.Wait(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(closeWaitTimeout):
+		s.logger.Warn("audit service closed while previous audit sinks were still closing")
+	}
 	s.logger.Info("audit service closed")
 	return closeErr
 }
@@ -523,10 +538,14 @@ func (s *Service) Close() error {
 // swap installs a pipeline (nil to stop auditing) and closes the previous one
 // in the background, so readers never wait for a flush to a stalled sink.
 // Caller must hold s.reloadMu.
-func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink, enabled bool, state ConfigurationState) {
+func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink, configs []*breakglassv1alpha1.AuditConfig, enabled bool, state ConfigurationState) {
+	running := make([]*breakglassv1alpha1.AuditConfig, 0, len(configs))
+	for _, cfg := range configs {
+		running = append(running, cfg.DeepCopy())
+	}
 	s.mu.Lock()
 	oldManager, oldSinks := s.manager, s.sinks
-	s.manager, s.sinks, s.isolatedMultiSink = manager, sinks, multi
+	s.manager, s.sinks, s.isolatedMultiSink, s.running = manager, sinks, multi, running
 	s.enabled = enabled
 	s.configurationState = state
 	s.mu.Unlock()
@@ -540,19 +559,55 @@ func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink,
 	}()
 }
 
-// keepPreviousPipeline handles a failed reload: a running pipeline keeps
-// auditing with its previous configuration; without one, auditing is
-// configured but unavailable (fails closed). Caller must hold s.reloadMu.
-func (s *Service) keepPreviousPipeline() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.enabled && s.manager != nil {
-		s.logger.Warn("audit reload failed; the previous audit pipeline stays active")
-		metrics.AuditConfigReloads.WithLabelValues("kept_previous").Inc()
-		return
+// ErrKeptPreviousPipeline marks a failed reload after which the running audit
+// pipeline stays active unchanged.
+var ErrKeptPreviousPipeline = errors.New("the previous audit pipeline stays active")
+
+// keepPreviousPipeline handles a failed reload of configs. The running
+// pipeline keeps auditing only while every AuditConfig it was built from is
+// still in configs, enabled and with an unchanged spec, so a disabled,
+// deleted or changed configuration (for example a removed sink) never keeps
+// running. Otherwise the pipeline is closed and auditing is configured but
+// unavailable (fails closed). It returns cause, wrapped with
+// ErrKeptPreviousPipeline when the pipeline was kept. Caller must hold
+// s.reloadMu.
+func (s *Service) keepPreviousPipeline(configs []*breakglassv1alpha1.AuditConfig, cause error) error {
+	s.mu.RLock()
+	keep := s.enabled && s.manager != nil && runningConfigsUnchanged(s.running, configs)
+	names := make([]string, 0, len(s.running))
+	for _, cfg := range s.running {
+		names = append(names, cfg.Name)
 	}
-	s.configurationState = ConfigurationUnavailable
-	metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+	s.mu.RUnlock()
+	if keep {
+		s.logger.Warn("audit reload failed; the previous audit pipeline stays active",
+			zap.Strings("configs", names), zap.String("error", cause.Error()))
+		metrics.AuditConfigReloads.WithLabelValues("kept_previous").Inc()
+		return fmt.Errorf("%w: %w", ErrKeptPreviousPipeline, cause)
+	}
+	s.swap(nil, nil, nil, nil, false, ConfigurationUnavailable)
+	return cause
+}
+
+// runningConfigsUnchanged reports whether every config of the running
+// pipeline is in configs, enabled and with the same spec.
+func runningConfigsUnchanged(running, configs []*breakglassv1alpha1.AuditConfig) bool {
+	if len(running) == 0 {
+		return false
+	}
+	for _, old := range running {
+		found := false
+		for _, cfg := range configs {
+			if cfg != nil && cfg.Name == old.Name && cfg.Spec.Enabled && equality.Semantic.DeepEqual(cfg.Spec, old.Spec) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // closePipeline closes a Manager (draining its workers and in-flight sync

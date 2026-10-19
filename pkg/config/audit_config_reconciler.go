@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -37,6 +38,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -269,7 +271,10 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 					}
 				}
 			}
-			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+			// The audit service counts a kept pipeline itself.
+			if !errors.Is(err, audit.ErrKeptPreviousPipeline) {
+				metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+			}
 			return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}

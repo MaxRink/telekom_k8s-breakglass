@@ -136,19 +136,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- An AuditConfig reload no longer delays authorization decisions. The reload
-  held the audit service lock while it read sink Secrets and flushed the old
-  sinks, and every SubjectAccessReview waits for that lock to emit its audit
-  event. With a stopped Kafka broker the hub held SubjectAccessReview answers
-  for up to several minutes. Reloads now build the new sinks without the lock,
-  bounded to 30 seconds, swap them in one step and close the old pipeline in
-  the background. A failed reload, including a rejected AuditConfig, keeps the
-  running pipeline (metric
-  `breakglass_audit_config_reloads_total{status="kept_previous"}`, AuditConfig
-  `Ready=False`); without one, auditing stays configured but unavailable, as
-  before. See `docs/audit-config.md#reload-failures`. The synchronous
-  fallback for sensitive events on a full queue also ends at the caller's
-  deadline.
 - A DebugSession now keeps an explicit `false` from its template for booleans
   whose CRD default is `true`. Examples are
   `kubectlDebug.ephemeralContainers.requireNonRoot`,
