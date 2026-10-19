@@ -8737,6 +8737,68 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 			expectError:    true,
 			expectedErrMsg: "per cluster",
 		},
+		{
+			name: "per-cluster limit 2 with one session on the same cluster - should pass",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(2),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:   "user2@example.com",
+			expectError: false,
+		},
+		{
+			name: "per-cluster limit 2 with two sessions on the same cluster - should fail",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(2),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session2", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user3@example.com",
+						RequestedByEmail: "user3@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePendingApproval},
+				},
+			},
+			userEmail:      "user2@example.com",
+			expectError:    true,
+			expectedErrMsg: "per cluster",
+		},
 	}
 
 	for _, tt := range tests {

@@ -109,7 +109,16 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 				if !occupied {
 					continue
 				}
-				if _, exists := state.Entries[entry.UID]; !exists {
+				existing, exists := state.Entries[entry.UID]
+				switch {
+				case !exists:
+					state.Entries[entry.UID] = entry
+				case addsScopes(existing, entry):
+					// A reservation recorded by an older controller gets the
+					// scopes that this controller derives, so a new scope (for
+					// example per cluster) also counts sessions admitted before
+					// the upgrade. Like a tightened limit, this can leave a scope
+					// above its limit until those sessions end.
 					state.Entries[entry.UID] = entry
 				}
 			}
@@ -126,7 +135,8 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 				return fmt.Errorf("reserved session identity or quota scopes changed")
 			}
 			// A controller upgrade can derive additional scopes for a session
-			// reserved by an older replica. Keep the reservation (grandfathered
+			// reserved by an older replica, and a session reserved without a
+			// binding can resolve one later. Keep the reservation (grandfathered
 			// like a tightened limit) and record the new scopes; a dropped scope
 			// would escape a limit and stays refused.
 			state.Entries[candidate.UID] = candidate
@@ -221,6 +231,13 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 }
 
 // scopesSubset reports whether every scope of old is also in updated.
+// addsScopes reports whether updated is the same session as existing with all
+// of its scopes and at least one more.
+func addsScopes(existing, updated Entry) bool {
+	return existing.Kind == updated.Kind && existing.Namespace == updated.Namespace && existing.Name == updated.Name &&
+		len(updated.Scopes) > len(existing.Scopes) && scopesSubset(existing.Scopes, updated.Scopes)
+}
+
 func scopesSubset(old, updated []string) bool {
 	for _, scope := range old {
 		if !slices.Contains(updated, scope) {
