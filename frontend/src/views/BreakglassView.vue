@@ -182,7 +182,9 @@ async function onRequest(
   duration?: number,
   scheduledStartTime?: string | null,
   ticketSystemID?: string,
+  cluster?: string,
 ) {
+  if (cluster !== undefined) bg = { ...bg, cluster };
   try {
     await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime ?? undefined, ticketSystemID);
     // Success path: created/ok
@@ -350,8 +352,14 @@ async function onDrop(bg: Breakglass) {
           :breakglass="bg"
           :time="time"
           @request="
-            (reason: string, duration: number, scheduledStartTime: string | null, ticketSystemID: string) => {
-              onRequest(bg, reason, duration, scheduledStartTime, ticketSystemID);
+            (
+              reason: string,
+              duration: number,
+              scheduledStartTime: string | null,
+              ticketSystemID: string,
+              cluster: string,
+            ) => {
+              onRequest(bg, reason, duration, scheduledStartTime, ticketSystemID, cluster);
             }
           "
           @drop="

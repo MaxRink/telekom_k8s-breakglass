@@ -30,6 +30,8 @@ type authenticatedIdentity struct {
 	username string
 }
 
+// validateClusterIdentityProvider rejects a target cluster without a registered
+// ClusterConfig and enforces the ClusterConfig identity provider allow list.
 func (wc *BreakglassSessionController) validateClusterIdentityProvider(c *gin.Context, ctx context.Context, cluster string) bool {
 	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
 		return true
@@ -37,7 +39,10 @@ func (wc *BreakglassSessionController) validateClusterIdentityProvider(c *gin.Co
 	cc, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, cluster)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return true
+			// The authorization webhook denies every request for an unregistered
+			// cluster, so a session for it could never grant access.
+			apiresponses.RespondUnprocessableEntity(c, fmt.Sprintf("cluster %q is not registered", cluster))
+			return false
 		}
 		apiresponses.RespondInternalError(c, "resolve cluster identity provider policy", err, wc.log)
 		return false

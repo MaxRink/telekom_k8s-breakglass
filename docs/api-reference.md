@@ -309,6 +309,10 @@ Authorization: Bearer <token>
 
 - JSON bodies must contain only known field names; requests with unknown or typo'd fields are rejected with `422 Unprocessable Entity`
 - JSON bodies must contain exactly one JSON object; trailing data is rejected
+- `cluster` must name one registered `ClusterConfig`. A glob pattern such as
+  `*` or `prod-*` and an unregistered name are rejected with
+  `422 Unprocessable Entity`. An escalation may allow a pattern, but each
+  session targets one concrete cluster.
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.
 - `ticketSystemID` must be at most 256 characters.
@@ -749,6 +753,13 @@ The response copy resolves `spec.allowed.clusters` to sorted concrete matching
 targets (ready targets only when `activeOnly=true`) so older UI/CLI clients
 cannot offer the wrong stage variant. Stored policies are unchanged. Missing,
 ambiguous or unmatched targets never appear; read errors fail closed.
+
+For other policies whose `spec.allowed.clusters` or `spec.clusterConfigRefs`
+contain a glob pattern, each item carries `clusterOptions`: the sorted
+registered clusters that the patterns match (ready clusters only when
+`activeOnly=true`, narrowed by the `cluster` filter). Clusters already listed
+by exact name are not repeated. Clients offer these names as the session
+target; the stored patterns stay unchanged in `spec`.
 
 ```json
 [
