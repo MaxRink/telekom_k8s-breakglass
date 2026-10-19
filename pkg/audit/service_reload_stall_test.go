@@ -167,22 +167,27 @@ func (writeBlockingSink) Close() error                      { return nil }
 func (writeBlockingSink) Name() string                      { return "write-blocking" }
 func (writeBlockingSink) SupportsSynchronousDelivery() bool { return true }
 
-func TestFullQueueSensitiveFallbackHonoursTheCallerDeadline(t *testing.T) {
+// Emit runs on the authorization path. With a stalled sink and a full queue it
+// must drop a sensitive event at once instead of writing it synchronously
+// while the SubjectAccessReview waits.
+func TestFullQueueEmitNeverWritesSynchronously(t *testing.T) {
 	sink := writeBlockingSink{}
 	manager := NewManager(sink, ManagerConfig{QueueSize: 1, WorkerCount: 1, DropOnFull: true,
 		WriteTimeout: 3 * time.Second, DirectSinks: []Sink{sink}}, zap.NewNop())
 	t.Cleanup(func() { _ = manager.Close() })
-	// The worker blocks on the first event and the second fills the queue
-	// (non-sensitive events, so neither takes the synchronous fallback).
+	// The worker blocks on the first event and the second fills the queue.
 	manager.Emit(context.Background(), &Event{Type: EventAccessGranted})
 	require.Eventually(t, func() bool { return len(manager.asyncQueue) == 0 }, time.Second, 5*time.Millisecond)
 	manager.Emit(context.Background(), &Event{Type: EventAccessGranted})
 	require.Len(t, manager.asyncQueue, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	requireFast(t, "Emit of a sensitive event on a full queue", func() {
-		manager.Emit(ctx, &Event{Type: EventAccessDenied})
-	})
+	// No caller deadline: only Emit itself can keep the decision fast.
+	for range 3 {
+		requireFast(t, "Emit of a sensitive event on a full queue", func() {
+			assert.True(t, manager.Emit(context.Background(), &Event{Type: EventAccessDenied}))
+		})
+	}
+	assert.Equal(t, int64(3), manager.droppedEvents.Load(), "every overflow is counted as dropped")
+	assert.Zero(t, manager.sensitiveEventsSyncWritten.Load(), "Emit must not write synchronously")
 }
 
 // A failed reload must never keep a sink that the admin removed or changed:

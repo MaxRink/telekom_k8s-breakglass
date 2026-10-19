@@ -426,13 +426,17 @@ spec:
 > terminate/fail/expire/approval-timeout/binding-unresolved, cluster role binding
 > create/delete, resource impersonation, policy bypass/violation, and pod
 > security deny/warning/override. When the manager's main async queue is full,
-> sensitive events fall back to a **direct synchronous write** path, blocking up
-> to `WriteTimeout`. This fallback is intended to avoid drops caused by manager-
-> queue overflow, but it does **not** override sink-local drop behavior such as a
-> per-sink queue reporting `queue_full` or `circuit_open`. The metric
-> `breakglass_audit_sensitive_events_sync_written_total` tracks how often this
-> manager-queue fallback occurs — a sustained non-zero value indicates the queue
-> should be enlarged.
+> asynchronous emission drops the event, sensitive or not, and counts it in
+> `breakglass_audit_events_dropped_total{reason="queue_full"}`. It never writes
+> to a sink synchronously, because asynchronous emitters include the
+> authorization webhook: a synchronous write to a stalled sink (for example a
+> Kafka broker that is down) would hold the SubjectAccessReview answer. A
+> sustained non-zero `queue_full` count indicates that the sinks cannot keep
+> up. Code paths that need a delivery receipt (cleanup termination intents,
+> node maintenance intents) emit synchronously and fail closed;
+> `breakglass_audit_sensitive_events_sync_written_total` counts those writes.
+> With `queue.dropOnFull: false`, asynchronous emission still waits for queue
+> capacity up to five seconds or the caller's deadline, for every caller.
 
 ## Queue Configuration
 

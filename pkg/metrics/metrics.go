@@ -572,7 +572,7 @@ var (
 	}, []string{"sink", "reason"})
 	AuditSensitiveEventsSyncWritten = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_sensitive_events_sync_written_total",
-		Help: "Total number of sensitive audit events written synchronously because the async queue was full",
+		Help: "Total number of sensitive audit events written synchronously by EmitSync",
 	}, []string{"sink"})
 	AuditSinkErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_sink_errors_total",
