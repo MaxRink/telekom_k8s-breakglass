@@ -155,12 +155,8 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 	// List ALL AuditConfigs
 	allConfigs := &breakglassv1alpha1.AuditConfigList{}
 	if err := r.client.List(ctx, allConfigs); err != nil {
-		r.setConfigurationState(nil, AuditConfigurationUnavailable)
-		if r.onReloadMultiple != nil {
-			if reloadErr := r.onReloadMultiple(ctx, nil, true); reloadErr != nil && r.onError != nil {
-				r.onError(ctx, reloadErr)
-			}
-		}
+		// Nothing is known to have changed: keep the running audit pipeline
+		// and retry, instead of tearing it down over a failed read.
 		r.logger.Errorw("Failed to list AuditConfigs", "error", err)
 		return reconcile.Result{}, err
 	}
@@ -208,12 +204,9 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 
 		// Update status based on validation
 		if err := r.updateStatus(ctx, config, validationErrors); err != nil {
+			// A failed status write says nothing about the config itself;
+			// it is still reloaded below if it is valid.
 			r.logger.Errorw("Failed to update AuditConfig status", "name", config.Name, "error", err)
-			if config.Spec.Enabled {
-				configuredUnavailable = true
-			}
-			// Continue processing other configs
-			continue
 		}
 
 		// If validation failed, skip this config but continue with others
