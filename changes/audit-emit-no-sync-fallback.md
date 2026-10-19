@@ -10,5 +10,6 @@ section: Behaviour changes
   stalled sink, such as a Kafka broker that is down, so a SubjectAccessReview
   with a shorter webhook timeout failed closed. `queue.dropOnFull: false`
   keeps its bounded wait for queue capacity. Paths that need a delivery
-  receipt still emit synchronously and fail closed. See
+  receipt still emit synchronously and fail closed. This reverses the earlier
+  synchronous fallback for sensitive events on a full queue. See
   `docs/audit-config.md` (#1538).

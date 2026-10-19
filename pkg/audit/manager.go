@@ -34,7 +34,7 @@ import (
 // Designed for EXTREMELY granular audit trails with non-blocking operation.
 type Manager struct {
 	sink        Sink
-	directSinks []Sink // underlying sinks for true synchronous fallback writes
+	directSinks []Sink // underlying sinks for synchronous EmitSync writes
 	asyncQueue  chan *Event
 	logger      *zap.Logger
 	wg          sync.WaitGroup
@@ -141,10 +141,10 @@ type ManagerConfig struct {
 	// Default: 30s
 	StatsInterval time.Duration
 
-	// DirectSinks are the underlying raw sinks used for true synchronous
-	// writes during sensitive-event fallback, bypassing QueuedSink layers.
-	// If empty, the fallback writes through the primary sink chain, which may
-	// block up to the context timeout and is subject to downstream queue limits.
+	// DirectSinks are the underlying raw sinks used for synchronous EmitSync
+	// writes, bypassing QueuedSink layers. If empty, EmitSync writes through
+	// the primary sink chain, which may block up to the context timeout and is
+	// subject to downstream queue limits.
 	DirectSinks []Sink
 }
 
@@ -301,11 +301,6 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 		// receipt use EmitSync.
 		m.droppedEvents.Add(1)
 		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
-		if !m.config.DropOnFull {
-			m.logger.Warn("audit queue full, dropping event",
-				zap.String("event_type", string(event.Type)),
-				zap.String("event_id", event.ID))
-		}
 	}
 	return true
 }

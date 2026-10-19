@@ -6,7 +6,7 @@ The breakglass controller includes an extremely granular, non-blocking audit sys
 
 The audit system is designed for:
 - **Extreme Granularity**: Captures 120+ event types covering every Kubernetes operation including non-resource URLs
-- **Async by default**: Events are queued; optional backpressure and sensitive-event synchronous delivery have bounded waits
+- **Async by default**: Events are queued; optional backpressure has bounded waits; paths that need a delivery receipt write synchronously and fail closed
 - **High Throughput**: Handles thousands of events per second with batching and backpressure
 - **Multiple Sinks**: Send events to Kafka, webhooks, structured logs, or Kubernetes Events
 - **Flexible Filtering**: Include/exclude by event type, user, namespace, or resource
