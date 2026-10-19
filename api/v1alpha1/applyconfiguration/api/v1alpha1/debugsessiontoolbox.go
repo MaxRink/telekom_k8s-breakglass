@@ -12,11 +12,13 @@ package v1alpha1
 // with apply.
 //
 // DebugSessionToolbox mounts an administrator-chosen OCI image as a read-only
-// Kubernetes image volume (KEP-4639) into the interactive containers of a
+// Kubernetes image volume (KEP 4639) into the interactive containers of a
 // session: every container of a workload pod, the node debug container and the
 // pod-copy debugger container. Ephemeral containers cannot add volumes and are
-// not changed. Clusters without the ImageVolume API drop the volume and its
-// mounts at admission, so the session still starts without the toolbox.
+// not changed. Target API servers 1.31 to 1.34 with the ImageVolume feature
+// gate off drop the volume and its mounts at admission, so the session starts
+// without the toolbox. API servers older than 1.31 reject the pod, so do not
+// set a toolbox on templates for such clusters.
 type DebugSessionToolboxApplyConfiguration struct {
 	// image is the digest-pinned OCI reference of the toolbox image.
 	Image *string `json:"image,omitempty"`

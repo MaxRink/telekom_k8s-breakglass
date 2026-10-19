@@ -6678,6 +6678,11 @@ spec:
                         x-kubernetes-validations:
                         - message: mountPath must not contain . or .. segments
                           rule: '!self.split(''/'').exists(s, s == ''.'' || s == ''..'')'
+                        - message: mountPath must not be at or below /proc, /sys,
+                            /dev, /host, /etc/breakglass-motd, /var/run/secrets or
+                            /run/secrets
+                          rule: '![''/proc'',''/sys'',''/dev'',''/host'',''/etc/breakglass-motd'',''/var/run/secrets'',''/run/secrets''].exists(p,
+                            self == p || self.startsWith(p + ''/''))'
                     required:
                     - image
                     type: object

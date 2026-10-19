@@ -30,6 +30,11 @@ func TestCRDSchema_DebugSessionToolbox(t *testing.T) {
 		{name: "relative path", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "opt/toolbox"}, wantErr: "spec.toolbox.mountPath"},
 		{name: "dot-dot path", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "/opt/../etc"}, wantErr: "must not contain . or .. segments"},
 		{name: "trailing slash", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "/opt/toolbox/"}, wantErr: "spec.toolbox.mountPath"},
+		{name: "service account token path", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "/var/run/secrets/kubernetes.io/serviceaccount"}, wantErr: "must not be at or below"},
+		{name: "host root of node debug", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "/host"}, wantErr: "must not be at or below"},
+		{name: "MOTD hook", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "/etc/breakglass-motd"}, wantErr: "must not be at or below"},
+		{name: "proc", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "/proc/toolbox"}, wantErr: "must not be at or below"},
+		{name: "prefix of a reserved name is allowed", toolbox: DebugSessionToolbox{Image: toolboxSchemaImage, MountPath: "/hostname-tools"}},
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

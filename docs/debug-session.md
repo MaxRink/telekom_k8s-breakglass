@@ -496,11 +496,24 @@ Image volumes need the `ImageVolume` API on the target cluster: beta and on by
 default from Kubernetes 1.35, GA from 1.36; on 1.31-1.34 the feature gate must
 be enabled on the API server and every kubelet. The container runtime must
 support image volumes (containerd 2.1 or later, CRI-O 1.31 or later). On a
-cluster without the API, the API server drops the volume and its mounts when
-the pod is created, so the session starts without the toolbox;
-`BREAKGLASS_TOOLBOX` is still set, so scripts should test
-`[ -d "$BREAKGLASS_TOOLBOX" ]`. Restricted catalogue profiles reject
-`spec.toolbox`. Admission
+1.31-1.34 API server with the feature gate off, the API server drops the volume
+and its mounts when the pod is created, so the session starts without the
+toolbox; `BREAKGLASS_TOOLBOX` is still set, so scripts should test
+`[ -d "$BREAKGLASS_TOOLBOX" ]`. API servers older than 1.31 do not know the
+`image` volume type and reject the pod, so the session fails to start: do not
+set `spec.toolbox` on templates for such clusters. Restricted catalogue
+profiles reject `spec.toolbox`.
+
+The node pulls the toolbox image like a container image, with the pod's
+`imagePullSecrets` or node-level credentials. Node debug pods get no pull
+secrets from Breakglass and pod copies keep those of the source pod, so use a
+registry that every node can pull from; a failed pull keeps the debug pod in
+`ContainerCreating`. The mount path must not be at or below `/proc`, `/sys`,
+`/dev`, `/host`, `/etc/breakglass-motd`, `/var/run/secrets` or `/run/secrets`.
+In a node debug session, use `$BREAKGLASS_TOOLBOX` before `chroot /host`: the
+toolbox is not visible inside the chroot.
+
+Admission
 policies that restrict volume types must allow `image` volumes; policies that
 restrict image registries should also check `volumes[].image.reference`.
 Kubernetes mounts image volumes read-only but does not promise `noexec`: on
