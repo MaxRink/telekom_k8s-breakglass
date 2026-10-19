@@ -30,8 +30,6 @@ type authenticatedIdentity struct {
 	username string
 }
 
-// validateClusterIdentityProvider rejects a target cluster without a registered
-// ClusterConfig and enforces the ClusterConfig identity provider allow list.
 func (wc *BreakglassSessionController) validateClusterIdentityProvider(c *gin.Context, ctx context.Context, cluster string) bool {
 	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
 		return true
@@ -39,10 +37,7 @@ func (wc *BreakglassSessionController) validateClusterIdentityProvider(c *gin.Co
 	cc, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, cluster)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// The authorization webhook denies every request for an unregistered
-			// cluster, so a session for it could never grant access.
-			apiresponses.RespondUnprocessableEntity(c, fmt.Sprintf("cluster %q is not registered", cluster))
-			return false
+			return true
 		}
 		apiresponses.RespondInternalError(c, "resolve cluster identity provider policy", err, wc.log)
 		return false
@@ -235,7 +230,16 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	}
 	escalations = readyEscalations
 
-	if !wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog) {
+	ready, registered := wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog)
+	if !registered {
+		// Checked after the escalation match, so only users with a matching
+		// policy learn whether a name is registered. The authorization webhook
+		// denies every request for an unregistered cluster, so such a session
+		// could never grant access.
+		apiresponses.RespondUnprocessableEntity(c, fmt.Sprintf("cluster %q is not registered", cug.Clustername))
+		return nil, false
+	}
+	if !ready {
 		apiresponses.RespondForbidden(c, "requested ClusterConfig is not ready or is ambiguous")
 		return nil, false
 	}
@@ -262,30 +266,30 @@ func FilterEscalationsByIdentityProvider(
 	return filtered
 }
 
-func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) bool {
+// isRequestedClusterConfigReady reports whether the target ClusterConfig is
+// ready, and whether it is registered at all.
+func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) (ready, registered bool) {
 	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
-		return true
+		return true, true
 	}
 
 	clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, clusterName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			reqLog.Debugw("No ClusterConfig found while enforcing session readiness; preserving legacy escalation-based matching",
-				"cluster", clusterName,
-				"error", err)
-			return true
+			reqLog.Warnw("Requested cluster has no ClusterConfig", "cluster", clusterName)
+			return false, false
 		}
 		reqLog.Warnw("Failed to resolve ClusterConfig while enforcing session readiness; blocking request",
 			"cluster", clusterName,
 			"error", err)
-		return false
+		return false, true
 	}
 	if IsClusterConfigReady(clusterConfig) {
-		return true
+		return true, true
 	}
 
 	reqLog.Warnw("Requested ClusterConfig is not ready", "cluster", clusterName)
-	return false
+	return false, true
 }
 
 // collectApproversFromEscalations selects the requested escalation and gathers

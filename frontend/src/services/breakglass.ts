@@ -470,15 +470,16 @@ export default class BreakglassService {
         (owner.name === av.escalationName && (!av.escalationUID || owner.uid === av.escalationUID))
       );
     };
-    // A pattern card keeps its picker; each picked cluster with an open
-    // session also gets its own card so the session can be withdrawn or dropped.
+    // A pattern card keeps its picker; each picked cluster with a session also
+    // gets its own card, so the session can be seen, withdrawn or dropped.
     const expanded = available.flatMap((av) => [
       av,
       ...(av.clusterOptions || [])
         .filter(
           (cl) =>
             active.some((a) => a.group === av.to && a.cluster === cl && ownedBy(av, a)) ||
-            pending.some((p) => p.spec?.grantedGroup === av.to && p.spec?.cluster === cl && ownedBy(av, p)),
+            pending.some((p) => p.spec?.grantedGroup === av.to && p.spec?.cluster === cl && ownedBy(av, p)) ||
+            historical.some((h) => h.group === av.to && h.cluster === cl && ownedBy(av, h)),
         )
         .map((cl) => ({ ...av, cluster: cl, clusterOptions: undefined })),
     ]);

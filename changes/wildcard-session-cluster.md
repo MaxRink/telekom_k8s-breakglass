@@ -8,3 +8,5 @@ section: Fixed
   which could never grant access. The escalation list now returns
   `clusterOptions` with the registered clusters that a pattern matches, and
   the UI shows a cluster picker for such escalations.
+  Escalations scoped only by `spec.clusterConfigRefs` now also get one UI card
+  per referenced cluster instead of a card without a cluster.

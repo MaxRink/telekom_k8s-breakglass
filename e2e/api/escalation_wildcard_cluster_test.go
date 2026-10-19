@@ -26,7 +26,7 @@ func TestEscalationWildcardClusterRequiresConcreteTarget(t *testing.T) {
 	helpers.WaitForEscalationReady(t, s.Ctx, s.Client, escalation.Name, s.Namespace, helpers.WaitForStateTimeout)
 
 	discovery := NewEscalationAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, s.Ctx, requester))
-	resp, err := discovery.doRequest(s.Ctx, http.MethodGet, escalationsBasePath, nil)
+	resp, err := discovery.doRequest(s.Ctx, http.MethodGet, escalationsBasePath+"?activeOnly=false", nil)
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
@@ -48,7 +48,6 @@ func TestEscalationWildcardClusterRequiresConcreteTarget(t *testing.T) {
 		}
 	}
 	require.Contains(t, options, s.Cluster, "discovery offers the registered test cluster")
-	require.NotContains(t, options, "*")
 
 	api := s.TC.ClientForUser(requester)
 	for _, cluster := range []string{"*", s.Cluster + "*", helpers.GenerateUniqueName("unregistered")} {

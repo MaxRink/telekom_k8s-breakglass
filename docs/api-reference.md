@@ -310,8 +310,9 @@ Authorization: Bearer <token>
 - JSON bodies must contain only known field names; requests with unknown or typo'd fields are rejected with `422 Unprocessable Entity`
 - JSON bodies must contain exactly one JSON object; trailing data is rejected
 - `cluster` must name one registered `ClusterConfig`. A glob pattern such as
-  `*` or `prod-*` and an unregistered name are rejected with
-  `422 Unprocessable Entity`. An escalation may allow a pattern, but each
+  `*` or `prod-*` is rejected with `422 Unprocessable Entity`. A name without a
+  registered `ClusterConfig` is rejected with `422` after the escalation match,
+  so only requesters with a matching escalation learn that it is unregistered. An escalation may allow a pattern, but each
   session targets one concrete cluster.
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.

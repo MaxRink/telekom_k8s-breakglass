@@ -1589,16 +1589,20 @@ func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
 func TestHandleRequestBreakglassSession_RequiresRegisteredConcreteCluster(t *testing.T) {
 	for _, tc := range []struct {
 		cluster string
+		group   string // requester group; the escalation allows system:authenticated
 		status  int
 		message string
 	}{
-		{"*", http.StatusUnprocessableEntity, "not a pattern"},
-		{"prod-*", http.StatusUnprocessableEntity, "not a pattern"},
-		{"prod-[ab]", http.StatusUnprocessableEntity, "not a pattern"},
-		{"unregistered", http.StatusUnprocessableEntity, `cluster \"unregistered\" is not registered`},
-		{"prod-a", http.StatusCreated, ""},
+		{"*", "system:authenticated", http.StatusUnprocessableEntity, "not a pattern"},
+		{"prod-*", "system:authenticated", http.StatusUnprocessableEntity, "not a pattern"},
+		{"prod-[ab]", "system:authenticated", http.StatusUnprocessableEntity, "not a pattern"},
+		{"unregistered", "system:authenticated", http.StatusUnprocessableEntity, `cluster \"unregistered\" is not registered`},
+		{"prod-a", "system:authenticated", http.StatusCreated, ""},
+		// Without a matching escalation, an unknown name gets the same 403 as a
+		// known one: registration is not disclosed to arbitrary users.
+		{"unregistered", "other", http.StatusForbidden, ""},
 	} {
-		t.Run(tc.cluster, func(t *testing.T) {
+		t.Run(tc.cluster+"/"+tc.group, func(t *testing.T) {
 			builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("prod-a"))
 			for index, fn := range sessionIndexFunctions {
 				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
@@ -1621,7 +1625,7 @@ func TestHandleRequestBreakglassSession_RequiresRegisteredConcreteCluster(t *tes
 					c.Next()
 				}, "/config/config.yaml", nil, cli)
 			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
-				return []string{"system:authenticated"}, nil
+				return []string{tc.group}, nil
 			}
 			engine := gin.New()
 			require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
