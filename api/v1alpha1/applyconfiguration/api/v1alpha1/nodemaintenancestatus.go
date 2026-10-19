@@ -49,6 +49,10 @@ type NodeMaintenanceStatusApplyConfiguration struct {
 	// podRestartIssued is set once the restartPods deletions were sent, so they
 	// are never repeated.
 	PodRestartIssued *bool `json:"podRestartIssued,omitempty"`
+	// hostUnchanged records that a draining executor proved it changed nothing
+	// on the Node: it refused in preflight before the host action, or it never
+	// started. The controller then uncordons the Node.
+	HostUnchanged *bool `json:"hostUnchanged,omitempty"`
 	// released is set only after Pod absence and UID-fenced Lease deletion.
 	Released *bool `json:"released,omitempty"`
 }
@@ -170,6 +174,14 @@ func (b *NodeMaintenanceStatusApplyConfiguration) WithRestartedPodUIDs(values ..
 // If called multiple times, the PodRestartIssued field is set to the value of the last call.
 func (b *NodeMaintenanceStatusApplyConfiguration) WithPodRestartIssued(value bool) *NodeMaintenanceStatusApplyConfiguration {
 	b.PodRestartIssued = &value
+	return b
+}
+
+// WithHostUnchanged sets the HostUnchanged field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the HostUnchanged field is set to the value of the last call.
+func (b *NodeMaintenanceStatusApplyConfiguration) WithHostUnchanged(value bool) *NodeMaintenanceStatusApplyConfiguration {
+	b.HostUnchanged = &value
 	return b
 }
 

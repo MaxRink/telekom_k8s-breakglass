@@ -369,7 +369,7 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery {
 		return kexecPod(ds)
 	}
-	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart {
+	if serviceRestart(profile) {
 		return servicePod(ds)
 	}
 	seconds := status.ActiveDeadlineSeconds
@@ -437,8 +437,14 @@ func servicePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 			NodeName: target.TargetNode, HostNetwork: true, DNSPolicy: corev1.DNSClusterFirstWithHostNet,
 			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false),
 			ActiveDeadlineSeconds: ptr.To(status.ActiveDeadlineSeconds), TerminationGracePeriodSeconds: ptr.To(int64(1)),
-			// The drained Node is cordoned; the executor must still run there.
-			Tolerations: []corev1.Toleration{{Key: corev1.TaintNodeUnschedulable, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}},
+			// The drained Node is cordoned, and a restart of containerd or the
+			// kubelet can make it NotReady or unreachable; the executor must keep
+			// running there until it reports.
+			Tolerations: []corev1.Toleration{
+				{Key: corev1.TaintNodeUnschedulable, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+				{Key: corev1.TaintNodeNotReady, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute},
+				{Key: corev1.TaintNodeUnreachable, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute},
+			},
 			SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr.To(int64(0)), RunAsGroup: ptr.To(int64(0)),
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 			Volumes: []corev1.Volume{
@@ -687,6 +693,12 @@ func (c *DebugSessionController) auditMaintenance(ctx context.Context, ds *break
 			"tuple": maintenanceTuple(profile, ds.Spec.NodeMaintenance), "image": profile.Image, "dryRun": profile.DryRun,
 			"podUID": status.PodUID, "jobUID": status.JobUID, "leaseUID": status.LeaseUID, "result": status.Result,
 			"bootID": status.BootID},
+	}
+	if profile.Service != nil {
+		// The controller deletes these Pods itself after a restart.
+		event.Details["restartPods"] = profile.Service.RestartPods
+		event.Details["restartedPodUIDs"] = status.RestartedPodUIDs
+		event.Details["hostUnchanged"] = status.HostUnchanged
 	}
 	if c.auditService != nil {
 		return c.auditService.EmitSync(ctx, event)
@@ -973,6 +985,36 @@ func kexecTermination(pod *corev1.Pod) (unloaded bool, bootID string) {
 	return unloaded, bootID
 }
 
+// hostActionNotIssued reports whether a draining executor proved that it changed
+// nothing on the host: its container terminated with the termination message
+// action_issued=0 (refused before the host action), or the kubelet reports it
+// as never started.
+func hostActionNotIssued(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	started, observed := false, false
+	for _, container := range pod.Status.ContainerStatuses {
+		if container.Name != "node-maintenance" {
+			continue
+		}
+		observed = true
+		if container.State.Running != nil || container.LastTerminationState.Terminated != nil {
+			started = true
+		}
+		if terminated := container.State.Terminated; terminated != nil {
+			started = true
+			for _, line := range strings.Split(terminated.Message, "\n") {
+				if strings.TrimSpace(line) == "action_issued=0" {
+					return true
+				}
+			}
+		}
+	}
+	// Without a container status nothing proves that the executor never ran.
+	return observed && !started && pod.Status.Phase != corev1.PodSucceeded
+}
+
 // serviceRestartPostCheck proves a verified unit restart from the API side: the
 // Node is Ready, the template's restartPods were deleted once on that Node,
 // and each selector has a new Ready Pod there. It returns false while waiting.
@@ -1095,12 +1137,13 @@ func uncordonKexecNode(ctx context.Context, target ctrlclient.Client, ds *breakg
 	status := ds.Status.NodeMaintenance
 	profile := ds.Status.ResolvedTemplate.NodeMaintenance
 	if !drainsNode(profile) || status.CordonedAt == nil ||
-		(status.CreateAttempted && status.Result != "succeeded" && status.Result != "failed") {
+		(status.CreateAttempted && status.Result != "succeeded" && status.Result != "failed" && !status.HostUnchanged) {
 		return nil
 	}
 	// A restarted unit that did not pass its post-checks leaves an unhealthy
-	// Node: keep it cordoned for replacement.
-	if serviceRestart(profile) && status.CreateAttempted && status.Result != "succeeded" {
+	// Node: keep it cordoned for replacement. An executor that proved it
+	// changed nothing leaves the Node as it was.
+	if serviceRestart(profile) && status.CreateAttempted && status.Result != "succeeded" && !status.HostUnchanged {
 		return nil
 	}
 	node := readKexecNode(ctx, target, ds)
@@ -1194,7 +1237,10 @@ func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds
 	}
 	postCheckPending := false
 	if serviceRestart(ds.Status.ResolvedTemplate.NodeMaintenance) && result == "succeeded" {
-		done, err := c.serviceRestartPostCheck(ctx, ds, target, configurationFence)
+		// Pod deletions are writes on the target cluster: fence them on the
+		// live session like every other maintenance write.
+		liveFence := func() error { return c.maintenanceLiveFence(ctx, ds, target, configurationFence, false) }
+		done, err := c.serviceRestartPostCheck(ctx, ds, target, liveFence)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1212,6 +1258,7 @@ func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds
 	} else if result == "" {
 		result = "interrupted"
 	}
+	hostUnchanged := serviceRestart(ds.Status.ResolvedTemplate.NodeMaintenance) && result != "succeeded" && hostActionNotIssued(pod)
 	now := metav1.Now()
 	job.Status.Active = 0
 	if pod.Status.StartTime != nil {
@@ -1257,10 +1304,15 @@ func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds
 	if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.NodeMaintenance.Result = result
 		status.NodeMaintenance.ResultAudited = true
+		status.NodeMaintenance.HostUnchanged = hostUnchanged
 		status.State = state
 		status.Message = "Node maintenance executor " + result
 		if serviceRestart(ds.Status.ResolvedTemplate.NodeMaintenance) && result != "succeeded" {
-			status.Message += "; the Node stays cordoned, recommend replacing it"
+			if hostUnchanged {
+				status.Message += "; the executor changed nothing on the Node, so it is uncordoned"
+			} else {
+				status.Message += "; the Node stays cordoned, recommend replacing it"
+			}
 		}
 	}); err != nil {
 		return ctrl.Result{}, err

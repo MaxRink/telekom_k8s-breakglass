@@ -288,8 +288,12 @@ hostPath. `readOnly` does not restrict a socket: the fence is the fixed
 entrypoint and the `service-action` helper, which can only probe a unit
 (`LoadUnit` and property reads, after a `Peer.Ping`) and call
 `RestartUnit(<unit>, "replace")` for an allowlisted unit; the image has no
-`systemctl` or general D-Bus client. A Node without that socket leaves the
-executor Pending until the deadline (`interrupted`, the Node stays cordoned). The helper waits until the unit
+`systemctl` or general D-Bus client. The executor is a Pod, so the kubelet and
+containerd must still start Pods on the Node: use the action for a degraded but
+responsive unit. A Node without that socket, or one that cannot start the Pod,
+leaves the executor Pending until the deadline (`interrupted`). The executor
+tolerates the `not-ready` and `unreachable` NoExecute taints, so a restart that
+briefly makes the Node NotReady does not evict it. The helper waits until the unit
 is active again with a new activation time; on a CRA node (where `cra.service`
 is loaded) a `containerd.service` or `cra.service` restart also waits for
 `cra.service`, the host `hbn` and `netconf` links and, when present, a global
@@ -306,7 +310,11 @@ revision changes. Only then is the result `succeeded` and cleanup uncordons the
 Node. A failed helper, or a Node or replacement Pod that is not Ready before
 the deadline, is `failed` with the advisory "recommend replacing it"; the Node
 stays cordoned. A succeeded helper whose post-checks never ran (cancellation)
-is `unknown` and also stays cordoned. Nothing on the Node is persisted.
+is `unknown` and also stays cordoned. An executor that proves it changed
+nothing (it refused in preflight before the restart request, reported as the
+termination message `action_issued=0`, or it never started) sets
+`status.nodeMaintenance.hostUnchanged`, and cleanup uncordons the Node. Nothing
+on the Node is persisted.
 
 The controller's ClusterConfig identity additionally needs `delete` on Pods in
 the `restartPods` namespaces (the drain already needs Pod `list`, eviction and

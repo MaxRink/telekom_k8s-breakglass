@@ -333,6 +333,7 @@ func TestNodeMaintenanceServiceRestartIsUnitOnly(t *testing.T) {
 		{"short drain", func(p *DebugSessionNodeMaintenance) { p.Service.DrainTimeoutSeconds = 10 }},
 		{"long drain", func(p *DebugSessionNodeMaintenance) { p.Service.DrainTimeoutSeconds = 3601 }},
 		{"bad namespace", func(p *DebugSessionNodeMaintenance) { p.Service.RestartPods[0].Namespace = "Kube System" }},
+		{"executor namespace", func(p *DebugSessionNodeMaintenance) { p.Service.RestartPods[0].Namespace = NodeMaintenanceNamespace }},
 		{"empty selector", func(p *DebugSessionNodeMaintenance) { p.Service.RestartPods[0].MatchLabels = map[string]string{} }},
 		{"empty label value", func(p *DebugSessionNodeMaintenance) {
 			p.Service.RestartPods[0].MatchLabels = map[string]string{"app": ""}

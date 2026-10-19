@@ -78,6 +78,10 @@ func TestServiceRestartDrainsAndRunsWithoutCapabilities(t *testing.T) {
 	require.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, pod.Spec.SecurityContext.SeccompProfile.Type)
 	require.True(t, pod.Spec.HostNetwork)
 	require.False(t, pod.Spec.HostPID)
+	for _, taint := range []string{corev1.TaintNodeNotReady, corev1.TaintNodeUnreachable} {
+		require.Contains(t, pod.Spec.Tolerations, corev1.Toleration{Key: taint, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute},
+			"a containerd or kubelet restart must not evict the executor")
+	}
 	require.Equal(t, "/run/systemd/private", pod.Spec.Volumes[1].HostPath.Path)
 	require.Equal(t, corev1.HostPathSocket, *pod.Spec.Volumes[1].HostPath.Type)
 	require.Contains(t, container.VolumeMounts, corev1.VolumeMount{Name: "systemd", MountPath: "/run/systemd/private", ReadOnly: true})
@@ -164,6 +168,57 @@ func TestServiceRestartFailedHelperKeepsCordon(t *testing.T) {
 	require.False(t, ds.Status.NodeMaintenance.PodRestartIssued, "a failed helper never recreates Pods")
 	require.NoError(t, c.cleanupMaintenance(t.Context(), ds))
 	require.True(t, kexecNode(t, spoke).Spec.Unschedulable)
+}
+
+func TestServiceRestartPreflightRefusalUncordons(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		message   string
+		unchanged bool
+	}{
+		{"refused before the restart", "action_issued=0\n", true},
+		{"failed after the restart", "action_issued=1\n", false},
+		{"no termination message", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, ds, spoke, _ := serviceFixture(t)
+			drainKexecNode(t, c, ds)
+			pod := kexecExecutorPod(t, spoke, ds)
+			pod.Status.Phase = corev1.PodFailed
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "node-maintenance",
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: tc.message}}}}
+			require.NoError(t, spoke.Status().Update(t.Context(), pod))
+			_, err := c.handleMaintenanceActive(t.Context(), ds)
+			require.NoError(t, err)
+			require.Equal(t, "failed", ds.Status.NodeMaintenance.Result)
+			require.Equal(t, tc.unchanged, ds.Status.NodeMaintenance.HostUnchanged)
+			require.NoError(t, c.cleanupMaintenance(t.Context(), ds))
+			require.Equal(t, !tc.unchanged, kexecNode(t, spoke).Spec.Unschedulable)
+		})
+	}
+}
+
+func TestServiceRestartExecutorThatNeverStartedUncordonsAtExpiry(t *testing.T) {
+	c, ds, spoke, _ := serviceFixture(t)
+	expires := metav1.NewTime(time.Now().Add(4 * time.Second).Truncate(time.Second))
+	ds.Status.ExpiresAt = &expires
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	drainKexecNode(t, c, ds)
+	pod := kexecExecutorPod(t, spoke, ds)
+	pod.Status.Phase = corev1.PodPending
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "node-maintenance",
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}
+	require.NoError(t, spoke.Status().Update(t.Context(), pod))
+	_, err := c.handleMaintenanceActive(t.Context(), ds)
+	require.NoError(t, err)
+	require.Empty(t, ds.Status.NodeMaintenance.Result, "a Pending executor is awaited until the deadline")
+	time.Sleep(time.Until(expires.Time) + time.Millisecond)
+	_, err = c.handleMaintenanceActive(t.Context(), ds)
+	require.NoError(t, err)
+	require.Equal(t, "interrupted", ds.Status.NodeMaintenance.Result)
+	require.True(t, ds.Status.NodeMaintenance.HostUnchanged)
+	require.NoError(t, c.cleanupMaintenance(t.Context(), ds))
+	require.False(t, kexecNode(t, spoke).Spec.Unschedulable, "an executor that never ran leaves the Node as it was")
 }
 
 func TestServiceRestartUnverifiedSuccessDuringCleanupIsUnknown(t *testing.T) {

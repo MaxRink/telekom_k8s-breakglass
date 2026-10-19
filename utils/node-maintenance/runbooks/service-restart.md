@@ -6,10 +6,14 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Service restart
 
-Use `service-restart` when a node is NotReady or cannot create Pod sandboxes
-because a host service hangs, and the kernel still answers. It restarts one
-unit: `containerd.service`, `kubelet.service` or `cra.service` (the CRA/vSR
-router container).
+Use `service-restart` when a host service on a node is degraded but the kubelet
+and containerd can still start the executor Pod, for example a router container
+(`cra.service`) that lost its sessions, or a containerd or kubelet that needs a
+re-exec. It restarts one unit: `containerd.service`, `kubelet.service` or
+`cra.service` (the CRA/vSR router container). The executor is a Pod: if the
+kubelet or containerd hangs so that no Pod starts, the session ends
+`interrupted` at its deadline and the controller uncordons the unchanged Node;
+recover such a node out of band.
 
 Before you request it:
 

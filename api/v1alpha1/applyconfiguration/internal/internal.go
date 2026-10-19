@@ -3428,6 +3428,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: createAttempted
       type:
         scalar: boolean
+    - name: hostUnchanged
+      type:
+        scalar: boolean
     - name: jobCreateAttempted
       type:
         scalar: boolean

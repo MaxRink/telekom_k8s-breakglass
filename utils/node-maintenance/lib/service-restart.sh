@@ -9,6 +9,15 @@ script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$script_dir/common.sh"
 
+# The controller uncordons the Node only when the executor proves that it
+# restarted nothing: the termination message says action_issued=0 until the
+# restart request is sent.
+record_action_issued() {
+	[ -w /dev/termination-log ] || return 0
+	printf 'action_issued=%s\n' "$1" >/dev/termination-log || true
+}
+record_action_issued 0
+
 usage() {
 	cat >&2 <<'EOF'
 Usage:
@@ -117,6 +126,7 @@ capture "$bundle/before-links.txt" ip -brief link show || true
 printf 'cra_node=%s\ncra_checks=%s\n' "$cra_node" "$check_cra" | append_evidence "$bundle/metadata"
 
 validate_action_deadline
+record_action_issued 1
 set +e
 capture "$bundle/action-restart.txt" service-action restart "$unit"
 action_status=$?
@@ -142,26 +152,28 @@ healthy() {
 	return 0
 }
 
-result=failed
+# record_event in common.sh assigns the global "result", so the outcome has its own name.
+post_check_result=failed
 if [ "$action_status" -eq 0 ]; then
-	waited=0
-	while [ "$waited" -lt "$service_restart_wait_seconds" ]; do
+	# Bound the wait by wall-clock time: each probe can itself take seconds.
+	wait_until=$(($(date +%s) + service_restart_wait_seconds))
+	while :; do
 		if healthy; then
-			result=succeeded
+			post_check_result=succeeded
 			break
 		fi
+		now=$(date +%s)
 		deadline=${BREAKGLASS_ACTION_DEADLINE_UNIX:-}
-		if [ -n "$deadline" ] && [ "$(date +%s)" -ge "$deadline" ]; then
+		if [ "$now" -ge "$wait_until" ] || { [ -n "$deadline" ] && [ "$now" -ge "$deadline" ]; }; then
 			break
 		fi
 		sleep 5
-		waited=$((waited + 5))
 	done
 fi
 capture "$bundle/after-links.txt" ip -brief link show || true
 assert_safe_bundle "$bundle"
-printf 'action_exit_status=%s\npost_check=%s\ncompleted_at_utc=%s\n' "$action_status" "$result" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
-if [ "$result" != succeeded ]; then
+printf 'action_exit_status=%s\npost_check=%s\ncompleted_at_utc=%s\n' "$action_status" "$post_check_result" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+if [ "$post_check_result" != succeeded ]; then
 	record_event operation-completed failed
 	printf 'Restart of %s did not pass the post-checks; recommend replacing the node (evidence: %s)\n' "$unit" "$bundle" >&2
 	exit 1

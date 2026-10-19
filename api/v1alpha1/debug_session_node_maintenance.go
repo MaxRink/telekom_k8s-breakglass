@@ -413,6 +413,9 @@ func validateNodeMaintenanceService(profile *DebugSessionNodeMaintenance) error 
 		if len(validation.IsDNS1123Label(selector.Namespace)) != 0 || len(selector.MatchLabels) == 0 || len(selector.MatchLabels) > 8 {
 			return fmt.Errorf("service-restart restartPods need an exact namespace and one to eight matchLabels")
 		}
+		if selector.Namespace == NodeMaintenanceNamespace {
+			return fmt.Errorf("service-restart restartPods must not select the executor namespace %s", NodeMaintenanceNamespace)
+		}
 		for key, value := range selector.MatchLabels {
 			if len(validation.IsQualifiedName(key)) != 0 || len(validation.IsValidLabelValue(value)) != 0 || value == "" {
 				return fmt.Errorf("service-restart restartPods matchLabels must be exact non-empty label pairs")
@@ -491,6 +494,11 @@ type NodeMaintenanceStatus struct {
 	// are never repeated.
 	// +optional
 	PodRestartIssued bool `json:"podRestartIssued,omitempty"`
+	// hostUnchanged records that a draining executor proved it changed nothing
+	// on the Node: it refused in preflight before the host action, or it never
+	// started. The controller then uncordons the Node.
+	// +optional
+	HostUnchanged bool `json:"hostUnchanged,omitempty"`
 	// released is set only after Pod absence and UID-fenced Lease deletion.
 	// +optional
 	Released bool `json:"released,omitempty"`
