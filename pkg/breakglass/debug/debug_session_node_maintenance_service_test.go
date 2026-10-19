@@ -181,7 +181,7 @@ func TestServiceRestartPreflightRefusalUncordons(t *testing.T) {
 		{"no termination message", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, ds, spoke, _ := serviceFixture(t)
+			c, ds, spoke, sink := serviceFixture(t)
 			drainKexecNode(t, c, ds)
 			pod := kexecExecutorPod(t, spoke, ds)
 			pod.Status.Phase = corev1.PodFailed
@@ -192,6 +192,8 @@ func TestServiceRestartPreflightRefusalUncordons(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "failed", ds.Status.NodeMaintenance.Result)
 			require.Equal(t, tc.unchanged, ds.Status.NodeMaintenance.HostUnchanged)
+			events := sink.Events()
+			require.Equal(t, tc.unchanged, events[len(events)-1].Details["hostUnchanged"], "the result receipt records it")
 			require.NoError(t, c.cleanupMaintenance(t.Context(), ds))
 			require.Equal(t, !tc.unchanged, kexecNode(t, spoke).Spec.Unschedulable)
 		})
@@ -219,6 +221,26 @@ func TestServiceRestartExecutorThatNeverStartedUncordonsAtExpiry(t *testing.T) {
 	require.True(t, ds.Status.NodeMaintenance.HostUnchanged)
 	require.NoError(t, c.cleanupMaintenance(t.Context(), ds))
 	require.False(t, kexecNode(t, spoke).Spec.Unschedulable, "an executor that never ran leaves the Node as it was")
+}
+
+func TestServiceRestartPostCheckAfterExpiryFailsWithoutWrites(t *testing.T) {
+	c, ds, spoke, sink := serviceFixture(t)
+	expires := metav1.NewTime(time.Now().Add(4 * time.Second).Truncate(time.Second))
+	ds.Status.ExpiresAt = &expires
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	drainKexecNode(t, c, ds)
+	finishServiceExecutor(t, spoke, ds, corev1.PodSucceeded)
+	time.Sleep(time.Until(expires.Time) + time.Millisecond)
+	_, err := c.handleMaintenanceActive(t.Context(), ds)
+	require.NoError(t, err, "an expired session must not wedge on the live fence")
+	require.Equal(t, "failed", ds.Status.NodeMaintenance.Result)
+	require.False(t, ds.Status.NodeMaintenance.HostUnchanged)
+	require.False(t, ds.Status.NodeMaintenance.PodRestartIssued, "no Pod is deleted after the deadline")
+	require.NoError(t, spoke.Get(t.Context(), client.ObjectKey{Namespace: "network", Name: "cra-agent-a"}, &corev1.Pod{}))
+	events := sink.Events()
+	require.Equal(t, false, events[len(events)-1].Details["hostUnchanged"])
+	require.NoError(t, c.cleanupMaintenance(t.Context(), ds))
+	require.True(t, kexecNode(t, spoke).Spec.Unschedulable)
 }
 
 func TestServiceRestartUnverifiedSuccessDuringCleanupIsUnknown(t *testing.T) {

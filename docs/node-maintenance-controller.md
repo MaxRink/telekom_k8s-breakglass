@@ -312,8 +312,12 @@ the deadline, is `failed` with the advisory "recommend replacing it"; the Node
 stays cordoned. A succeeded helper whose post-checks never ran (cancellation)
 is `unknown` and also stays cordoned. An executor that proves it changed
 nothing (it refused in preflight before the restart request, reported as the
-termination message `action_issued=0`, or it never started) sets
-`status.nodeMaintenance.hostUnchanged`, and cleanup uncordons the Node. Nothing
+termination message `action_issued=0`, or the kubelet reported its container
+as never started) sets `status.nodeMaintenance.hostUnchanged`, and cleanup
+uncordons the Node. An executor Pod without any container status, or one that
+ran, keeps the cordon. The helper checks the session deadline again right
+before the restart request, so a container that starts after the deadline
+restarts nothing. Nothing
 on the Node is persisted.
 
 The controller's ClusterConfig identity additionally needs `delete` on Pods in

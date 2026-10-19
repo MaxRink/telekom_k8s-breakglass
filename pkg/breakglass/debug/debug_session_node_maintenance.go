@@ -369,7 +369,7 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery {
 		return kexecPod(ds)
 	}
-	if serviceRestart(profile) {
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart {
 		return servicePod(ds)
 	}
 	seconds := status.ActiveDeadlineSeconds
@@ -1236,7 +1236,11 @@ func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds
 		result = kexecOutcome(ds.Status.NodeMaintenance, readKexecNode(ctx, target, ds), pod)
 	}
 	postCheckPending := false
-	if serviceRestart(ds.Status.ResolvedTemplate.NodeMaintenance) && result == "succeeded" {
+	if serviceRestart(ds.Status.ResolvedTemplate.NodeMaintenance) && result == "succeeded" && isDebugSessionExpired(ds, time.Now().UTC()) {
+		// The deadline passed before the post-checks proved the restart: the
+		// live fence would refuse every further write, so do not start them.
+		result, postCheckPending = "", true
+	} else if serviceRestart(ds.Status.ResolvedTemplate.NodeMaintenance) && result == "succeeded" {
 		// Pod deletions are writes on the target cluster: fence them on the
 		// live session like every other maintenance write.
 		liveFence := func() error { return c.maintenanceLiveFence(ctx, ds, target, configurationFence, false) }
@@ -1291,6 +1295,7 @@ func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds
 	}
 	outcome := ds.DeepCopy()
 	outcome.Status.NodeMaintenance.Result = result
+	outcome.Status.NodeMaintenance.HostUnchanged = hostUnchanged
 	if err := c.auditMaintenance(ctx, outcome, "result"); err != nil {
 		return ctrl.Result{}, err
 	}
