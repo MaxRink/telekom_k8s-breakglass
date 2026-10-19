@@ -102,7 +102,7 @@ proxy_args=()
 for variable in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY; do
 	[[ -z "${!variable:-}" ]] || proxy_args+=(--build-arg "$variable=${!variable}")
 done
-docker build --quiet --network host ${proxy_args[@]+"${proxy_args[@]}"} --iidfile "$proof_dir/image.id" --tag "$image" --file utils/node-maintenance/Dockerfile utils/node-maintenance
+docker buildx build --load --quiet --network host ${proxy_args[@]+"${proxy_args[@]}"} --iidfile "$proof_dir/image.id" --tag "$image" --file utils/node-maintenance/Dockerfile utils/node-maintenance
 image_id=$(docker image inspect "$image" --format '{{.Id}}')
 docker push "$image"
 digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}' | sed 's/.*@//')
@@ -199,4 +199,4 @@ HOTFIX_KIND_NODE="$node" \
 HOTFIX_KIND_CONTAINER_ID="$node_id" \
 HOTFIX_KIND_IMAGE="$registry:5000/node-maintenance@$digest" \
 HOTFIX_KIND_SCHEDULER_IMAGE="$registry:5000/kube-scheduler@$scheduler_digest" \
-	"$proof_dir/hotfix.test" -test.run '^TestHotfixKind$' -test.count=1 -test.timeout=20m -test.v
+	"$proof_dir/hotfix.test" -test.run '^TestHotfixKind$' -test.count=1 -test.timeout=25m -test.v

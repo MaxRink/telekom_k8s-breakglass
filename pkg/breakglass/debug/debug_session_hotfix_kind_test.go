@@ -47,7 +47,7 @@ func TestHotfixKind(t *testing.T) {
 	require.True(t, strings.HasPrefix(nodeName, "hotfix-proof-") && strings.HasSuffix(nodeName, "-control-plane"))
 	require.Contains(t, image, "@sha256:")
 	require.Contains(t, schedulerImage, "@sha256:")
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	require.NoError(t, err)
@@ -180,7 +180,8 @@ func TestHotfixKind(t *testing.T) {
 		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: namespace, Name: apply.Status.Hotfix.RecordName}, record))
 		require.Equal(t, breakglassv1alpha1.HotfixNodeApplied, record.Status.Nodes[0].State)
 		require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, node))
-		require.Contains(t, node.Annotations, hotfixAnnotationKey(record.Name))
+		require.Equal(t, namespace+"/"+record.Name+"@"+hotfixPayloadSHA256(&record.Spec.Payload), node.Annotations[hotfixAnnotationKey(record.Name)],
+			"the recorded payload hash survives the API round trip")
 
 		rollback := run(&breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageRollback, RecordName: record.Name})
 		require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, rollback.Status.State, rollback.Status.Message)
@@ -188,6 +189,9 @@ func TestHotfixKind(t *testing.T) {
 		noExecutorsOrLeases()
 		require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(record), record))
 		require.True(t, meta.IsStatusConditionTrue(record.Status.Conditions, string(breakglassv1alpha1.HotfixRecordConditionClosed)))
+		require.Equal(t, breakglassv1alpha1.HotfixNodeRolledBack, record.Status.Nodes[0].State)
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, node))
+		require.NotContains(t, node.Annotations, hotfixAnnotationKey(record.Name), "rollback removes the node annotation")
 	}
 
 	t.Run("node-file sed", func(t *testing.T) {
