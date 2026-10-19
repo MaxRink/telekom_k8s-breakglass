@@ -37,7 +37,9 @@ type PodCopyConfigApplyConfiguration struct {
 	// copied pod. The copied application containers keep their own security
 	// context. Without it the debug container has no security context and
 	// admission policies such as a read-only root filesystem requirement
-	// reject the copy.
+	// reject the copy. It is applied as written: privileged and Windows host
+	// process containers are rejected, every other field is the template
+	// author's responsibility.
 	SecurityContext *v1.SecurityContext `json:"securityContext,omitempty"`
 }
 

@@ -2135,6 +2135,12 @@ spec:
                         && self.allowPrivileged) || ((!has(self.securityContext.privileged)
                         || !self.securityContext.privileged) && (!has(self.securityContext.allowPrivilegeEscalation)
                         || !self.securityContext.allowPrivilegeEscalation))'
+                    - message: securityContext.runAsUser 0 and runAsNonRoot false
+                        require requireNonRoot false
+                      rule: '!has(self.securityContext) || (has(self.requireNonRoot)
+                        && !self.requireNonRoot) || ((!has(self.securityContext.runAsUser)
+                        || self.securityContext.runAsUser != 0) && (!has(self.securityContext.runAsNonRoot)
+                        || self.securityContext.runAsNonRoot))'
                   nodeDebug:
                     description: nodeDebug configures node-level debugging.
                     properties:
@@ -2336,7 +2342,9 @@ spec:
                           copied pod. The copied application containers keep their own security
                           context. Without it the debug container has no security context and
                           admission policies such as a read-only root filesystem requirement
-                          reject the copy.
+                          reject the copy. It is applied as written: privileged and Windows host
+                          process containers are rejected, every other field is the template
+                          author's responsibility.
                         properties:
                           allowPrivilegeEscalation:
                             description: |-
@@ -2538,6 +2546,13 @@ spec:
                         pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
                     type: object
+                    x-kubernetes-validations:
+                    - message: podCopy.securityContext must not be privileged or a
+                        Windows host process
+                      rule: '!has(self.securityContext) || ((!has(self.securityContext.privileged)
+                        || !self.securityContext.privileged) && (!has(self.securityContext.windowsOptions)
+                        || !has(self.securityContext.windowsOptions.hostProcess) ||
+                        !self.securityContext.windowsOptions.hostProcess))'
                 type: object
               labels:
                 additionalProperties:

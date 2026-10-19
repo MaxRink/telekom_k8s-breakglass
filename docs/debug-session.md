@@ -1489,11 +1489,14 @@ kubectlDebug:
   allows them. The controller validates the result against `allowPrivileged`,
   `maxCapabilities` and `requireNonRoot`. The CRD rejects a template
   `securityContext` that sets `privileged` or `allowPrivilegeEscalation` without
-  `allowPrivileged`.
+  `allowPrivileged`, and `runAsUser: 0` or `runAsNonRoot: false` while
+  `requireNonRoot` is true.
 - `podCopy.securityContext`: set on the `debugger` container that the controller
   adds to the copy. The copied application containers keep their own security
   context. Without it, the debugger has no security context and policies that
-  require one reject the copy.
+  require one reject the copy. The CRD rejects `privileged: true` and Windows
+  host process settings here; every other field is applied as written and is
+  the template author's responsibility.
 
 Both fields are optional. When they are unset, the behavior is unchanged. To
 roll back, remove the field from the template; new requests then use the

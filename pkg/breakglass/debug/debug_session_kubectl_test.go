@@ -1139,22 +1139,37 @@ func TestEffectiveEphemeralSecurityContext(t *testing.T) {
 	got, err = effectiveEphemeralSecurityContext(session, nil)
 	require.NoError(t, err)
 	assert.Equal(t, session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.SecurityContext, got)
+
+	// Template capabilities replace the requested capabilities as a whole,
+	// and a template allowPrivilegeEscalation false wins over the request.
+	session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.SecurityContext = &corev1.SecurityContext{
+		AllowPrivilegeEscalation: boolPtr(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+	requested.AllowPrivilegeEscalation = boolPtr(true)
+	got, err = effectiveEphemeralSecurityContext(session, requested)
+	require.NoError(t, err)
+	assert.False(t, *got.AllowPrivilegeEscalation)
+	assert.Equal(t, &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}, got.Capabilities, "the request add list is dropped")
 }
 
 func TestKubectlDebugHandler_InjectEphemeralContainerTemplateSecurityContext(t *testing.T) {
 	tests := []struct {
-		name      string
-		template  *corev1.SecurityContext
-		wantError bool
+		name           string
+		template       *corev1.SecurityContext
+		requireNonRoot bool
+		wantError      bool
 	}{
 		{name: "read-only root filesystem is enforced", template: &corev1.SecurityContext{ReadOnlyRootFilesystem: boolPtr(true)}},
 		{name: "template cannot exceed allowPrivileged", template: &corev1.SecurityContext{Privileged: boolPtr(true)}, wantError: true},
+		{name: "template cannot run as root under requireNonRoot", template: &corev1.SecurityContext{RunAsNonRoot: boolPtr(false), RunAsUser: ptrInt64Value(0)}, requireNonRoot: true, wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			scheme := newKubectlTestScheme()
 			session := newEphemeralOperationTestSession()
 			session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.SecurityContext = test.template
+			session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.RequireNonRoot = test.requireNonRoot
 			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
 				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
