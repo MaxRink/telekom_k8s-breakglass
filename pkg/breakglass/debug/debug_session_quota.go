@@ -267,7 +267,7 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 					}
 					return nil, err
 				}
-				if isReserved && len(entry.Scopes) <= len(recorded.Scopes) {
+				if isReserved && !quotas.AddsScopes(recorded, entry) {
 					continue
 				}
 				entries = append(entries, entry)

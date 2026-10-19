@@ -294,6 +294,20 @@ func TestDebugQuotaAddsPerClusterScopeToOlderReservation(t *testing.T) {
 	require.NoError(t, cli.Create(t.Context(), second))
 	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(second), second))
 	require.ErrorIs(t, ctrl.admitDebugSession(t.Context(), second), quotas.ErrFull)
+
+	// A reserved session whose binding is gone keeps its recorded entry and
+	// does not block admission through another binding.
+	require.NoError(t, cli.Delete(t.Context(), binding))
+	other := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "bindings", UID: "other-uid"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{MaxActiveSessionsPerCluster: &one}}
+	require.NoError(t, cli.Create(t.Context(), other))
+	third := candidate("third")
+	third.Spec.BindingRef = &breakglassv1alpha1.BindingReference{Name: other.Name, Namespace: other.Namespace}
+	require.NoError(t, cli.Create(t.Context(), third))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(third), third))
+	require.NoError(t, ctrl.admitDebugSession(t.Context(), third))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: "breakglass-session-quota-v1"}, cm))
+	require.NoError(t, json.Unmarshal([]byte(cm.Data["ledger"]), &state))
+	assert.Equal(t, scopes, state.Entries["older"].Scopes)
 }
 
 func TestDebugQuotaBootstrapsLegacyResolvedBinding(t *testing.T) {

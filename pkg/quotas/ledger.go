@@ -113,7 +113,7 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 				switch {
 				case !exists:
 					state.Entries[entry.UID] = entry
-				case addsScopes(existing, entry):
+				case AddsScopes(existing, entry):
 					// A reservation recorded by an older controller gets the
 					// scopes that this controller derives, so a new scope (for
 					// example per cluster) also counts sessions admitted before
@@ -230,14 +230,14 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 	return fmt.Errorf("quota reservation CAS retries exhausted")
 }
 
-// scopesSubset reports whether every scope of old is also in updated.
-// addsScopes reports whether updated is the same session as existing with all
+// AddsScopes reports whether updated is the same session as existing with all
 // of its scopes and at least one more.
-func addsScopes(existing, updated Entry) bool {
+func AddsScopes(existing, updated Entry) bool {
 	return existing.Kind == updated.Kind && existing.Namespace == updated.Namespace && existing.Name == updated.Name &&
 		len(updated.Scopes) > len(existing.Scopes) && scopesSubset(existing.Scopes, updated.Scopes)
 }
 
+// scopesSubset reports whether every scope of old is also in updated.
 func scopesSubset(old, updated []string) bool {
 	for _, scope := range old {
 		if !slices.Contains(updated, scope) {
