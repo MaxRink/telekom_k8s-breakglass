@@ -78,6 +78,8 @@ spec:
 	require.Equal(t, http.StatusForbidden, status, "a second session on the same cluster must be refused")
 	require.Contains(t, err.Error(), "per cluster")
 
+	// Only a session in PendingApproval can be rejected.
+	helpers.WaitForDebugSessionState(t, s.Ctx, s.Client, first.Name, first.Namespace, breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForStateTimeout)
 	status, err = approver.RejectDebugSession(s.Ctx, t, first.Name, "free the per-cluster slot")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
