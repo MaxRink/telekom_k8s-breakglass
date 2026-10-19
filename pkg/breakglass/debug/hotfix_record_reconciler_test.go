@@ -79,7 +79,7 @@ func TestHotfixRecordDriftExpiryAndMetrics(t *testing.T) {
 	if node.Annotations == nil {
 		node.Annotations = map[string]string{}
 	}
-	node.Annotations[hotfixAnnotationKey(record.Name)] = record.Namespace + "/" + record.Name + "@x"
+	node.Annotations[hotfixAnnotationKey(record.Name)] = record.Namespace + "/" + record.Name + "@" + hotfixPayloadSHA256(&record.Spec.Payload)
 	require.NoError(t, f.spoke.Update(t.Context(), node))
 	require.NoError(t, f.spoke.Delete(t.Context(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-new"}}))
 	r.now = func() time.Time { return record.Spec.ExpiresAt.Add(time.Hour) }
@@ -241,4 +241,48 @@ func TestHotfixRecordDriftPausesDuringClose(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.hub.Get(t.Context(), client.ObjectKeyFromObject(record), record))
 	require.Equal(t, breakglassv1alpha1.HotfixNodeApplied, recordNodeState(record, "worker-00"), "a running close is not drift")
+}
+
+func TestHotfixCloseIsRefusedWhileAnApplyRuns(t *testing.T) {
+	f := newHotfixFixture(t, 2, 0)
+	record := appliedHotfix(t, f)
+	// A second apply of the same record is still running.
+	running := f.session(t, "apply-running", &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageApply, PlanRef: "plan-x", PlanHash: "x"})
+	running.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	require.NoError(t, f.hub.Status().Update(t.Context(), running))
+	base := record.DeepCopy()
+	record.Spec.Sessions = append(record.Spec.Sessions, breakglassv1alpha1.HotfixRecordSession{Stage: breakglassv1alpha1.HotfixStageApply,
+		Name: running.Name, UID: string(running.UID), RequestedBy: "requester", ApprovedBy: "approver", At: metav1.Now()})
+	require.NoError(t, f.hub.Patch(t.Context(), record, client.MergeFrom(base)))
+
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "close", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "default/spoke", TemplateRef: "hotfix",
+			Hotfix: &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageClose, RecordName: record.Name}}}
+	require.ErrorContains(t, validateHotfixReferences(t.Context(), f.hub, f.tmpl, session), "running apply or rollback")
+	closeSession := f.drive(t, f.session(t, "close-1", &breakglassv1alpha1.DebugSessionHotfixRequest{
+		Stage: breakglassv1alpha1.HotfixStageClose, RecordName: record.Name}))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, closeSession.Status.State)
+	require.Contains(t, closeSession.Status.Message, "running apply or rollback")
+	node := &corev1.Node{}
+	require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Name: "worker-00"}, node))
+	require.Contains(t, node.Annotations, hotfixAnnotationKey(record.Name), "a refused close leaves the nodes tracked")
+}
+
+func TestHotfixRecordActiveFollowsTheNodes(t *testing.T) {
+	f := newHotfixFixture(t, 2, 0)
+	record := appliedHotfix(t, f)
+	for _, name := range []string{"worker-00", "worker-01"} {
+		node := &corev1.Node{}
+		require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Name: name}, node))
+		delete(node.Annotations, hotfixAnnotationKey(record.Name))
+		require.NoError(t, f.spoke.Update(t.Context(), node))
+	}
+	r := NewHotfixRecordReconciler(zap.NewNop().Sugar(), f.hub, f.c.ccProvider)
+	r.targetClientFactory = func(*rest.Config) (client.Client, error) { return f.spoke, nil }
+	t.Cleanup(func() { deleteHotfixRecordSeries(record.Namespace + "/" + record.Name) })
+	_, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(record)})
+	require.NoError(t, err)
+	require.NoError(t, f.hub.Get(t.Context(), client.ObjectKeyFromObject(record), record))
+	require.False(t, meta.IsStatusConditionTrue(record.Status.Conditions, string(breakglassv1alpha1.HotfixRecordConditionActive)),
+		"no node carries the hotfix any more")
 }

@@ -242,7 +242,7 @@ func (c *DebugSessionController) closeHotfixRecordAfterRollback(ctx context.Cont
 // updateHotfixRecordLifecycle applies a reconfirm or close session to its
 // record. The session UID in the record is the idempotency key, so a retry
 // after a partial write completes the stage instead of failing on a closed
-// record. Close order: node annotations, session entry, then Closed.
+// record. Close order: session entry, node annotations, then Closed.
 func (c *DebugSessionController) updateHotfixRecordLifecycle(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	record := &breakglassv1alpha1.HotfixRecord{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Namespace: ds.Namespace, Name: ds.Spec.Hotfix.RecordName}, record); err != nil {
@@ -259,18 +259,6 @@ func (c *DebugSessionController) updateHotfixRecordLifecycle(ctx context.Context
 	}
 	now := metav1.Now()
 	if !listed {
-		if stage == breakglassv1alpha1.HotfixStageClose {
-			for i := range record.Status.Nodes {
-				node := record.Status.Nodes[i]
-				if node.State != breakglassv1alpha1.HotfixNodeApplied {
-					continue // reverted nodes carry no annotation any more
-				}
-				status := &breakglassv1alpha1.HotfixNodeStatus{Name: node.Name, UID: node.UID}
-				if err := c.markHotfixNode(ctx, ds, status, breakglassv1alpha1.HotfixNodeRolledBack); err != nil {
-					return err
-				}
-			}
-		}
 		specBase := record.DeepCopy()
 		if stage == breakglassv1alpha1.HotfixStageReconfirm {
 			lifetime, err := breakglassv1alpha1.HotfixLifetime(ds.Status.ResolvedTemplate.Hotfix, ds.Spec.Hotfix.Lifetime)
@@ -287,6 +275,19 @@ func (c *DebugSessionController) updateHotfixRecordLifecycle(ctx context.Context
 	}
 	if stage != breakglassv1alpha1.HotfixStageClose || closed {
 		return nil
+	}
+	// The close is listed before the annotations go, so the record
+	// reconciler pauses its drift scan for the whole close. Removing an
+	// annotation is idempotent, so a retry repeats it until Closed is set.
+	for i := range record.Status.Nodes {
+		node := record.Status.Nodes[i]
+		if node.State != breakglassv1alpha1.HotfixNodeApplied {
+			continue // reverted nodes carry no annotation any more
+		}
+		status := &breakglassv1alpha1.HotfixNodeStatus{Name: node.Name, UID: node.UID}
+		if err := c.markHotfixNode(ctx, ds, status, breakglassv1alpha1.HotfixNodeRolledBack); err != nil {
+			return err
+		}
 	}
 	statusBase := record.DeepCopy()
 	meta.SetStatusCondition(&record.Status.Conditions, metav1.Condition{Type: string(breakglassv1alpha1.HotfixRecordConditionClosed),

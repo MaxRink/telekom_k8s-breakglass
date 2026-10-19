@@ -141,6 +141,9 @@ func (c *DebugSessionController) openHotfixRecord(ctx context.Context, ds *break
 	if err := hotfixRecordUsable(record, ds); err != nil {
 		return nil, errHotfixStop{err.Error()}
 	}
+	if err := hotfixRecordMutationInFlight(ctx, c.client, record, ds.Spec.Hotfix.Stage); err != nil {
+		return nil, errHotfixStop{err.Error()}
+	}
 	return record, nil
 }
 

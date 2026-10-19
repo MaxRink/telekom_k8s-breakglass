@@ -6,7 +6,7 @@ package debug
 import (
 	"context"
 	"fmt"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -62,9 +62,9 @@ func hotfixRecordLabels(record *breakglassv1alpha1.HotfixRecord) []string {
 	return []string{record.Spec.Cluster, string(record.Spec.Payload.Type), record.Namespace + "/" + record.Name}
 }
 
-// Reconcile updates conditions and metrics of one record. A steady state
-// writes nothing: the status is patched only when a condition or a node
-// changed, or when the last observation is older than the resync period.
+// Reconcile updates conditions and metrics of one record. The status is
+// patched when a condition or a node changed, and at most once per resync
+// period to record the observation time.
 func (r *HotfixRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	record := &breakglassv1alpha1.HotfixRecord{}
 	if err := r.client.Get(ctx, req.NamespacedName, record); err != nil {
@@ -101,20 +101,27 @@ func (r *HotfixRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if busy {
-		// An apply or rollback is changing nodes right now; its own results
-		// are authoritative until it ends.
-	} else if uncovered, reverted, driftErr := r.observeNodes(ctx, record); driftErr != nil {
-		r.log.Warnw("HotfixRecord drift check failed; keeping the last observation", "record", req.NamespacedName, "error", driftErr)
-	} else {
-		setCondition(breakglassv1alpha1.HotfixRecordConditionUncovered, uncovered > 0, "NodeScan",
-			fmt.Sprintf("%d selected nodes do not carry the hotfix", uncovered), "every selected node carries the hotfix or was skipped")
-		setCondition(breakglassv1alpha1.HotfixRecordConditionReverted, reverted > 0, "NodeScan",
-			fmt.Sprintf("%d nodes lost the hotfix without a rollback session", reverted), "no node lost the hotfix")
+	// While an apply, rollback or close is changing nodes, its own results
+	// are authoritative until it ends.
+	scanned := false
+	if !busy {
+		if uncovered, reverted, driftErr := r.observeNodes(ctx, record); driftErr != nil {
+			r.log.Warnw("HotfixRecord drift check failed; keeping the last observation", "record", req.NamespacedName, "error", driftErr)
+		} else {
+			scanned = true
+			setCondition(breakglassv1alpha1.HotfixRecordConditionUncovered, uncovered > 0, "NodeScan",
+				fmt.Sprintf("%d selected nodes do not carry the hotfix", uncovered), "every selected node carries the hotfix or was skipped")
+			setCondition(breakglassv1alpha1.HotfixRecordConditionReverted, reverted > 0, "NodeScan",
+				fmt.Sprintf("%d nodes lost the hotfix without a rollback session", reverted), "no node lost the hotfix")
+		}
 	}
 	counts := map[breakglassv1alpha1.HotfixNodeState]float64{}
 	for _, node := range record.Status.Nodes {
 		counts[node.State]++
+	}
+	if scanned {
+		setCondition(breakglassv1alpha1.HotfixRecordConditionActive, counts[breakglassv1alpha1.HotfixNodeApplied] > 0, "NodeScan",
+			"the hotfix is applied on at least one node", "no node carries the hotfix")
 	}
 	labels := hotfixRecordLabels(record)
 	metrics.HotfixActive.WithLabelValues(labels...).Set(min(counts[breakglassv1alpha1.HotfixNodeApplied], 1))
@@ -156,17 +163,24 @@ func deleteHotfixRecordSeries(record string) {
 	}
 }
 
-// stageInFlight reports whether the last apply or rollback session of the
-// record is still running.
+// stageInFlight reports whether the last apply, rollback or close session of
+// the record is still running.
 func (r *HotfixRecordReconciler) stageInFlight(ctx context.Context, record *breakglassv1alpha1.HotfixRecord) (bool, error) {
+	return hotfixStageInFlight(ctx, r.client, record, r.now(), breakglassv1alpha1.HotfixStageApply,
+		breakglassv1alpha1.HotfixStageRollback, breakglassv1alpha1.HotfixStageClose)
+}
+
+// hotfixStageInFlight reports whether the last session of the record with one
+// of stages is still running.
+func hotfixStageInFlight(ctx context.Context, reader ctrlclient.Reader, record *breakglassv1alpha1.HotfixRecord, now time.Time,
+	stages ...breakglassv1alpha1.HotfixStage) (bool, error) {
 	for i := len(record.Spec.Sessions) - 1; i >= 0; i-- {
 		session := record.Spec.Sessions[i]
-		if session.Stage != breakglassv1alpha1.HotfixStageApply && session.Stage != breakglassv1alpha1.HotfixStageRollback &&
-			session.Stage != breakglassv1alpha1.HotfixStageClose {
+		if !slices.Contains(stages, session.Stage) {
 			continue
 		}
 		ds := &breakglassv1alpha1.DebugSession{}
-		if err := r.client.Get(ctx, ctrlclient.ObjectKey{Namespace: record.Namespace, Name: session.Name}, ds); err != nil {
+		if err := reader.Get(ctx, ctrlclient.ObjectKey{Namespace: record.Namespace, Name: session.Name}, ds); err != nil {
 			return false, ctrlclient.IgnoreNotFound(err)
 		}
 		if string(ds.UID) != session.UID {
@@ -176,11 +190,28 @@ func (r *HotfixRecordReconciler) stageInFlight(ctx context.Context, record *brea
 		case breakglassv1alpha1.DebugSessionStateTerminated, breakglassv1alpha1.DebugSessionStateFailed, breakglassv1alpha1.DebugSessionStateExpired:
 			// Wait for its cleanup, but not forever if the target stays unreachable.
 			unreleased := ds.Status.Hotfix != nil && ds.Status.Hotfix.OperationID != "" && !ds.Status.Hotfix.Released
-			return unreleased && r.now().Sub(session.At.Time) < time.Hour, nil
+			return unreleased && now.Sub(session.At.Time) < time.Hour, nil
 		}
 		return true, nil
 	}
 	return false, nil
+}
+
+// hotfixRecordMutationInFlight refuses a reconfirm or close while an apply or
+// rollback of the record still changes nodes: a close would otherwise hide a
+// hotfix that is being applied.
+func hotfixRecordMutationInFlight(ctx context.Context, reader ctrlclient.Reader, record *breakglassv1alpha1.HotfixRecord, stage breakglassv1alpha1.HotfixStage) error {
+	if stage != breakglassv1alpha1.HotfixStageReconfirm && stage != breakglassv1alpha1.HotfixStageClose {
+		return nil
+	}
+	busy, err := hotfixStageInFlight(ctx, reader, record, time.Now(), breakglassv1alpha1.HotfixStageApply, breakglassv1alpha1.HotfixStageRollback)
+	if err != nil {
+		return err
+	}
+	if busy {
+		return fmt.Errorf("HotfixRecord %s has a running apply or rollback session; wait for it to end", record.Name)
+	}
+	return nil
 }
 
 // observeNodes compares the target cluster with the record:
@@ -228,8 +259,11 @@ func (r *HotfixRecordReconciler) observeNodes(ctx context.Context, record *break
 		selected = list.Items
 	}
 	key := hotfixAnnotationKey(record.Name)
+	// The apply writes namespace/name@<payload hash>; only that exact value
+	// counts, so a stale or forged marker does not cover a node.
+	value := record.Namespace + "/" + record.Name + "@" + hotfixPayloadSHA256(&record.Spec.Payload)
 	marked := func(node *corev1.Node) bool {
-		return strings.HasPrefix(node.Annotations[key], record.Namespace+"/"+record.Name+"@")
+		return node.Annotations[key] == value
 	}
 	byName := map[string]*corev1.Node{}
 	for i := range selected {

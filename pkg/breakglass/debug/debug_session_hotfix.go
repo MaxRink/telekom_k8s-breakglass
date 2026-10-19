@@ -227,7 +227,10 @@ func validateHotfixReferences(ctx context.Context, reader ctrlclient.Reader, tem
 		if err := reader.Get(ctx, ctrlclient.ObjectKey{Namespace: session.Namespace, Name: request.RecordName}, record); err != nil {
 			return fmt.Errorf("recordName %s: %w", request.RecordName, err)
 		}
-		return hotfixRecordUsable(record, session)
+		if err := hotfixRecordUsable(record, session); err != nil {
+			return err
+		}
+		return hotfixRecordMutationInFlight(ctx, reader, record, request.Stage)
 	}
 	return nil
 }
