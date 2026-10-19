@@ -402,12 +402,17 @@ The controller cordons and drains the worker Node as for `service-restart`
 Pod: no capabilities, RuntimeDefault seccomp, a read-only root filesystem, the
 host network (to read the PF in sysfs) and only `/run/systemd/private` as a
 read-only `Socket` hostPath. The helper asks systemd to run two fixed commands
-as transient oneshot units on the host, `netplan apply --sriov-only` and
-`netplan rebind <PF>`, and requires exit status 0 from both within 120 seconds
-each (a unit that runs longer is stopped; a leftover unit of an interrupted run
-is stopped and reported before the next run). It then waits up to 120 seconds
-until `sriov_numvfs` of the PF equals `virtualFunctions` and every VF exists and
-is bound to a driver. As for `service-restart`, `maxDuration` must cover
+as transient oneshot units on the host: `netplan apply --sriov-only`, which must
+exit 0, and, only for VFs that are still unbound 10 seconds later,
+`netplan rebind <PF>`. Each runs at most 120 seconds (the helper stops a unit
+that runs longer, and systemd stops it 5 seconds later by itself if the helper
+is gone; a leftover unit of an interrupted run is stopped and reported before
+the next run). `netplan rebind` only binds VFs that share the PF driver
+(mlx5) or use `delay-virtual-functions-rebind`; VFs with their own driver
+(igbvf, ixgbevf, iavf) bind by autoprobe. A failed rebind is recorded in the
+evidence; the decision is the exact VF state: the helper waits up to 120
+seconds until `sriov_numvfs` of the PF equals `virtualFunctions` and every VF
+exists and is bound to a driver. As for `service-restart`, `maxDuration` must cover
 `drainTimeoutSeconds` plus 600 seconds. The controller recreates the
 `restartPods` (typically the SR-IOV device plugin) once and requires a Ready
 Node and Ready replacements before it reports success and uncordons. Anything
@@ -415,8 +420,14 @@ else keeps the Node cordoned with the advisory to replace it.
 
 `netplan apply --sriov-only` applies the SR-IOV settings of every PF in the
 node's netplan configuration and changes no other network setting; `netplan
-rebind` acts on the allowlisted PF only. Nothing is persisted: the next boot
-creates the VFs from netplan again.
+rebind` acts on the allowlisted PF only. A PF whose current VF count differs
+from netplan (for example one managed by an SR-IOV operator) is reset to the
+netplan count, which removes and re-creates its VFs; check the other PFs of the
+node before you approve. Enabling SR-IOV resets the PF on many NICs (ixgbe,
+i40e, ice), so a PF that also carries the node address loses its link for a
+few seconds. Nothing is persisted: the next boot creates the VFs from netplan
+again. An executor that refuses in preflight (no SR-IOV PF, too few VFs)
+changed nothing, and the controller uncordons the Node.
 
 ## Approval, execution and cleanup
 

@@ -34,7 +34,8 @@ func fakeSystemd(t *testing.T, states map[string]map[string]any) (string, chan f
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	calls := make(chan fakeCall, 64)
+	// Large enough that a test never blocks the fake before it drains calls.
+	calls := make(chan fakeCall, 4096)
 	go func() {
 		for {
 			conn, err := listener.AcceptUnix()
@@ -322,8 +323,9 @@ func decodeTransient(d *decoder) []string {
 		case "b":
 			_, _ = d.uint32()
 		case "t":
-			if v, _ := d.uint64(); v != 15_000_000 {
-				return []string{unit, mode, "unexpected TimeoutStopUSec"}
+			v, _ := d.uint64()
+			if name == "TimeoutStopUSec" && v != 15_000_000 || name == "TimeoutStartUSec" && v <= 5_000_000 {
+				return []string{unit, mode, "unexpected " + name}
 			}
 		case "a(sasb)":
 			_, _ = d.uint32()
@@ -343,7 +345,7 @@ func decodeTransient(d *decoder) []string {
 		}
 	}
 	auxLen, _ := d.uint32()
-	if strings.Join(names, ",") != "Description,Type,RemainAfterExit,TimeoutStopUSec,ExecStart" || auxLen != 0 {
+	if strings.Join(names, ",") != "Description,Type,RemainAfterExit,TimeoutStopUSec,TimeoutStartUSec,ExecStart" || auxLen != 0 {
 		return []string{unit, mode, "unexpected properties " + strings.Join(names, ",")}
 	}
 	return []string{unit, mode, exec}

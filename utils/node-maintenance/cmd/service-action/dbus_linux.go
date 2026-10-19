@@ -620,10 +620,26 @@ const transientTimeout = 2 * time.Minute
 // transientStopTimeout bounds the stop of a timed-out or leftover unit.
 const transientStopTimeout = 15 * time.Second
 
+// transientStartSlack is how much longer than the helper's own run timeout
+// systemd lets a transient command run before it stops it.
+const transientStartSlack = 5 * time.Second
+
+// microseconds converts a duration to the unsigned microseconds systemd
+// expects; a negative duration becomes 0.
+func microseconds(d time.Duration) uint64 {
+	us := d.Microseconds()
+	if us < 0 {
+		return 0
+	}
+	return uint64(us)
+}
+
 // transientUnitBody encodes StartTransientUnit(name, "fail", properties, [])
 // for a oneshot service that runs argv once and stays loaded afterwards
 // (RemainAfterExit), so that its Result and ExecMainStatus can be read.
-func transientUnitBody(unit string, argv []string) *encoder {
+// TimeoutStartUSec lets systemd itself stop a command that outlives the run
+// timeout, also when the helper was killed before it could stop the unit.
+func transientUnitBody(unit string, argv []string, timeout time.Duration) *encoder {
 	e := &encoder{}
 	e.string(unit)
 	e.string("fail")
@@ -643,6 +659,8 @@ func transientUnitBody(unit string, argv []string) *encoder {
 	// inside the 30 s the helper waits for the unit to unload.
 	prop("TimeoutStopUSec", "t")
 	e.uint64(uint64(transientStopTimeout / time.Microsecond))
+	prop("TimeoutStartUSec", "t")
+	e.uint64(microseconds(timeout + transientStartSlack))
 	prop("ExecStart", "a(sasb)")
 	execLen, execStart := e.beginArray(8)
 	e.align(8)
@@ -691,18 +709,22 @@ func clearTransient(c *dbusConn, unit string, deadline time.Time, leftover bool)
 // runTransient runs one fixed host command as a transient oneshot unit and
 // succeeds only if it exited 0 within timeout. The unit is always unloaded
 // again (stopped first if it still runs); its output stays in the host journal.
-func runTransient(c *dbusConn, unit string, argv []string, timeout time.Duration) error {
+func runTransient(c *dbusConn, unit string, argv []string, timeout time.Duration) (err error) {
 	deadline := time.Now().Add(timeout)
 	if err := clearTransient(c, unit, deadline, true); err != nil {
 		return err
 	}
-	d, sig, err := c.callBody(managerPath, managerIface, "StartTransientUnit", "ssa(sv)a(sa(sv))", transientUnitBody(unit, argv))
+	d, sig, err := c.callBody(managerPath, managerIface, "StartTransientUnit", "ssa(sv)a(sa(sv))", transientUnitBody(unit, argv, timeout))
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if clearErr := clearTransient(c, unit, time.Now().Add(30*time.Second), false); clearErr != nil {
 			fmt.Fprintf(os.Stderr, "service-action: %v\n", clearErr)
+			// A run that succeeded but left its unit loaded is reported.
+			if err == nil {
+				err = clearErr
+			}
 		}
 	}()
 	if sig != "o" {

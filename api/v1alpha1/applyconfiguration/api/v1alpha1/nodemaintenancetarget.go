@@ -17,9 +17,10 @@ type NodeMaintenanceTargetApplyConfiguration struct {
 	TargetNode *string `json:"targetNode,omitempty"`
 	// targetNodeUID prevents execution against a replaced Node.
 	TargetNodeUID *string `json:"targetNodeUID,omitempty"`
-	// interface is the neighbour interface, the bridge FDB port or the link of
-	// link-cycle and restart-autonegotiation. It is required for network repair
-	// and forbidden for kexec-recovery.
+	// interface is the neighbour interface, the bridge FDB port, the link of
+	// link-cycle and restart-autonegotiation, or the SR-IOV physical function
+	// for sriov-reprovision. It is required for network repair and
+	// sriov-reprovision and forbidden for the other actions.
 	Interface *string `json:"interface,omitempty"`
 	// entryMAC is the canonical lowercase colon-delimited six-byte MAC. It is
 	// required for neighbor-replace and bridge-fdb-replace, empty for

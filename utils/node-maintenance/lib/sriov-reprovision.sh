@@ -9,6 +9,15 @@ script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$script_dir/common.sh"
 
+# The controller uncordons the Node only when the executor proves that it
+# changed nothing: the termination message says action_issued=0 until the
+# first netplan command is sent.
+record_action_issued() {
+	[ -w /dev/termination-log ] || return 0
+	printf 'action_issued=%s\n' "$1" >/dev/termination-log || true
+}
+record_action_issued 0
+
 usage() {
 	cat >&2 <<'EOF2'
 Usage:
@@ -113,11 +122,11 @@ printf 'sriov_totalvfs=%s\n' "$total" | append_evidence "$bundle/before-vfs.txt"
 capture "$bundle/before-links.txt" ip -brief link show || true
 
 validate_action_deadline
-# service-action bounds each netplan run to 120 s and then stops the unit; the
-# 10-second evidence bound would kill it first. Allow 150 s per step, never
-# beyond the approved deadline.
+# service-action bounds each netplan run to 120 s and then stops the unit (up to
+# 30 s more); the 10-second evidence bound would kill it first. Allow 180 s per
+# step, never beyond the approved deadline.
 netplan_timeout() {
-	capture_timeout_seconds=150
+	capture_timeout_seconds=180
 	# shellcheck disable=SC2154 # action_deadline is set by validate_action_deadline in common.sh
 	if [ -n "$action_deadline" ]; then
 		remaining=$((action_deadline - $(date +%s)))
@@ -129,25 +138,38 @@ set +e
 apply_status=deadline
 rebind_status=-
 if netplan_timeout; then
+	record_action_issued 1
 	capture "$bundle/action-netplan-sriov-apply.txt" service-action netplan-sriov-apply
 	apply_status=$?
 fi
 if [ "$apply_status" = 0 ]; then
-	rebind_status=deadline
-	if netplan_timeout; then
-		capture "$bundle/action-netplan-rebind.txt" service-action netplan-rebind "$pf"
-		rebind_status=$?
+	# VFs of NICs with a separate VF driver (igbvf, ixgbevf, iavf) autoprobe
+	# to it; netplan rebind only binds VFs that are still unbound and fails
+	# for a VF whose driver is not loaded yet. Give autoprobe a moment and
+	# rebind only what is left; the exact bound count below decides.
+	settle=0
+	while [ "$settle" -lt 10 ] && [ "$(vf_state)" != "numvfs=$vfs present=$vfs bound=$vfs" ]; do
+		sleep 1
+		settle=$((settle + 1))
+	done
+	if [ "$(vf_state)" != "numvfs=$vfs present=$vfs bound=$vfs" ]; then
+		rebind_status=deadline
+		if netplan_timeout; then
+			capture "$bundle/action-netplan-rebind.txt" service-action netplan-rebind "$pf"
+			rebind_status=$?
+		fi
 	fi
 fi
 capture_timeout_seconds=10
 set -e
 
-result=failed
-if [ "$apply_status" = 0 ] && [ "$rebind_status" = 0 ]; then
+# record_event in common.sh assigns the global "result", so the outcome has its own name.
+post_check_result=failed
+if [ "$apply_status" = 0 ]; then
 	waited=0
 	while [ "$waited" -lt "$sriov_wait_seconds" ]; do
 		if [ "$(vf_state)" = "numvfs=$vfs present=$vfs bound=$vfs" ]; then
-			result=succeeded
+			post_check_result=succeeded
 			break
 		fi
 		deadline=${BREAKGLASS_ACTION_DEADLINE_UNIX:-}
@@ -162,8 +184,8 @@ vf_state | append_evidence "$bundle/after-vfs.txt"
 capture "$bundle/after-links.txt" ip -brief link show || true
 assert_safe_bundle "$bundle"
 printf 'apply_exit_status=%s\nrebind_exit_status=%s\npost_check=%s\ncompleted_at_utc=%s\n' \
-	"$apply_status" "$rebind_status" "$result" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
-if [ "$result" != succeeded ]; then
+	"$apply_status" "$rebind_status" "$post_check_result" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+if [ "$post_check_result" != succeeded ]; then
 	record_event operation-completed failed
 	printf 'SR-IOV re-provision of %s did not reach %s bound virtual functions; recommend replacing the node (evidence: %s)\n' "$pf" "$vfs" "$bundle" >&2
 	exit 1

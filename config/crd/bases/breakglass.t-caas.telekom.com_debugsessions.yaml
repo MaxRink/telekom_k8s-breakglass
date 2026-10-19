@@ -156,9 +156,10 @@ spec:
                     type: string
                   interface:
                     description: |-
-                      interface is the neighbour interface, the bridge FDB port or the link of
-                      link-cycle and restart-autonegotiation. It is required for network repair
-                      and forbidden for kexec-recovery.
+                      interface is the neighbour interface, the bridge FDB port, the link of
+                      link-cycle and restart-autonegotiation, or the SR-IOV physical function
+                      for sriov-reprovision. It is required for network repair and
+                      sriov-reprovision and forbidden for the other actions.
                     maxLength: 15
                     type: string
                   module:
@@ -4745,9 +4746,10 @@ spec:
                               type: string
                             interface:
                               description: |-
-                                interface is the neighbour interface, the bridge FDB port or the link of
-                                link-cycle and restart-autonegotiation. It is required for network repair
-                                and forbidden for kexec-recovery.
+                                interface is the neighbour interface, the bridge FDB port, the link of
+                                link-cycle and restart-autonegotiation, or the SR-IOV physical function
+                                for sriov-reprovision. It is required for network repair and
+                                sriov-reprovision and forbidden for the other actions.
                               maxLength: 15
                               type: string
                             module:

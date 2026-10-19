@@ -381,7 +381,8 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery {
 		return kexecPod(ds)
 	}
-	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart {
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart ||
+		profile.Action == breakglassv1alpha1.NodeMaintenanceActionSRIOVReprovision {
 		return servicePod(ds)
 	}
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionModuleLoad {
@@ -915,7 +916,7 @@ func (c *DebugSessionController) prepareKexecNode(ctx context.Context, ds *break
 				}
 			}
 			if running == 0 {
-				return fmt.Errorf("restartPods selector in namespace %s matches no running Pod on the Node; service-restart was not executed", selector.Namespace)
+				return fmt.Errorf("restartPods selector in namespace %s matches no running Pod on the Node; %s was not executed", selector.Namespace, profile.Action)
 			}
 		}
 		if ds.Status.NodeMaintenance.CordonedAt == nil {
