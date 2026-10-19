@@ -12,8 +12,11 @@ needs, for example after a router release stopped autoloading tunnel modules
 module of the running kernel, with the dependencies `modules.dep` lists.
 
 * The executor adds only `SYS_MODULE` and reads the host module tree from a
-  read-only `/lib/modules` mount. It ignores `install`/`remove` commands from
-  `modprobe.d` and passes no module parameters.
+  read-only `/lib/modules` mount. It ignores `modprobe.d` completely (no
+  `install`/`remove` commands, and also none of the node's `options` or
+  `softdep` lines) and passes no module parameters; only kernel command-line
+  `module.param=` values apply. A module whose defaults create devices or
+  change tunables is loaded with those defaults.
 * The load lasts until the next reboot. Persist the module through the node
   configuration (for example `modules-load.d` through your image or a reviewed
   configuration change); a replacement node otherwise has the same problem.

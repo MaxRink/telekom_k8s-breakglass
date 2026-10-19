@@ -356,6 +356,20 @@ option, softdep or install line applies; the name must resolve to itself
 is recorded unchanged. Persist a needed module through node configuration; a replacement
 node otherwise misses it again.
 
+The empty configuration also discards the host's own `modprobe.d`: the module
+loads with its compiled-in defaults, not with the node's `options` or `softdep`
+lines (kernel command-line `module.param=` values still apply). Do not
+allowlist a module whose defaults create devices or change tunables (for
+example `bonding` or `dummy` create a device, `nf_conntrack` sizes its table)
+without checking the node's `modprobe.d`. Every loaded module adds host attack
+surface that unprivileged processes can reach, so allowlist only modules the
+node configuration needs. The executor is sized for small modules (10 s
+modprobe timeout, 128Mi memory). The host must have `/lib/modules` (a symlink
+to a directory is fine); otherwise the executor Pod never starts and the
+session ends `interrupted`. The executor does not tolerate the `not-ready` or
+`unreachable` NoExecute taints, so it does not run on a Node that is already
+NotReady.
+
 ## Approval, execution and cleanup
 
 The server validates the request and live Node UID before PendingApproval.
