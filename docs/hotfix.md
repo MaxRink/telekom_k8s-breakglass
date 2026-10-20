@@ -317,3 +317,13 @@ Series of closed and deleted records are removed within the resync period. Examp
   `payload`, `planHash`, `rollout`, `nodeSelection` are immutable), and a
   rollback checks the recorded payload against the approved template again
   before any executor starts.
+
+## Kind proof
+
+`bash hack/hotfix-controller-kind.sh` creates an owned disposable Kind cluster,
+builds the node-maintenance image, serves it from a local registry by digest
+and runs `TestHotfixKind`: plan, apply and rollback of a `node-file` sed patch
+and of a `static-pod-image` swap of kube-scheduler, through the HTTP request
+and approval handlers and the controller, on the real node. The workflow
+`.github/workflows/hotfix-controller.yml` runs it for changes to the hotfix
+code.

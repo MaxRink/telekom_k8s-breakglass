@@ -98,7 +98,9 @@ func TestHotfixKind(t *testing.T) {
 		}}
 	require.NoError(t, hub.Create(ctx, template))
 
-	request := func(hotfix *breakglassv1alpha1.DebugSessionHotfixRequest) *breakglassv1alpha1.DebugSession {
+	// The helpers take the subtest's t, so a failure ends the subtest with
+	// its own message instead of a FailNow on the parent test.
+	request := func(t *testing.T, hotfix *breakglassv1alpha1.DebugSessionHotfixRequest) *breakglassv1alpha1.DebugSession {
 		t.Helper()
 		body, err := json.Marshal(CreateDebugSessionRequest{TemplateRef: template.Name, Cluster: cc.Name, RequestedDuration: "1h",
 			Reason: "Disposable platform hotfix proof", Hotfix: hotfix})
@@ -113,7 +115,7 @@ func TestHotfixKind(t *testing.T) {
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
 		return &created.DebugSession
 	}
-	approve := func(session *breakglassv1alpha1.DebugSession, who string, expected int) {
+	approve := func(t *testing.T, session *breakglassv1alpha1.DebugSession, who string, expected int) {
 		t.Helper()
 		actor = who
 		response := httptest.NewRecorder()
@@ -121,13 +123,13 @@ func TestHotfixKind(t *testing.T) {
 		require.Equal(t, expected, response.Code, response.Body.String())
 	}
 	// run requests, proves self-approval is refused, approves and reconciles to the end.
-	run := func(hotfix *breakglassv1alpha1.DebugSessionHotfixRequest) *breakglassv1alpha1.DebugSession {
+	run := func(t *testing.T, hotfix *breakglassv1alpha1.DebugSessionHotfixRequest) *breakglassv1alpha1.DebugSession {
 		t.Helper()
-		session := request(hotfix)
+		session := request(t, hotfix)
 		_, err := controller.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
 		require.NoError(t, err)
-		approve(session, "requester@example.com", http.StatusForbidden)
-		approve(session, "approver@example.com", http.StatusOK)
+		approve(t, session, "requester@example.com", http.StatusForbidden)
+		approve(t, session, "approver@example.com", http.StatusOK)
 		deadline := time.Now().Add(10 * time.Minute)
 		for time.Now().Before(deadline) {
 			result, err := controller.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
@@ -138,7 +140,9 @@ func TestHotfixKind(t *testing.T) {
 			switch session.Status.State {
 			case breakglassv1alpha1.DebugSessionStateTerminated, breakglassv1alpha1.DebugSessionStateFailed, breakglassv1alpha1.DebugSessionStateExpired:
 				// One more pass releases cleanup state.
-				_, _ = controller.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+				if _, err := controller.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+					t.Logf("final reconcile: %v", err)
+				}
 				return session
 			}
 			time.Sleep(min(max(result.RequeueAfter, 500*time.Millisecond), 3*time.Second))
@@ -146,13 +150,13 @@ func TestHotfixKind(t *testing.T) {
 		t.Fatalf("session %s did not finish: %s", session.Name, session.Status.Message)
 		return nil
 	}
-	nodeExec := func(args ...string) string {
+	nodeExec := func(t *testing.T, args ...string) string {
 		t.Helper()
 		output, err := exec.CommandContext(ctx, "docker", append([]string{"exec", containerID}, args...)...).CombinedOutput()
 		require.NoError(t, err, string(output))
 		return string(output)
 	}
-	noExecutorsOrLeases := func() {
+	noExecutorsOrLeases := func(t *testing.T) {
 		t.Helper()
 		pods := &corev1.PodList{}
 		require.NoError(t, hub.List(ctx, pods, client.InNamespace(breakglassv1alpha1.NodeMaintenanceNamespace)))
@@ -161,34 +165,41 @@ func TestHotfixKind(t *testing.T) {
 		require.NoError(t, hub.List(ctx, leases, client.InNamespace(breakglassv1alpha1.NodeMaintenanceNamespace)))
 		require.Empty(t, leases.Items)
 	}
-	lifecycle := func(t *testing.T, payload *breakglassv1alpha1.HotfixPayload, applied, original func()) {
-		plan := run(&breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStagePlan, Payload: payload,
+	// lifecycle runs plan, apply and rollback; wantDiff is a line the
+	// reviewed plan diff must contain.
+	lifecycle := func(t *testing.T, payload *breakglassv1alpha1.HotfixPayload, wantDiff string, applied, original func()) {
+		plan := run(t, &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStagePlan, Payload: payload,
 			Nodes: &breakglassv1alpha1.HotfixNodeSelection{Names: []string{nodeName}}, FixedIn: "next node image"})
 		require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, plan.Status.State, plan.Status.Message)
 		require.Len(t, plan.Status.Hotfix.Plan.Diffs, 1)
 		diffs, _ := json.MarshalIndent(plan.Status.Hotfix.Plan.Diffs, "", "  ")
 		t.Logf("reviewed diffs: %s", diffs)
+		reviewed := plan.Status.Hotfix.Plan.Diffs[0]
+		require.Contains(t, reviewed.Diff, wantDiff, "the plan shows the change on the node")
+		require.NotEqual(t, reviewed.BeforeSHA256, reviewed.AfterSHA256)
 		original()
-		noExecutorsOrLeases()
+		noExecutorsOrLeases(t)
 
-		apply := run(&breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageApply,
+		apply := run(t, &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageApply,
 			PlanRef: plan.Name, PlanHash: plan.Status.Hotfix.PlanHash})
 		require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, apply.Status.State, apply.Status.Message)
 		applied()
-		noExecutorsOrLeases()
+		noExecutorsOrLeases(t)
 		record := &breakglassv1alpha1.HotfixRecord{}
 		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: namespace, Name: apply.Status.Hotfix.RecordName}, record))
+		require.Len(t, record.Status.Nodes, 1)
 		require.Equal(t, breakglassv1alpha1.HotfixNodeApplied, record.Status.Nodes[0].State)
 		require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, node))
 		require.Equal(t, namespace+"/"+record.Name+"@"+hotfixPayloadSHA256(&record.Spec.Payload), node.Annotations[hotfixAnnotationKey(record.Name)],
 			"the recorded payload hash survives the API round trip")
 
-		rollback := run(&breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageRollback, RecordName: record.Name})
+		rollback := run(t, &breakglassv1alpha1.DebugSessionHotfixRequest{Stage: breakglassv1alpha1.HotfixStageRollback, RecordName: record.Name})
 		require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, rollback.Status.State, rollback.Status.Message)
 		original()
-		noExecutorsOrLeases()
+		noExecutorsOrLeases(t)
 		require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(record), record))
 		require.True(t, meta.IsStatusConditionTrue(record.Status.Conditions, string(breakglassv1alpha1.HotfixRecordConditionClosed)))
+		require.Len(t, record.Status.Nodes, 1)
 		require.Equal(t, breakglassv1alpha1.HotfixNodeRolledBack, record.Status.Nodes[0].State)
 		require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, node))
 		require.NotContains(t, node.Annotations, hotfixAnnotationKey(record.Name), "rollback removes the node annotation")
@@ -198,12 +209,13 @@ func TestHotfixKind(t *testing.T) {
 		const file = "/etc/hotfix-proof/app.conf"
 		lifecycle(t, &breakglassv1alpha1.HotfixPayload{Type: breakglassv1alpha1.HotfixPayloadNodeFile,
 			File: &breakglassv1alpha1.HotfixFilePayload{Path: file, Mode: breakglassv1alpha1.HotfixFileSed, SedExpressions: []string{"s/^mode = old$/mode = new/"}}},
-			func() { require.Equal(t, "mode = new\nkeep = yes\n", nodeExec("cat", file)) },
-			func() { require.Equal(t, "mode = old\nkeep = yes\n", nodeExec("cat", file)) })
+			"+mode = new",
+			func() { require.Equal(t, "mode = new\nkeep = yes\n", nodeExec(t, "cat", file)) },
+			func() { require.Equal(t, "mode = old\nkeep = yes\n", nodeExec(t, "cat", file)) })
 	})
 
 	t.Run("static-pod-image kube-scheduler", func(t *testing.T) {
-		manifest := nodeExec("cat", "/etc/kubernetes/manifests/kube-scheduler.yaml")
+		manifest := nodeExec(t, "cat", "/etc/kubernetes/manifests/kube-scheduler.yaml")
 		// The pinned image has the same content as the running one, so a
 		// new container ID is what proves kubelet restarted the Pod.
 		schedulerContainer := func() string {
@@ -225,13 +237,14 @@ func TestHotfixKind(t *testing.T) {
 		}
 		lifecycle(t, &breakglassv1alpha1.HotfixPayload{Type: breakglassv1alpha1.HotfixPayloadStaticPodImage,
 			Image: &breakglassv1alpha1.HotfixImagePayload{StaticPod: "kube-scheduler", Image: schedulerImage}},
+			"+    image: "+schedulerImage,
 			func() {
-				require.Contains(t, nodeExec("cat", "/etc/kubernetes/manifests/kube-scheduler.yaml"), "image: "+schedulerImage)
+				require.Contains(t, nodeExec(t, "cat", "/etc/kubernetes/manifests/kube-scheduler.yaml"), "image: "+schedulerImage)
 				restarted()
-				require.Contains(t, nodeExec("crictl", "inspect", previous), schedulerImage[strings.LastIndex(schedulerImage, "@")+1:])
+				require.Contains(t, nodeExec(t, "crictl", "inspect", previous), schedulerImage[strings.LastIndex(schedulerImage, "@")+1:])
 			},
 			func() {
-				require.Equal(t, manifest, nodeExec("cat", "/etc/kubernetes/manifests/kube-scheduler.yaml"))
+				require.Equal(t, manifest, nodeExec(t, "cat", "/etc/kubernetes/manifests/kube-scheduler.yaml"))
 				if rolledBack {
 					restarted() // the rollback restarts it with the original reference
 				}

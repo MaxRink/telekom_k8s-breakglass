@@ -94,7 +94,7 @@ GOTMPDIR="$PWD/$proof_dir/go-work" go test -c ./pkg/breakglass/debug -o "$proof_
 registry_id=$(docker run --detach --cidfile "$proof_dir/registry.cid" --name "$registry" --publish 127.0.0.1::5000 registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e)
 port=$(docker port "$registry_id" 5000/tcp | sed 's/^127\.0\.0\.1://')
 [[ "$port" =~ ^[0-9]+$ ]] || { echo "Invalid proof registry port" >&2; exit 1; }
-curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused "http://127.0.0.1:$port/v2/" >/dev/null
+curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-all-errors "http://127.0.0.1:$port/v2/" >/dev/null
 image="localhost:$port/node-maintenance:hotfix-proof"
 # Pass a build proxy only when the host uses one; host networking lets the
 # build reach it (the default build network may not route to a host proxy).
@@ -149,7 +149,7 @@ docker network connect kind "$registry_id"
 docker exec "$node_id" mkdir -p "/etc/containerd/certs.d/$registry:5000"
 printf 'server = "http://%s:5000"\n[host."http://%s:5000"]\n  capabilities = ["pull", "resolve"]\n' "$registry" "$registry" \
 	| docker exec --interactive "$node_id" sh -c "cat > '/etc/containerd/certs.d/$registry:5000/hosts.toml'"
-kubectl --kubeconfig "$proof_dir/kubeconfig" apply \
+kubectl --kubeconfig "$proof_dir/kubeconfig" apply --server-side \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_clusterconfigs.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessions.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessiontemplates.yaml \
