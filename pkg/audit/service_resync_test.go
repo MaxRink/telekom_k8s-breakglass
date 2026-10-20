@@ -146,6 +146,7 @@ func TestStoppedPipelineClosesWithoutDrain(t *testing.T) {
 func TestCloseEndsTheDrainOfAReplacedPipeline(t *testing.T) {
 	sink, multi, manager := flakyPipeline(1<<20, time.Minute)
 	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	t.Cleanup(func() { _ = svc.Close() })
 	swapLocked(svc, manager, []Sink{sink}, multi, true, ConfigurationReady)
 	svc.Emit(context.Background(), &Event{Type: EventSessionDropped})
 	require.Eventually(t, func() bool { return sink.failures.Load() < 1<<20 }, 2*time.Second, 5*time.Millisecond)

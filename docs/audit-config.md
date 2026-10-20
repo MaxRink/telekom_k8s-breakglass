@@ -453,7 +453,8 @@ spec:
 Failed writes retain the same batch and event IDs while retrying. Exhaustion
 counts every lost event and logs an error. `dropOnFull: false` blocks enqueue up
 to the caller deadline or five seconds. Each config's settings apply to its own
-sinks; the manager's shared ingress settings still come from the first config.
+sinks; the manager's shared ingress settings still come from the first
+enabled config by name.
 These are bounded in-memory retries, not a durable outbox. See
 [audit delivery and immutable identity](audit-delivery.md) for limits, duplicate
 delivery semantics and the additive session/resource UID fields.
@@ -513,7 +514,7 @@ is also configured but unavailable. Disabling or deleting all AuditConfigs
 stops auditing.
 
 The reconciler also reloads every 10 minutes. A reload whose enabled
-AuditConfigs (names, order and specs) and sink Secrets (resource versions)
+AuditConfigs (names and specs) and sink Secrets (resource versions)
 are unchanged does nothing and counts as
 `breakglass_audit_config_reloads_total{status="unchanged"}`, so it no longer
 resets sink clients, circuit breakers or queues. A rotated Secret is picked

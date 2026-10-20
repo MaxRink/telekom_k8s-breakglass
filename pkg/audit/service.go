@@ -182,8 +182,8 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 		}
 	}
 	// The reconciler's List order is not stable. Sort, so that the pipeline
-	// (the first config sets the shared queue settings) and the unchanged
-	// check below do not depend on it. AuditConfigs are cluster-scoped, so
+	// (the first config sets the shared ingress dropOnFull and sampling) and
+	// the unchanged check below do not depend on it. AuditConfigs are cluster-scoped, so
 	// names are unique.
 	slices.SortFunc(enabledConfigs, func(a, b *breakglassv1alpha1.AuditConfig) int { return strings.Compare(a.Name, b.Name) })
 
