@@ -334,7 +334,7 @@ func TestAuthenticatedIdentity_WithError(t *testing.T) {
 // ----- buildSessionSpec integration tests -----
 
 func TestHandleRequestBreakglassSession_ShortDurationIdleTimeout(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme).
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test-cluster")).
 		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 		WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{Name: "emergency", Namespace: "default", UID: "escalation"},
