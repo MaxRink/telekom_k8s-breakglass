@@ -32,6 +32,12 @@ incident interfaces:
   `modprobe --ignore-install` from the host module tree (read-only
   `/lib/modules`, `SYS_MODULE` only) until the next reboot; see
   `runbooks/module-load.md`.
+* `sriov-reprovision` re-creates the SR-IOV virtual functions of one
+  allowlisted physical function on a drained node: it runs the fixed host
+  commands `netplan apply --sriov-only` and `netplan rebind <PF>` as transient
+  systemd units through the same `service-action` helper (no capabilities) and
+  requires exactly the approved number of driver-bound VFs; see
+  `runbooks/sriov-reprovision.md`.
 
 The `node-recovery` preflight invokes `ethtool` against the exact controller-
 selected interface and records its result as `ethtool.txt`; the integration

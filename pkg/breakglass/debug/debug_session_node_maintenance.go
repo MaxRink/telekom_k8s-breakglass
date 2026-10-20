@@ -155,9 +155,12 @@ func kexecExecutes(profile *breakglassv1alpha1.DebugSessionNodeMaintenance) bool
 	return profile != nil && profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery && !profile.DryRun
 }
 
-// serviceRestart reports whether a profile restarts a host systemd unit.
+// serviceRestart reports whether a profile runs a drained host action through
+// systemd (service-restart or sriov-reprovision) with the service bounds:
+// drain timeout, restartPods and the post-check before uncordon.
 func serviceRestart(profile *breakglassv1alpha1.DebugSessionNodeMaintenance) bool {
-	return profile != nil && profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart && profile.Service != nil
+	return profile != nil && profile.Service != nil && (profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart ||
+		profile.Action == breakglassv1alpha1.NodeMaintenanceActionSRIOVReprovision)
 }
 
 // drainsNode reports whether the executor runs only on a cordoned, drained,
@@ -344,6 +347,11 @@ func maintenanceTuple(profile *breakglassv1alpha1.DebugSessionNodeMaintenance, t
 		// Must match the BREAKGLASS_APPROVED_SERVICE_REQUEST check in service-restart.
 		return fmt.Sprintf("target_node=%s&unit=%s&confirmation=SERVICE-RESTART", target.TargetNode, target.Unit)
 	}
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionSRIOVReprovision && target.VirtualFunctions != nil {
+		// Must match the BREAKGLASS_APPROVED_SRIOV_REQUEST check in sriov-reprovision.
+		return fmt.Sprintf("target_node=%s&interface=%s&virtual_functions=%d&confirmation=SRIOV-REPROVISION",
+			target.TargetNode, target.Interface, *target.VirtualFunctions)
+	}
 	if kexec := profile.Kexec; profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery && kexec != nil {
 		tuple := fmt.Sprintf("target_node=%s&action=%s&recovery_profile=%s&kernel_sha256=%s&initrd_sha256=%s&cmdline_sha256=%s",
 			target.TargetNode, profile.Action, kexec.Profile, kexec.KernelSHA256, kexec.InitrdSHA256, kexec.CmdlineSHA256)
@@ -373,7 +381,8 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery {
 		return kexecPod(ds)
 	}
-	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart {
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionServiceRestart ||
+		profile.Action == breakglassv1alpha1.NodeMaintenanceActionSRIOVReprovision {
 		return servicePod(ds)
 	}
 	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionModuleLoad {
@@ -476,11 +485,22 @@ func modulePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	}
 }
 
-// servicePod restarts one allowlisted systemd unit. It has no capabilities and
-// reaches systemd only through its private socket, mounted read-only. It uses
-// the host network solely to check host links after a CRA restart.
+// servicePod runs a host action through systemd: it restarts one allowlisted
+// unit, or runs the fixed netplan SR-IOV commands as transient units. It has no
+// capabilities and reaches systemd only through its private socket, mounted
+// read-only. It uses the host network solely to read host links and the SR-IOV
+// state of the physical function in sysfs.
 func servicePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	profile, target, status := ds.Status.ResolvedTemplate.NodeMaintenance, ds.Spec.NodeMaintenance, ds.Status.NodeMaintenance
+	args := []string{"service-restart", "--target-node", target.TargetNode, "--unit", target.Unit,
+		"--confirm", "SERVICE-RESTART", "--evidence-dir", "/evidence"}
+	requestEnv := "BREAKGLASS_APPROVED_SERVICE_REQUEST"
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionSRIOVReprovision {
+		args = []string{"sriov-reprovision", "--target-node", target.TargetNode, "--interface", target.Interface,
+			"--virtual-functions", strconv.Itoa(int(ptr.Deref(target.VirtualFunctions, 0))),
+			"--confirm", "SRIOV-REPROVISION", "--evidence-dir", "/evidence"}
+		requestEnv = "BREAKGLASS_APPROVED_SRIOV_REQUEST"
+	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: status.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
 			Labels:      map[string]string{DebugSessionLabelKey: ds.Name},
@@ -506,8 +526,7 @@ func servicePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 			Containers: []corev1.Container{{
 				Name: "node-maintenance", Image: profile.Image, ImagePullPolicy: corev1.PullIfNotPresent,
 				Command: []string{"/usr/local/bin/node-maintenance"},
-				Args: []string{"service-restart", "--target-node", target.TargetNode, "--unit", target.Unit,
-					"--confirm", "SERVICE-RESTART", "--evidence-dir", "/evidence"},
+				Args:    args,
 				SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(false), AllowPrivilegeEscalation: ptr.To(false),
 					ReadOnlyRootFilesystem: ptr.To(true), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
@@ -520,7 +539,7 @@ func servicePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 					{Name: "BREAKGLASS_RECORDING_ID", Value: status.OperationID},
 					{Name: "BREAKGLASS_APPROVAL_ID", Value: status.OperationID},
 					{Name: "BREAKGLASS_APPROVED_ACTION", Value: profile.Action},
-					{Name: "BREAKGLASS_APPROVED_SERVICE_REQUEST", Value: maintenanceTuple(profile, target)},
+					{Name: requestEnv, Value: maintenanceTuple(profile, target)},
 					{Name: "BREAKGLASS_ACTION_DEADLINE_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 				},
 			}},
@@ -897,7 +916,7 @@ func (c *DebugSessionController) prepareKexecNode(ctx context.Context, ds *break
 				}
 			}
 			if running == 0 {
-				return fmt.Errorf("restartPods selector in namespace %s matches no running Pod on the Node; service-restart was not executed", selector.Namespace)
+				return fmt.Errorf("restartPods selector in namespace %s matches no running Pod on the Node; %s was not executed", selector.Namespace, profile.Action)
 			}
 		}
 		if ds.Status.NodeMaintenance.CordonedAt == nil {

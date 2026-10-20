@@ -23,7 +23,7 @@ import (
 type DebugSessionNodeMaintenance struct {
 	// action is the one executor operation enabled by this profile.
 	// link-cycle and restart-autonegotiation act on the exact interface only.
-	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;link-cycle;restart-autonegotiation;kexec-recovery;service-restart;module-load
+	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;link-cycle;restart-autonegotiation;kexec-recovery;service-restart;module-load;sriov-reprovision
 	Action string `json:"action"`
 	// image must be an immutable node-maintenance helper image.
 	// +kubebuilder:validation:Pattern=`^.+@sha256:[a-f0-9]{64}$`
@@ -43,15 +43,18 @@ type DebugSessionNodeMaintenance struct {
 	// It is required for kexec-recovery and forbidden for every other action.
 	// +optional
 	Kexec *NodeMaintenanceKexec `json:"kexec,omitempty"`
-	// service bounds a service-restart profile. It is required for
-	// service-restart and forbidden for every other action.
+	// service bounds a drained host action that runs through systemd. It is
+	// required for service-restart and sriov-reprovision and forbidden for
+	// every other action.
 	// +optional
 	Service *NodeMaintenanceService `json:"service,omitempty"`
 }
 
-// NodeMaintenanceService restarts one allowlisted host systemd unit on a
-// cordoned and drained Node through systemd's private socket. After the helper
-// verified the unit, the controller recreates the listed Pods on that Node
+// NodeMaintenanceService bounds a host action that the helper runs through
+// systemd's private socket on a cordoned and drained Node: service-restart
+// restarts one allowlisted unit, sriov-reprovision runs the fixed netplan
+// SR-IOV commands. After the helper verified the action, the controller
+// recreates the listed Pods on that Node
 // (for example a network agent that must re-apply its configuration to a
 // restarted router container) and requires the Node and each replacement to
 // be Ready before it reports success and uncordons the Node.
@@ -117,9 +120,10 @@ type NodeMaintenanceTarget struct {
 	// targetNodeUID prevents execution against a replaced Node.
 	// +kubebuilder:validation:MaxLength=128
 	TargetNodeUID string `json:"targetNodeUID"`
-	// interface is the neighbour interface, the bridge FDB port or the link of
-	// link-cycle and restart-autonegotiation. It is required for network repair
-	// and forbidden for kexec-recovery.
+	// interface is the neighbour interface, the bridge FDB port, the link of
+	// link-cycle and restart-autonegotiation, or the SR-IOV physical function
+	// for sriov-reprovision. It is required for network repair and
+	// sriov-reprovision and forbidden for the other actions.
 	// +optional
 	// +kubebuilder:validation:MaxLength=15
 	Interface string `json:"interface,omitempty"`
@@ -158,6 +162,14 @@ type NodeMaintenanceTarget struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9_]{1,56}$`
 	Module string `json:"module,omitempty"`
+	// virtualFunctions is the exact number of SR-IOV virtual functions that
+	// the node's netplan configuration creates on the physical function named
+	// by interface. It is required for sriov-reprovision and forbidden for
+	// every other action.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=256
+	VirtualFunctions *int32 `json:"virtualFunctions,omitempty"`
 }
 
 var maintenanceInterfacePattern = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
@@ -179,6 +191,9 @@ const serviceRestartMarginSeconds = 600
 
 // NodeMaintenanceActionModuleLoad loads one allowlisted kernel module (non-persistent).
 const NodeMaintenanceActionModuleLoad = "module-load"
+
+// NodeMaintenanceActionSRIOVReprovision re-creates the SR-IOV VFs of one PF from netplan on a drained Node.
+const NodeMaintenanceActionSRIOVReprovision = "sriov-reprovision"
 
 var maintenanceModulePattern = regexp.MustCompile(`^[a-z0-9_]{1,56}$`)
 
@@ -244,7 +259,7 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	if service := spec.NodeMaintenance.Service; service != nil {
 		maxDuration, err := ParseDuration(spec.Constraints.MaxDuration)
 		if err != nil || maxDuration < time.Duration(int64(service.DrainTimeoutSeconds)+serviceRestartMarginSeconds)*time.Second {
-			return fmt.Errorf("service-restart maxDuration must cover drainTimeoutSeconds plus %ds for the restart and post-checks", serviceRestartMarginSeconds)
+			return fmt.Errorf("%s maxDuration must cover drainTimeoutSeconds plus %ds for the action and post-checks", spec.NodeMaintenance.Action, serviceRestartMarginSeconds)
 		}
 	}
 	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
@@ -304,6 +319,23 @@ func ValidateNodeMaintenanceTarget(action string, target *NodeMaintenanceTarget)
 	if len(validation.IsDNS1123Subdomain(target.TargetNode)) != 0 ||
 		!maintenanceUIDPattern.MatchString(target.TargetNodeUID) {
 		return fmt.Errorf("an exact Node name and UID are required")
+	}
+	if action == NodeMaintenanceActionSRIOVReprovision {
+		if !maintenanceInterfacePattern.MatchString(target.Interface) || target.Interface == "." || target.Interface == ".." ||
+			strings.HasPrefix(target.Interface, "-") {
+			return fmt.Errorf("sriov-reprovision requires the exact physical function interface")
+		}
+		if target.VirtualFunctions == nil || *target.VirtualFunctions < 1 || *target.VirtualFunctions > 256 {
+			return fmt.Errorf("sriov-reprovision requires virtualFunctions from 1 through 256")
+		}
+		if target.Unit != "" || target.Module != "" || target.EntryMAC != "" || target.NeighborAddress != "" ||
+			target.Bridge != "" || target.VLAN != nil || target.VRF != "" {
+			return fmt.Errorf("sriov-reprovision targets only an exact Node name, UID, physical function and VF count")
+		}
+		return nil
+	}
+	if target.VirtualFunctions != nil {
+		return fmt.Errorf("virtualFunctions is valid only for sriov-reprovision")
 	}
 	if action == NodeMaintenanceActionModuleLoad {
 		if !maintenanceModulePattern.MatchString(target.Module) {
@@ -411,10 +443,12 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 	for _, allowed := range profile.AllowedTargets {
 		vlanMatches := target.VLAN == nil && allowed.VLAN == nil ||
 			target.VLAN != nil && allowed.VLAN != nil && *target.VLAN == *allowed.VLAN
+		vfsMatch := target.VirtualFunctions == nil && allowed.VirtualFunctions == nil ||
+			target.VirtualFunctions != nil && allowed.VirtualFunctions != nil && *target.VirtualFunctions == *allowed.VirtualFunctions
 		if target.TargetNode == allowed.TargetNode && target.TargetNodeUID == allowed.TargetNodeUID &&
 			target.Interface == allowed.Interface && target.EntryMAC == allowed.EntryMAC &&
 			target.NeighborAddress == allowed.NeighborAddress && target.Bridge == allowed.Bridge &&
-			target.VRF == allowed.VRF && target.Unit == allowed.Unit && target.Module == allowed.Module && vlanMatches {
+			target.VRF == allowed.VRF && target.Unit == allowed.Unit && target.Module == allowed.Module && vlanMatches && vfsMatch {
 			return nil
 		}
 	}
@@ -422,29 +456,29 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 }
 
 func validateNodeMaintenanceService(profile *DebugSessionNodeMaintenance) error {
-	service := profile.Service
-	if profile.Action != NodeMaintenanceActionServiceRestart {
+	service, action := profile.Service, profile.Action
+	if action != NodeMaintenanceActionServiceRestart && action != NodeMaintenanceActionSRIOVReprovision {
 		if service != nil {
-			return fmt.Errorf("nodeMaintenance service is valid only for service-restart")
+			return fmt.Errorf("nodeMaintenance service is valid only for service-restart and sriov-reprovision")
 		}
 		return nil
 	}
 	if profile.DryRun {
-		return fmt.Errorf("service-restart has no preview; dryRun is not supported")
+		return fmt.Errorf("%s has no preview; dryRun is not supported", action)
 	}
 	if service == nil || service.DrainTimeoutSeconds < 30 || service.DrainTimeoutSeconds > 3600 || len(service.RestartPods) > 4 {
-		return fmt.Errorf("service-restart requires a drainTimeoutSeconds from 30 through 3600 and at most four restartPods")
+		return fmt.Errorf("%s requires a drainTimeoutSeconds from 30 through 3600 and at most four restartPods", action)
 	}
 	for _, selector := range service.RestartPods {
 		if len(validation.IsDNS1123Label(selector.Namespace)) != 0 || len(selector.MatchLabels) == 0 || len(selector.MatchLabels) > 8 {
-			return fmt.Errorf("service-restart restartPods need an exact namespace and one to eight matchLabels")
+			return fmt.Errorf("%s restartPods need an exact namespace and one to eight matchLabels", action)
 		}
 		if selector.Namespace == NodeMaintenanceNamespace {
 			return fmt.Errorf("service-restart restartPods must not select the executor namespace %s", NodeMaintenanceNamespace)
 		}
 		for key, value := range selector.MatchLabels {
 			if len(validation.IsQualifiedName(key)) != 0 || len(validation.IsValidLabelValue(value)) != 0 || value == "" {
-				return fmt.Errorf("service-restart restartPods matchLabels must be exact non-empty label pairs")
+				return fmt.Errorf("%s restartPods matchLabels must be exact non-empty label pairs", action)
 			}
 		}
 	}

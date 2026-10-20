@@ -198,6 +198,10 @@ func (e *encoder) uint32(v uint32) {
 	e.align(4)
 	_ = binary.Write(&e.buf, binary.LittleEndian, v)
 }
+func (e *encoder) uint64(v uint64) {
+	e.align(8)
+	_ = binary.Write(&e.buf, binary.LittleEndian, v)
+}
 func (e *encoder) string(v string) {
 	e.uint32(u32(len(v)))
 	e.buf.WriteString(v)
@@ -219,11 +223,27 @@ type headerField struct {
 	value any
 }
 
-func encodeMessage(serial uint32, fields []headerField, bodySig string, bodyStrings []string) []byte {
+// beginArray writes an array length placeholder and the padding to the
+// element alignment; endArray patches the length (bytes after that padding).
+func (e *encoder) beginArray(elementAlign int) (lengthOffset, start int) {
+	e.uint32(0)
+	lengthOffset = e.buf.Len() - 4
+	e.align(elementAlign)
+	return lengthOffset, e.buf.Len()
+}
+func (e *encoder) endArray(lengthOffset, start int) {
+	binary.LittleEndian.PutUint32(e.buf.Bytes()[lengthOffset:], u32(e.buf.Len()-start))
+}
+
+func stringsBody(args []string) *encoder {
 	body := &encoder{}
-	for _, s := range bodyStrings {
+	for _, s := range args {
 		body.string(s)
 	}
+	return body
+}
+
+func encodeMessage(serial uint32, fields []headerField, bodySig string, body *encoder) []byte {
 	if bodySig != "" {
 		fields = append(fields, headerField{fieldSignature, "g", bodySig})
 	}
@@ -292,6 +312,20 @@ func (d *decoder) uint32() (uint32, error) {
 	d.pos += 4
 	return v, nil
 }
+func (d *decoder) int32() (int32, error) {
+	if err := d.align(4); err != nil {
+		return 0, err
+	}
+	var v int32
+	if d.pos+4 > len(d.data) {
+		return 0, errors.New("short D-Bus message")
+	}
+	if err := binary.Read(bytes.NewReader(d.data[d.pos:d.pos+4]), binary.LittleEndian, &v); err != nil {
+		return 0, err
+	}
+	d.pos += 4
+	return v, nil
+}
 func (d *decoder) uint64() (uint64, error) {
 	if err := d.align(8); err != nil {
 		return 0, err
@@ -335,6 +369,8 @@ func (d *decoder) value(sig string) (any, error) {
 		return d.byte()
 	case "u":
 		return d.uint32()
+	case "i":
+		return d.int32()
 	case "t":
 		return d.uint64()
 	case "s", "o":
@@ -414,6 +450,10 @@ func (c *dbusConn) readMessage() (*reply, error) {
 // reply body. Messages that are not the reply (for example signals) are skipped.
 // send writes one method call with the next serial and SCM_CREDENTIALS.
 func (c *dbusConn) send(path, iface, member, sig string, args ...string) error {
+	return c.sendBody(path, iface, member, sig, stringsBody(args))
+}
+
+func (c *dbusConn) sendBody(path, iface, member, sig string, body *encoder) error {
 	c.serial++
 	fields := []headerField{
 		{fieldPath, "o", path},
@@ -421,14 +461,26 @@ func (c *dbusConn) send(path, iface, member, sig string, args ...string) error {
 		{fieldMember, "s", member},
 		// No DESTINATION: this is a direct (peer-to-peer) connection, not a bus.
 	}
-	if _, _, err := c.conn.WriteMsgUnix(encodeMessage(c.serial, fields, sig, args), credentials(), nil); err != nil {
+	if _, _, err := c.conn.WriteMsgUnix(encodeMessage(c.serial, fields, sig, body), credentials(), nil); err != nil {
 		return fmt.Errorf("send %s: %w", member, err)
 	}
 	return nil
 }
 
 func (c *dbusConn) call(path, iface, member, sig string, args ...string) (*decoder, string, error) {
-	if err := c.send(path, iface, member, sig, args...); err != nil {
+	return c.callBody(path, iface, member, sig, stringsBody(args))
+}
+
+// callTimeout bounds one method call round trip. Each call sets its own
+// deadline, so a long transient run (many short calls) never hits the dial
+// deadline.
+var callTimeout = 20 * time.Second
+
+func (c *dbusConn) callBody(path, iface, member, sig string, body *encoder) (*decoder, string, error) {
+	if err := c.conn.SetDeadline(time.Now().Add(callTimeout)); err != nil {
+		return nil, "", err
+	}
+	if err := c.sendBody(path, iface, member, sig, body); err != nil {
 		return nil, "", err
 	}
 	for {
@@ -455,6 +507,7 @@ const (
 	managerPath  = "/org/freedesktop/systemd1"
 	managerIface = "org.freedesktop.systemd1.Manager"
 	unitIface    = "org.freedesktop.systemd1.Unit"
+	serviceIface = "org.freedesktop.systemd1.Service"
 	propsIface   = "org.freedesktop.DBus.Properties"
 )
 
@@ -469,8 +522,8 @@ func (c *dbusConn) objectCall(member, unit string, extra ...string) (string, err
 	return d.string()
 }
 
-func (c *dbusConn) property(path, name string) (any, error) {
-	d, sig, err := c.call(path, propsIface, "Get", "ss", unitIface, name)
+func (c *dbusConn) property(path, iface, name string) (any, error) {
+	d, sig, err := c.call(path, propsIface, "Get", "ss", iface, name)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +549,7 @@ func probe(c *dbusConn, unit string) (unitState, error) {
 		name string
 		into any
 	}{{"LoadState", &s.load}, {"ActiveState", &s.active}, {"SubState", &s.sub}, {"ActiveEnterTimestampMonotonic", &s.activeEnterMonoUs}} {
-		v, err := c.property(path, p.name)
+		v, err := c.property(path, unitIface, p.name)
 		if err != nil {
 			return unitState{}, err
 		}
@@ -517,7 +570,7 @@ func probe(c *dbusConn, unit string) (unitState, error) {
 	}
 	// NRestarts lives on the Service interface; read it only for loaded services.
 	if s.load == "loaded" {
-		d, sig, err := c.call(path, propsIface, "Get", "ss", "org.freedesktop.systemd1.Service", "NRestarts")
+		d, sig, err := c.call(path, propsIface, "Get", "ss", serviceIface, "NRestarts")
 		if err == nil && sig == "v" {
 			if v, err := d.value("v"); err == nil {
 				s.restarts, _ = v.(uint32)
@@ -554,6 +607,164 @@ func run(r request, socket string) error {
 			return err
 		}
 		fmt.Printf("unit=%s restart_job=%s\n", r.unit, job)
+	case "netplan-sriov-apply", "netplan-rebind":
+		return runTransient(c, r.transientUnit(), r.argv(), transientTimeout)
+	}
+	return nil
+}
+
+// transientTimeout bounds one netplan run; the session deadline still applies.
+// The node-maintenance capture bound of the netplan steps is set above it.
+const transientTimeout = 2 * time.Minute
+
+// transientStopTimeout bounds the stop of a timed-out or leftover unit.
+const transientStopTimeout = 15 * time.Second
+
+// transientStartSlack is how much longer than the helper's own run timeout
+// systemd lets a transient command run before it stops it.
+const transientStartSlack = 5 * time.Second
+
+// microseconds converts a duration to the unsigned microseconds systemd
+// expects; a negative duration becomes 0.
+func microseconds(d time.Duration) uint64 {
+	us := d.Microseconds()
+	if us < 0 {
+		return 0
+	}
+	return uint64(us)
+}
+
+// transientUnitBody encodes StartTransientUnit(name, "fail", properties, [])
+// for a oneshot service that runs argv once and stays loaded afterwards
+// (RemainAfterExit), so that its Result and ExecMainStatus can be read.
+// TimeoutStartUSec lets systemd itself stop a command that outlives the run
+// timeout, also when the helper was killed before it could stop the unit.
+func transientUnitBody(unit string, argv []string, timeout time.Duration) *encoder {
+	e := &encoder{}
+	e.string(unit)
+	e.string("fail")
+	propsLen, propsStart := e.beginArray(8) // a(sv)
+	prop := func(name, sig string) {
+		e.align(8)
+		e.string(name)
+		e.signature(sig)
+	}
+	prop("Description", "s")
+	e.string("Breakglass node-maintenance: " + strings.Join(argv, " "))
+	prop("Type", "s")
+	e.string("oneshot")
+	prop("RemainAfterExit", "b")
+	e.uint32(1)
+	// Stopping a command that ignores SIGTERM ends with SIGKILL after 15 s,
+	// inside the 30 s the helper waits for the unit to unload.
+	prop("TimeoutStopUSec", "t")
+	e.uint64(uint64(transientStopTimeout / time.Microsecond))
+	prop("TimeoutStartUSec", "t")
+	e.uint64(microseconds(timeout + transientStartSlack))
+	prop("ExecStart", "a(sasb)")
+	execLen, execStart := e.beginArray(8)
+	e.align(8)
+	e.string(argv[0])
+	argvLen, argvStart := e.beginArray(4)
+	for _, arg := range argv {
+		e.string(arg)
+	}
+	e.endArray(argvLen, argvStart)
+	e.uint32(0) // ignore failure: false
+	e.endArray(execLen, execStart)
+	e.endArray(propsLen, propsStart)
+	auxLen, auxStart := e.beginArray(8) // a(sa(sv)): no auxiliary units
+	e.endArray(auxLen, auxStart)
+	return e
+}
+
+// clearTransient stops or resets a loaded unit of the fixed name and waits
+// until systemd unloaded it, so the name can be reused. Before a run (leftover
+// true) it reports what it clears: an earlier run was interrupted.
+func clearTransient(c *dbusConn, unit string, deadline time.Time, leftover bool) error {
+	for {
+		s, err := probe(c, unit)
+		if err != nil {
+			return err
+		}
+		if s.load == "not-found" {
+			return nil
+		}
+		if leftover {
+			fmt.Fprintf(os.Stderr, "service-action: clearing leftover unit %s (%s/%s) of an interrupted run\n", unit, s.load, s.active)
+			leftover = false
+		}
+		if s.active == "active" || s.active == "activating" {
+			_, _ = c.objectCall("StopUnit", unit, "replace")
+		} else {
+			_, _, _ = c.call(managerPath, managerIface, "ResetFailedUnit", "s", unit)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("transient unit %s is still loaded (%s/%s)", unit, s.load, s.active)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// runTransient runs one fixed host command as a transient oneshot unit and
+// succeeds only if it exited 0 within timeout. The unit is always unloaded
+// again (stopped first if it still runs); its output stays in the host journal.
+func runTransient(c *dbusConn, unit string, argv []string, timeout time.Duration) (err error) {
+	deadline := time.Now().Add(timeout)
+	if err := clearTransient(c, unit, deadline, true); err != nil {
+		return err
+	}
+	d, sig, err := c.callBody(managerPath, managerIface, "StartTransientUnit", "ssa(sv)a(sa(sv))", transientUnitBody(unit, argv, timeout))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if clearErr := clearTransient(c, unit, time.Now().Add(30*time.Second), false); clearErr != nil {
+			fmt.Fprintf(os.Stderr, "service-action: %v\n", clearErr)
+			// A run that succeeded but left its unit loaded is reported.
+			if err == nil {
+				err = clearErr
+			}
+		}
+	}()
+	if sig != "o" {
+		return fmt.Errorf("StartTransientUnit returned signature %q, want o", sig)
+	}
+	job, err := d.string()
+	if err != nil {
+		return err
+	}
+	path, err := c.objectCall("LoadUnit", unit)
+	if err != nil {
+		return err
+	}
+	state := ""
+	for {
+		v, err := c.property(path, unitIface, "ActiveState")
+		if err != nil {
+			return err
+		}
+		state, _ = v.(string)
+		if state == "active" || state == "failed" || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	command := strings.Join(argv, " ")
+	if state != "active" && state != "failed" {
+		fmt.Printf("unit=%s job=%s command=%q active_state=%s result=- exec_main_status=-\n", unit, job, command, state)
+		return fmt.Errorf("%s did not finish within %s (active_state=%s); the unit is stopped", command, timeout, state)
+	}
+	result, status := "", int32(-1)
+	if v, err := c.property(path, serviceIface, "Result"); err == nil {
+		result, _ = v.(string)
+	}
+	if v, err := c.property(path, serviceIface, "ExecMainStatus"); err == nil {
+		status, _ = v.(int32)
+	}
+	fmt.Printf("unit=%s job=%s command=%q active_state=%s result=%s exec_main_status=%d\n", unit, job, command, state, result, status)
+	if state != "active" || result != "success" || status != 0 {
+		return fmt.Errorf("%s did not succeed (active_state=%s result=%s exec_main_status=%d)", command, state, result, status)
 	}
 	return nil
 }
