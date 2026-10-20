@@ -85,7 +85,7 @@ helm install breakglass charts/escalation-config \
   --set image.tag=latest
 
 # Or using kustomize
-kubectl apply -k config/default
+kubectl apply --server-side --force-conflicts -k config/default
 ```
 
 ## Step 2: Configure Identity Providers

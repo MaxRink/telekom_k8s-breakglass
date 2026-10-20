@@ -27,7 +27,7 @@ The standard production deployment with all features enabled.
 ```bash
 make deploy
 # Or manually:
-kustomize build config/base | kubectl apply -f -
+kustomize build config/base | kubectl apply --server-side --force-conflicts -f -
 ```
 
 **Includes:**
@@ -51,7 +51,7 @@ Production deployment with debug logging enabled. Useful for troubleshooting.
 ```bash
 make deploy_debug
 # Or manually:
-kustomize build config/debug | kubectl apply -f -
+kustomize build config/debug | kubectl apply --server-side --force-conflicts -f -
 ```
 
 **Adds to base:**
@@ -70,7 +70,7 @@ Full development environment with all dependencies for local testing and CI.
 ```bash
 make deploy_dev
 # Or manually:
-kustomize build config/dev | kubectl apply -f -
+kustomize build config/dev | kubectl apply --server-side --force-conflicts -f -
 ```
 
 **Adds to base:**
@@ -108,7 +108,7 @@ Pre-built manifest files are published with each release for users who prefer no
 - **CRDs only**: `manifests-crds.yaml`
 - **Debug overlay**: `manifests-debug.yaml`
 - **Bundled archive**: `manifests-<version>.tgz`
-- **Installation**: `kubectl apply -f https://github.com/telekom/k8s-breakglass/releases/download/v1.0.0/manifests-base.yaml`
+- **Installation**: `kubectl apply --server-side --force-conflicts -f https://github.com/telekom/k8s-breakglass/releases/download/v1.0.0/manifests-base.yaml`
 
 See the [Releases page](https://github.com/telekom/k8s-breakglass/releases) for available versions.
 
@@ -195,7 +195,7 @@ kustomize build config/base > /dev/null && echo "OK"
 kustomize build config/base | less
 
 # Validate with kubectl
-kustomize build config/base | kubectl apply --dry-run=server -f -
+kustomize build config/base | kubectl apply --server-side --dry-run=server -f -
 ```
 
 ## CI Manifest Comparison
