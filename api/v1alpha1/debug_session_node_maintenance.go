@@ -22,7 +22,8 @@ import (
 // It deliberately has no command, environment, capability or shell overrides.
 type DebugSessionNodeMaintenance struct {
 	// action is the one executor operation enabled by this profile.
-	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;kexec-recovery
+	// link-cycle and restart-autonegotiation act on the exact interface only.
+	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;link-cycle;restart-autonegotiation;kexec-recovery
 	Action string `json:"action"`
 	// image must be an immutable node-maintenance helper image.
 	// +kubebuilder:validation:Pattern=`^.+@sha256:[a-f0-9]{64}$`
@@ -35,6 +36,7 @@ type DebugSessionNodeMaintenance struct {
 	// dryRun makes every session of this profile a preview: the executor runs
 	// the same exact tuple preflight and records the entry it would replace,
 	// but has no NET_ADMIN capability and never mutates the kernel table.
+	// link-cycle and restart-autonegotiation have no preview and reject it.
 	// +optional
 	DryRun bool `json:"dryRun,omitempty"`
 	// kexec pins the provider recovery bundle for a kexec-recovery profile.
@@ -79,13 +81,15 @@ type NodeMaintenanceTarget struct {
 	// targetNodeUID prevents execution against a replaced Node.
 	// +kubebuilder:validation:MaxLength=128
 	TargetNodeUID string `json:"targetNodeUID"`
-	// interface is the neighbour interface or bridge FDB port. It is required
-	// for network repair and forbidden for kexec-recovery.
+	// interface is the neighbour interface, the bridge FDB port or the link of
+	// link-cycle and restart-autonegotiation. It is required for network repair
+	// and forbidden for kexec-recovery.
 	// +optional
 	// +kubebuilder:validation:MaxLength=15
 	Interface string `json:"interface,omitempty"`
 	// entryMAC is the canonical lowercase colon-delimited six-byte MAC. It is
-	// required for network repair and forbidden for kexec-recovery.
+	// required for neighbor-replace and bridge-fdb-replace, empty for
+	// link-cycle and restart-autonegotiation, and forbidden for kexec-recovery.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^([0-9a-f]{2}:){5}[0-9a-f]{2}$`
 	EntryMAC string `json:"entryMAC,omitempty"`
@@ -243,6 +247,12 @@ func ValidateNodeMaintenanceTarget(action string, target *NodeMaintenanceTarget)
 	if !maintenanceInterfacePattern.MatchString(target.Interface) || target.Interface == "." || target.Interface == ".." {
 		return fmt.Errorf("an exact interface is required")
 	}
+	if action == "link-cycle" || action == "restart-autonegotiation" {
+		if target.EntryMAC != "" || target.NeighborAddress != "" || target.Bridge != "" || target.VLAN != nil || target.VRF != "" {
+			return fmt.Errorf("%s acts on the exact interface only; entryMAC, neighbour, bridge, VLAN and VRF must be empty", action)
+		}
+		return nil
+	}
 	mac, err := net.ParseMAC(target.EntryMAC)
 	if err != nil || len(mac) != 6 || mac.String() != target.EntryMAC ||
 		mac[0]&1 != 0 || target.EntryMAC == "00:00:00:00:00:00" {
@@ -285,6 +295,9 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 	}
 	if err := validateNodeMaintenanceKexec(profile); err != nil {
 		return err
+	}
+	if profile.DryRun && (profile.Action == "link-cycle" || profile.Action == "restart-autonegotiation") {
+		return fmt.Errorf("%s has no preview; dryRun must be false", profile.Action)
 	}
 	if err := ValidateNodeMaintenanceTarget(profile.Action, target); err != nil {
 		return err

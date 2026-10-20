@@ -34,7 +34,7 @@ import (
 // Designed for EXTREMELY granular audit trails with non-blocking operation.
 type Manager struct {
 	sink        Sink
-	directSinks []Sink // underlying sinks for true synchronous fallback writes
+	directSinks []Sink // underlying sinks for synchronous EmitSync writes
 	asyncQueue  chan *Event
 	logger      *zap.Logger
 	wg          sync.WaitGroup
@@ -141,10 +141,10 @@ type ManagerConfig struct {
 	// Default: 30s
 	StatsInterval time.Duration
 
-	// DirectSinks are the underlying raw sinks used for true synchronous
-	// writes during sensitive-event fallback, bypassing QueuedSink layers.
-	// If empty, the fallback writes through the primary sink chain, which may
-	// block up to the context timeout and is subject to downstream queue limits.
+	// DirectSinks are the underlying raw sinks used for synchronous EmitSync
+	// writes, bypassing QueuedSink layers. If empty, EmitSync writes through
+	// the primary sink chain, which may block up to the context timeout and is
+	// subject to downstream queue limits.
 	DirectSinks []Sink
 }
 
@@ -231,9 +231,9 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 
 // Emit sends an audit event asynchronously. With DropOnFull=false, enqueue
 // waits for capacity up to WriteTimeout or the caller's context deadline.
-// Sensitive events (IsSensitiveEvent) fall back to a synchronous write when the
-// queue is full, which may block up to WriteTimeout or until the caller's
-// context ends; a caller that has already gone loses the event (logged).
+// With DropOnFull=true a full queue drops the event at once, sensitive or
+// not, and counts it as dropped with reason "queue_full". Emit never writes
+// to a sink itself; use EmitSync when the caller needs a delivery receipt.
 // Emit reports false only when the Manager is closed and nothing was accepted.
 func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	if m.closed.Load() {
@@ -295,35 +295,12 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
 	default:
-		// Queue is full — sensitive events fall back to a synchronous direct write
-		// to bypass manager-queue overflow. Per-sink queue drops (QueuedSink
-		// queue_full / circuit_open) are not intercepted by this path.
-		if IsSensitiveEvent(event.Type) {
-			// Bounded by the write timeout and by the caller: an authorization
-			// request must not outlive its own deadline waiting for a sink.
-			writeCtx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
-			defer cancel()
-			stop := context.AfterFunc(ctx, cancel)
-			defer stop()
-
-			writeErr := m.syncWriteDirect(writeCtx, event)
-			if writeErr != nil {
-				m.logger.Error("failed sync-write of sensitive audit event",
-					zap.String("event_type", string(event.Type)),
-					zap.String("event_id", event.ID),
-					zap.Error(writeErr))
-			}
-
-			return true
-		}
-
+		// Queue is full. Emit never writes synchronously: its callers include the
+		// authorization webhook, and a synchronous write to a stalled sink would
+		// hold the SubjectAccessReview answer. Callers that need a delivery
+		// receipt use EmitSync.
 		m.droppedEvents.Add(1)
 		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
-		if !m.config.DropOnFull {
-			m.logger.Warn("audit queue full, dropping event",
-				zap.String("event_type", string(event.Type)),
-				zap.String("event_id", event.ID))
-		}
 	}
 	return true
 }

@@ -44,7 +44,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 	nodeName, image := os.Getenv("NODE_MAINTENANCE_KIND_NODE"), os.Getenv("NODE_MAINTENANCE_KIND_IMAGE")
 	containerID := os.Getenv("NODE_MAINTENANCE_KIND_CONTAINER_ID")
 	actionFilter := os.Getenv("NODE_MAINTENANCE_KIND_ACTION")
-	require.Contains(t, []string{"", "neighbor", "fdb", "kexec"}, actionFilter)
+	require.Contains(t, []string{"", "neighbor", "fdb", "link", "kexec"}, actionFilter)
 	require.Regexp(t, "^[0-9a-f]{64}$", containerID)
 	require.True(t, strings.HasPrefix(nodeName, "node-maintenance-proof-") && strings.HasSuffix(nodeName, "-control-plane"))
 	require.Contains(t, image, "@sha256:")
@@ -107,6 +107,18 @@ func TestNodeMaintenanceKind(t *testing.T) {
 		require.NoError(t, json.Unmarshal(output, &records))
 		return records
 	}
+	linkUp := func(device string) bool {
+		t.Helper()
+		records := dockerJSON("ip", "-j", "link", "show", "dev", device)
+		require.Len(t, records, 1)
+		flags, _ := records[0]["flags"].([]interface{})
+		for _, flag := range flags {
+			if flag == "UP" {
+				return true
+			}
+		}
+		return false
+	}
 	neighborMACs := func(device string) map[string]string {
 		t.Helper()
 		macs := map[string]string{}
@@ -134,6 +146,9 @@ func TestNodeMaintenanceKind(t *testing.T) {
 		{"neighbor", "neighbor", "neighbor-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}, nil, false},
 		{"vrf", "neighbor", "neighbor-replace", false, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551v", VRF: "bg1551vrf", NeighborAddress: "198.51.100.2", EntryMAC: "02:00:00:00:00:02"}, nil, false},
 		{"fdb", "fdb", "bridge-fdb-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551a", Bridge: "bg1551br", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100))}, nil, false},
+		// The fixture port is administratively down; link-cycle brings exactly
+		// that port up and leaves the down decoy alone.
+		{"link", "link", "link-cycle", false, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551l"}, nil, false},
 		// The single Kind Node is the control plane: validation reads the
 		// pinned bundle without privilege, a wrong digest fails closed, and
 		// a reboot request for that Node is refused before any cordon.
@@ -248,6 +263,9 @@ func TestNodeMaintenanceKind(t *testing.T) {
 					if tc.helperFails {
 						expected = "failed"
 					}
+				} else if tc.lane == "link" {
+					require.True(t, linkUp("bg1551l"), "link-cycle brought the exact port up")
+					require.False(t, linkUp("bg1551ld"), "link-cycle left the decoy down")
 				} else if tc.dryRun {
 					require.Empty(t, pod.Spec.Containers[0].SecurityContext.Capabilities.Add, "a preview runs without NET_ADMIN")
 					require.Equal(t, "02:00:00:00:00:03", neighborMACs("bg1551n")["192.0.2.2"], "a preview never changes the entry")

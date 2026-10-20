@@ -654,6 +654,8 @@ type KubectlDebugConfig struct {
 }
 
 // EphemeralContainersConfig configures ephemeral container injection.
+// +kubebuilder:validation:XValidation:rule="!has(self.securityContext) || (has(self.allowPrivileged) && self.allowPrivileged) || ((!has(self.securityContext.privileged) || !self.securityContext.privileged) && (!has(self.securityContext.allowPrivilegeEscalation) || !self.securityContext.allowPrivilegeEscalation))",message="securityContext.privileged and securityContext.allowPrivilegeEscalation require allowPrivileged"
+// +kubebuilder:validation:XValidation:rule="!has(self.securityContext) || (has(self.requireNonRoot) && !self.requireNonRoot) || ((!has(self.securityContext.runAsUser) || self.securityContext.runAsUser != 0) && (!has(self.securityContext.runAsNonRoot) || self.securityContext.runAsNonRoot))",message="securityContext.runAsUser 0 and runAsNonRoot false require requireNonRoot false"
 type EphemeralContainersConfig struct {
 	// enabled allows ephemeral container injection.
 	// +optional
@@ -695,6 +697,15 @@ type EphemeralContainersConfig struct {
 	// +optional
 	// +kubebuilder:default=true
 	RequireNonRoot bool `json:"requireNonRoot,omitempty"`
+
+	// securityContext is applied to every injected ephemeral container. Each
+	// field set here replaces the requested value; unset fields keep the
+	// request value. The result is still validated against this policy, so it
+	// cannot grant more than allowPrivileged, maxCapabilities and
+	// requireNonRoot permit. Use it to enforce settings that clients do not
+	// send, such as readOnlyRootFilesystem for admission policies.
+	// +optional
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // NodeDebugConfig configures node-level debugging.
@@ -736,6 +747,7 @@ type HostNamespacesConfig struct {
 }
 
 // PodCopyConfig configures pod copy debugging.
+// +kubebuilder:validation:XValidation:rule="!has(self.securityContext) || ((!has(self.securityContext.privileged) || !self.securityContext.privileged) && (!has(self.securityContext.windowsOptions) || !has(self.securityContext.windowsOptions.hostProcess) || !self.securityContext.windowsOptions.hostProcess))",message="podCopy.securityContext must not be privileged or a Windows host process"
 type PodCopyConfig struct {
 	// enabled allows creating debug copies of pods.
 	// +optional
@@ -768,6 +780,16 @@ type PodCopyConfig struct {
 	// +kubebuilder:default="2h"
 	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	TTL string `json:"ttl,omitempty"`
+
+	// securityContext is set on the debug container that is added to the
+	// copied pod. The copied application containers keep their own security
+	// context. Without it the debug container has no security context and
+	// admission policies such as a read-only root filesystem requirement
+	// reject the copy. It is applied as written: privileged and Windows host
+	// process containers are rejected, every other field is the template
+	// author's responsibility.
+	// +optional
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // DebugSessionAllowed specifies who can request debug sessions.
