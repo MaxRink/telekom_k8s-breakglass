@@ -457,7 +457,8 @@ spec:
 Failed writes retain the same batch and event IDs while retrying. Exhaustion
 counts every lost event and logs an error. `dropOnFull: false` blocks enqueue up
 to the caller deadline or five seconds. Each config's settings apply to its own
-sinks; the manager's shared ingress settings still come from the first config.
+sinks; the manager's shared ingress settings still come from the first
+enabled config by name.
 These are bounded in-memory retries, not a durable outbox. See
 [audit delivery and immutable identity](audit-delivery.md) for limits, duplicate
 delivery semantics and the additive session/resource UID fields.
@@ -506,8 +507,8 @@ Secret, a TLS setup error), the last working audit pipeline stays active only
 while every AuditConfig it was built from is still enabled with an unchanged
 spec: for example a new AuditConfig whose Secret cannot be read, or a resync
 while a broker is down. A removed, disabled or changed AuditConfig (for
-example a removed or changed sink) is never kept: the pipeline is closed, and
-auditing is configured but unavailable, so operations that require a durable
+example a removed or changed sink) is never kept: the pipeline stops taking
+new events, and auditing is configured but unavailable, so operations that require a durable
 audit event fail closed until a reload succeeds. Each AuditConfig of the
 failed reload reports `Ready=False` / `ReloadFailed` with a Warning event, the
 reconciler retries, and
@@ -516,11 +517,25 @@ kept pipeline. Without a previous pipeline (for example on startup), auditing
 is also configured but unavailable. Disabling or deleting all AuditConfigs
 stops auditing.
 
+The reconciler also reloads every 10 minutes. A reload whose enabled
+AuditConfigs (names and specs) and sink Secrets (resource versions)
+are unchanged does nothing and counts as
+`breakglass_audit_config_reloads_total{status="unchanged"}`, so it no longer
+resets sink clients, circuit breakers or queues. A rotated Secret is picked
+up by the next resync. When a reload replaces the pipeline with a new one, new
+events go to the new pipeline at once, and the old pipeline first finishes
+the events it still holds, including events in retry, for up to its longest
+`queue.retryTimeoutSeconds`, and then closes. A sink that was removed by that
+change can therefore still receive events that were emitted before it. When
+auditing stops (all AuditConfigs disabled or deleted, or a changed
+AuditConfig that cannot be built), the old pipeline closes at once with the
+regular five-second shutdown drain. Controller shutdown ends the wait.
+
 ## Metrics
 
 The audit system exposes Prometheus metrics:
 
-- `breakglass_audit_config_reloads_total{status="..."}` - Reloads by result (`success`, `disabled`, `error`, `kept_previous`, `reconciler_error`)
+- `breakglass_audit_config_reloads_total{status="..."}` - Reloads by result (`success`, `unchanged`, `disabled`, `error`, `kept_previous`, `reconciler_error`); an unchanged resync counts as `unchanged`, not `success`
 - `breakglass_audit_events_processed_total` - Events successfully written
 - `breakglass_audit_events_dropped_total{sink="...",reason="..."}` - Events lost to overflow, enqueue timeout, circuit rejection or retry exhaustion
 - `breakglass_audit_sink_errors_total{sink="..."}` - Errors by sink
