@@ -18,6 +18,8 @@ Commands (the only supported entrypoints):
                             kubelet, cra) and run its post-checks.
   module-load               Load one allowlisted kernel module (non-persistent).
   sriov-reprovision         Re-create the SR-IOV VFs of one PF from netplan.
+  hotfix-action             Plan, apply or roll back one controller-rendered
+                            platform hotfix on this node.
 
 The image does not provide an unrestricted shell entrypoint. Use a runbook and
 pass an explicit target, evidence directory, and confirmation token.
@@ -53,6 +55,11 @@ case "$command_name" in
 		;;
 	sriov-reprovision)
 		exec /usr/local/libexec/node-maintenance/sriov-reprovision "$@"
+		;;
+	hotfix-action)
+		# Exec directly: hotfix steps carry their own deadlines and must never
+		# run under the 10 s capture timeout of the shell helpers.
+		exec /usr/local/sbin/hotfix-action "$@"
 		;;
 	-h|--help)
 		usage
