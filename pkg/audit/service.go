@@ -181,6 +181,11 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 			enabledConfigs = append(enabledConfigs, cfg)
 		}
 	}
+	// The reconciler's List order is not stable. Sort, so that the pipeline
+	// (the first config sets the shared queue settings) and the unchanged
+	// check below do not depend on it. AuditConfigs are cluster-scoped, so
+	// names are unique.
+	slices.SortFunc(enabledConfigs, func(a, b *breakglassv1alpha1.AuditConfig) int { return strings.Compare(a.Name, b.Name) })
 
 	if len(enabledConfigs) == 0 {
 		s.swap(nil, nil, nil, nil, false, ConfigurationDisabled)
@@ -604,7 +609,9 @@ func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink,
 		// New events already go to the new pipeline. Let the old one finish
 		// the events it still holds (bounded by its retry window) instead of
 		// dropping them with reason "shutdown".
-		if oldMulti != nil {
+		// Only a replacement drains: when auditing stops (disabled, or a
+		// changed config that cannot be built), no sink keeps receiving.
+		if oldMulti != nil && manager != nil {
 			oldMulti.drain(oldManager, s.stopDrains)
 		}
 		_ = s.closePipeline(oldManager, oldSinks)
@@ -612,7 +619,7 @@ func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink,
 }
 
 // pipelineCurrent reports whether the running pipeline was built from exactly
-// these configs, in this order, and from Secrets that are unchanged since.
+// these configs (sorted by name) and from Secrets that are unchanged since.
 // Caller must hold s.reloadMu.
 func (s *Service) pipelineCurrent(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig) bool {
 	s.mu.RLock()
