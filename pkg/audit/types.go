@@ -495,8 +495,9 @@ func IsHighVolumeEvent(eventType EventType) bool {
 	}
 }
 
-// IsSensitiveEvent returns true if this event type should always be captured
-// (never sampled, never dropped)
+// IsSensitiveEvent returns true if this event type should always be captured:
+// it is never sampled. Emit can still drop it, for example on a full ingress
+// queue (counted with reason queue_full or enqueue_timeout) or at shutdown.
 func IsSensitiveEvent(eventType EventType) bool {
 	switch eventType {
 	case EventSessionRequested, EventSessionApproved, EventSessionDenied,

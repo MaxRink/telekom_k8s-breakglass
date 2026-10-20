@@ -190,6 +190,29 @@ func TestFullQueueEmitNeverWritesSynchronously(t *testing.T) {
 	assert.Zero(t, manager.sensitiveEventsSyncWritten.Load(), "Emit must not write synchronously")
 }
 
+// With dropOnFull false, Emit waits for queue capacity, but never longer than
+// the caller's deadline, so a short SubjectAccessReview deadline still bounds
+// the authorization path.
+func TestFullQueueEmitWithoutDropOnFullEndsAtTheCallerDeadline(t *testing.T) {
+	sink := writeBlockingSink{}
+	manager := NewManager(sink, ManagerConfig{QueueSize: 1, WorkerCount: 1, DropOnFull: false,
+		WriteTimeout: 3 * time.Second, DirectSinks: []Sink{sink}}, zap.NewNop())
+	t.Cleanup(func() { _ = manager.Close() })
+	manager.Emit(context.Background(), &Event{Type: EventAccessGranted})
+	require.Eventually(t, func() bool { return len(manager.asyncQueue) == 0 }, time.Second, 5*time.Millisecond)
+	manager.Emit(context.Background(), &Event{Type: EventAccessGranted})
+	require.Len(t, manager.asyncQueue, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	assert.True(t, manager.Emit(ctx, &Event{Type: EventAccessDenied}))
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, 50*time.Millisecond, "Emit must wait for queue capacity until the caller deadline")
+	assert.Less(t, elapsed, time.Second, "Emit must end at the caller deadline, not at WriteTimeout")
+	assert.Equal(t, int64(1), manager.droppedEvents.Load(), "the timed-out event is counted as dropped")
+	assert.Zero(t, manager.sensitiveEventsSyncWritten.Load(), "Emit must not write synchronously")
+}
+
 // A failed reload must never keep a sink that the admin removed or changed:
 // the previous pipeline stays only while its configs are unchanged.
 func TestFailedReloadNeverKeepsARemovedOrChangedSink(t *testing.T) {
