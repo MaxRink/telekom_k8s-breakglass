@@ -12,4 +12,4 @@ section: Behaviour changes
   keeps its bounded wait for queue capacity. Paths that need a delivery
   receipt still emit synchronously and fail closed. This reverses the earlier
   synchronous fallback for sensitive events on a full queue. See
-  `docs/audit-config.md` (#1538).
+  `docs/audit-config.md` (#1540; issue 1538).
