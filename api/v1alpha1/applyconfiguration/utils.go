@@ -214,6 +214,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.HotfixImagePayloadApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HotfixNodeSelection"):
 		return &apiv1alpha1.HotfixNodeSelectionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixNodeStatus"):
+		return &apiv1alpha1.HotfixNodeStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPayload"):
 		return &apiv1alpha1.HotfixPayloadApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPlan"):

@@ -131,6 +131,10 @@ const (
 	EventDebugSessionAdmissionRecipeApplied  EventType = "debug_session.admission_recipe.applied"
 	EventDebugSessionAdmissionRecipeDrift    EventType = "debug_session.admission_recipe.drift"
 	EventDebugSessionAdmissionRecipeReverted EventType = "debug_session.admission_recipe.reverted"
+	EventDebugSessionHotfixIntent            EventType = "debug_session.hotfix.intent"
+	EventDebugSessionHotfixNodeIntent        EventType = "debug_session.hotfix.node_intent"
+	EventDebugSessionHotfixNodeResult        EventType = "debug_session.hotfix.node_result"
+	EventDebugSessionHotfixResult            EventType = "debug_session.hotfix.result"
 	EventDebugSessionAttached                EventType = "debug_session.attached"
 	EventDebugSessionDetached                EventType = "debug_session.detached"
 	EventDebugSessionCommand                 EventType = "debug_session.command"
@@ -522,6 +526,8 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionMaintenanceIntent, EventDebugSessionMaintenanceResult,
 		EventDebugSessionAdmissionRecipeApplied, EventDebugSessionAdmissionRecipeDrift,
 		EventDebugSessionAdmissionRecipeReverted,
+		EventDebugSessionHotfixIntent, EventDebugSessionHotfixNodeIntent,
+		EventDebugSessionHotfixNodeResult, EventDebugSessionHotfixResult,
 		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,

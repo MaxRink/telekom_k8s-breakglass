@@ -258,19 +258,20 @@ func isControllerOwnedDebugSessionLabel(key string) bool {
 
 // CreateDebugSessionRequest represents the request body for creating a debug session
 type CreateDebugSessionRequest struct {
-	NodeMaintenance          *breakglassv1alpha1.NodeMaintenanceTarget  `json:"nodeMaintenance,omitempty"`
-	AdmissionRecipe          *breakglassv1alpha1.AdmissionRecipeRequest `json:"admissionRecipe,omitempty"`
-	TemplateRef              string                                     `json:"templateRef" binding:"required"`
-	Cluster                  string                                     `json:"cluster" binding:"required"`
-	BindingRef               string                                     `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" (when multiple match)
-	RequestedDuration        string                                     `json:"requestedDuration,omitempty"`
-	NodeSelector             map[string]string                          `json:"nodeSelector,omitempty"`
-	Namespace                string                                     `json:"namespace,omitempty"` // Deprecated: alias for targetNamespace
-	Reason                   string                                     `json:"reason,omitempty"`
-	InvitedParticipants      []string                                   `json:"invitedParticipants,omitempty"`
-	TargetNamespace          string                                     `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
-	SelectedSchedulingOption string                                     `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
-	ExtraDeployValues        map[string]apiextensionsv1.JSON            `json:"extraDeployValues,omitempty"`        // User-provided values for template variables
+	NodeMaintenance          *breakglassv1alpha1.NodeMaintenanceTarget     `json:"nodeMaintenance,omitempty"`
+	AdmissionRecipe          *breakglassv1alpha1.AdmissionRecipeRequest    `json:"admissionRecipe,omitempty"`
+	Hotfix                   *breakglassv1alpha1.DebugSessionHotfixRequest `json:"hotfix,omitempty"`
+	TemplateRef              string                                        `json:"templateRef" binding:"required"`
+	Cluster                  string                                        `json:"cluster" binding:"required"`
+	BindingRef               string                                        `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" (when multiple match)
+	RequestedDuration        string                                        `json:"requestedDuration,omitempty"`
+	NodeSelector             map[string]string                             `json:"nodeSelector,omitempty"`
+	Namespace                string                                        `json:"namespace,omitempty"` // Deprecated: alias for targetNamespace
+	Reason                   string                                        `json:"reason,omitempty"`
+	InvitedParticipants      []string                                      `json:"invitedParticipants,omitempty"`
+	TargetNamespace          string                                        `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
+	SelectedSchedulingOption string                                        `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
+	ExtraDeployValues        map[string]apiextensionsv1.JSON               `json:"extraDeployValues,omitempty"`        // User-provided values for template variables
 }
 
 func normalizeCreateDebugSessionNamespace(req *CreateDebugSessionRequest) error {
@@ -869,14 +870,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate template")
 		return
 	}
-	if template.Spec.Hotfix != nil {
-		// The hotfix executor is not served by this controller version. Refuse
-		// instead of falling through to generic workload deployment.
-		apiresponses.RespondBadRequest(ctx, "hotfix templates are not supported by this controller version")
-		return
-	}
-	if template.Spec.NodeMaintenance != nil &&
+	if (template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil) &&
 		(req.SelectedSchedulingOption != "" || len(req.NodeSelector) != 0 || len(req.ExtraDeployValues) != 0 || len(req.InvitedParticipants) != 0) {
+		if template.Spec.Hotfix != nil {
+			apiresponses.RespondBadRequest(ctx, "hotfix accepts only the typed hotfix request, not generic workload overrides")
+			return
+		}
 		apiresponses.RespondBadRequest(ctx, "nodeMaintenance accepts only typed tuple parameters, not generic workload overrides")
 		return
 	}
@@ -1383,6 +1382,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			NodeMaintenance:               req.NodeMaintenance,
 			AdmissionRecipe:               req.AdmissionRecipe,
+			Hotfix:                        req.Hotfix,
 			TemplateRef:                   req.TemplateRef,
 			Cluster:                       req.Cluster,
 			RequestedBy:                   currentUserStr,
@@ -1410,6 +1410,24 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
+	// The binding is part of the session before the typed validations: an
+	// apply is checked against the binding its plan was reviewed under.
+	if resolvedBinding != nil {
+		session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{
+			Name:      resolvedBinding.Name,
+			Namespace: resolvedBinding.Namespace,
+		}
+	}
+	if err := breakglassv1alpha1.ValidateHotfixSession(&template.Spec, &session.Spec); err != nil {
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+	if template.Spec.Hotfix != nil {
+		if err := validateHotfixReferences(apiCtx, authorizationReader, template, session); err != nil {
+			apiresponses.RespondBadRequest(ctx, err.Error())
+			return
+		}
+	}
 	if template.Spec.NodeMaintenance != nil {
 		validator := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(authorizationReader)
 		if err := validator.validateMaintenancePending(apiCtx, session, template, resolvedBinding); err != nil {
@@ -1430,12 +1448,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		if err := validator.validateAdmissionRecipePending(apiCtx, session, template, resolvedBinding); err != nil {
 			respondMaintenanceValidationError(ctx, c.log, err)
 			return
-		}
-	}
-	if resolvedBinding != nil {
-		session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{
-			Name:      resolvedBinding.Name,
-			Namespace: resolvedBinding.Namespace,
 		}
 	}
 

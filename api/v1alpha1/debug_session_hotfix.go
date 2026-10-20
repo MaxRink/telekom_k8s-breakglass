@@ -454,6 +454,120 @@ type HotfixStatus struct {
 	// appliedBy is the apply session that consumed this plan. A plan is applied at most once.
 	// +optional
 	AppliedBy string `json:"appliedBy,omitempty"`
+	// phase is the controller's progress.
+	// +optional
+	// +kubebuilder:validation:Enum=Running;Soaking;Succeeded;Stopped;Failed
+	Phase HotfixPhase `json:"phase,omitempty"`
+	// operationID correlates the session's executors, Leases and audit events.
+	// +optional
+	OperationID string `json:"operationID,omitempty"`
+	// namespaceUID fences the maintenance namespace on the target cluster.
+	// +optional
+	NamespaceUID string `json:"namespaceUID,omitempty"`
+	// clusterLeaseUID is the per-cluster hotfix Lease held by apply and rollback.
+	// +optional
+	ClusterLeaseUID string `json:"clusterLeaseUID,omitempty"`
+	// recordName is the HotfixRecord of apply, rollback, reconfirm and close.
+	// +optional
+	RecordName string `json:"recordName,omitempty"`
+	// currentBatch is the batch in progress.
+	// +optional
+	CurrentBatch int32 `json:"currentBatch,omitempty"`
+	// batchCompletedAt is when every executor of the current batch finished;
+	// the health gate must pass within the gate timeout after it.
+	// +optional
+	BatchCompletedAt *metav1.Time `json:"batchCompletedAt,omitempty"`
+	// gatePassedAt is when the current batch first passed its health gate;
+	// the next batch starts after the soak time.
+	// +optional
+	GatePassedAt *metav1.Time `json:"gatePassedAt,omitempty"`
+	// reason explains a stopped or failed stage; it is set once and kept.
+	// +optional
+	// +kubebuilder:validation:MaxLength=1024
+	Reason string `json:"reason,omitempty"`
+	// auxiliaryDeployed is set after the template's auxiliary resources exist.
+	// +optional
+	AuxiliaryDeployed bool `json:"auxiliaryDeployed,omitempty"`
+	// intentAudited records the durable audit receipt of the stage intent.
+	// +optional
+	IntentAudited bool `json:"intentAudited,omitempty"`
+	// resultAudited records the durable audit receipt of the stage result.
+	// +optional
+	ResultAudited bool `json:"resultAudited,omitempty"`
+	// released is set after every executor, auxiliary resource and Lease is gone.
+	// +optional
+	Released bool `json:"released,omitempty"`
+	// nodes is the per-node executor inventory.
+	// +optional
+	// +kubebuilder:validation:MaxItems=1000
+	// +listType=atomic
+	Nodes []HotfixNodeStatus `json:"nodes,omitempty"`
+}
+
+// HotfixPhase is the progress of a hotfix session.
+type HotfixPhase string
+
+const (
+	HotfixPhaseRunning   HotfixPhase = "Running"
+	HotfixPhaseSoaking   HotfixPhase = "Soaking"
+	HotfixPhaseSucceeded HotfixPhase = "Succeeded"
+	HotfixPhaseStopped   HotfixPhase = "Stopped"
+	HotfixPhaseFailed    HotfixPhase = "Failed"
+)
+
+// HotfixNodeStatus is the single-attempt executor inventory of one node.
+type HotfixNodeStatus struct {
+	// name is the Node name.
+	Name string `json:"name"`
+	// uid is the Node UID.
+	UID string `json:"uid"`
+	// batch is the zero-based batch index.
+	Batch int32 `json:"batch"`
+	// controlPlane marks control-plane nodes.
+	// +optional
+	ControlPlane bool `json:"controlPlane,omitempty"`
+	// deadlineUnix is the executor deadline, fixed before creation.
+	// +optional
+	DeadlineUnix int64 `json:"deadlineUnix,omitempty"`
+	// activeDeadlineSeconds is the executor Pod deadline, fixed before creation.
+	// +optional
+	ActiveDeadlineSeconds int64 `json:"activeDeadlineSeconds,omitempty"`
+	// leaseUID is the per-node Lease shared with node maintenance.
+	// +optional
+	LeaseUID string `json:"leaseUID,omitempty"`
+	// jobUID is the externally managed Job envelope.
+	// +optional
+	JobUID string `json:"jobUID,omitempty"`
+	// podUID is the single executor Pod.
+	// +optional
+	PodUID string `json:"podUID,omitempty"`
+	// createAttempted is persisted before the Pod is created; a missing Pod is never recreated.
+	// +optional
+	CreateAttempted bool `json:"createAttempted,omitempty"`
+	// result is the executor result.
+	// +optional
+	// +kubebuilder:validation:Enum=planned;applied;skipped;rolledBack;failed;interrupted;unknown
+	Result string `json:"result,omitempty"`
+	// action is the planned action (plan stage).
+	// +optional
+	Action HotfixPlannedAction `json:"action,omitempty"`
+	// beforeSHA256 is the observed pre-image hash.
+	// +optional
+	BeforeSHA256 string `json:"beforeSHA256,omitempty"`
+	// afterSHA256 is the result hash.
+	// +optional
+	AfterSHA256 string `json:"afterSHA256,omitempty"`
+	// newPackages are Debian packages new on this node.
+	// +optional
+	// +listType=atomic
+	NewPackages []string `json:"newPackages,omitempty"`
+	// message explains failures.
+	// +optional
+	// +kubebuilder:validation:MaxLength=1024
+	Message string `json:"message,omitempty"`
+	// released is set after the executor is gone and the node Lease is released.
+	// +optional
+	Released bool `json:"released,omitempty"`
 }
 
 var (
