@@ -288,3 +288,30 @@ func TestServiceRestartRecordsPodsBeforeDeletingAndNeverDeletesReplacements(t *t
 		"an unrecorded replacement is never deleted")
 	require.Equal(t, "succeeded", ds.Status.NodeMaintenance.Result)
 }
+
+func TestModuleLoadPodHasOnlySysModuleAndReadOnlyModules(t *testing.T) {
+	c, ds, spoke, sink := maintenanceFixture(t)
+	setMaintenanceProfile(t, c, ds, func(spec *breakglassv1alpha1.DebugSessionTemplateSpec, target *breakglassv1alpha1.NodeMaintenanceTarget) {
+		*target = breakglassv1alpha1.NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Module: "ip6_gre"}
+		spec.NodeMaintenance.Action = breakglassv1alpha1.NodeMaintenanceActionModuleLoad
+		spec.NodeMaintenance.AllowedTargets = []breakglassv1alpha1.NodeMaintenanceTarget{*target}
+	})
+	require.NoError(t, c.deployMaintenance(t.Context(), ds))
+	pod := kexecExecutorPod(t, spoke, ds)
+	container := pod.Spec.Containers[0]
+	require.Equal(t, []string{"module-load", "--target-node", "node-a", "--module", "ip6_gre", "--confirm", "MODULE-LOAD", "--evidence-dir", "/evidence"}, container.Args)
+	require.Equal(t, []corev1.Capability{"SYS_MODULE"}, container.SecurityContext.Capabilities.Add)
+	require.Equal(t, []corev1.Capability{"ALL"}, container.SecurityContext.Capabilities.Drop)
+	require.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
+	require.False(t, pod.Spec.HostNetwork)
+	require.False(t, pod.Spec.HostPID)
+	require.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, pod.Spec.SecurityContext.SeccompProfile.Type)
+	require.Equal(t, "/lib/modules", pod.Spec.Volumes[1].HostPath.Path)
+	require.Equal(t, corev1.HostPathDirectory, *pod.Spec.Volumes[1].HostPath.Type)
+	require.Contains(t, container.VolumeMounts, corev1.VolumeMount{Name: "modules", MountPath: "/lib/modules", ReadOnly: true})
+	want := "target_node=node-a&module=ip6_gre&confirmation=MODULE-LOAD"
+	require.Contains(t, container.Env, corev1.EnvVar{Name: "BREAKGLASS_APPROVED_MODULE_REQUEST", Value: want})
+	require.Equal(t, want, sink.Events()[0].Details["tuple"])
+	require.True(t, matchesMaintenancePod(ds, pod))
+	require.False(t, kexecNode(t, spoke).Spec.Unschedulable, "a module load never cordons")
+}

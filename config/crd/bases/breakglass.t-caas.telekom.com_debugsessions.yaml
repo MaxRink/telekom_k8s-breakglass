@@ -161,6 +161,12 @@ spec:
                       and forbidden for kexec-recovery.
                     maxLength: 15
                     type: string
+                  module:
+                    description: |-
+                      module is the exact kernel module name for module-load and forbidden
+                      for every other action. Each allowlist entry names one module.
+                    pattern: ^[a-z0-9_]{1,56}$
+                    type: string
                   neighborAddress:
                     description: neighborAddress is a canonical individual IP, never
                       a prefix.
@@ -4705,6 +4711,7 @@ spec:
                         - restart-autonegotiation
                         - kexec-recovery
                         - service-restart
+                        - module-load
                         type: string
                       allowedTargets:
                         description: allowedTargets is an exact allowlist, not a selector
@@ -4731,6 +4738,12 @@ spec:
                                 link-cycle and restart-autonegotiation. It is required for network repair
                                 and forbidden for kexec-recovery.
                               maxLength: 15
+                              type: string
+                            module:
+                              description: |-
+                                module is the exact kernel module name for module-load and forbidden
+                                for every other action. Each allowlist entry names one module.
+                              pattern: ^[a-z0-9_]{1,56}$
                               type: string
                             neighborAddress:
                               description: neighborAddress is a canonical individual

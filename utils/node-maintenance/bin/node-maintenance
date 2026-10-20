@@ -16,6 +16,7 @@ Commands (the only supported entrypoints):
   kexec-recovery            Validate the same inputs, then kexec into them.
   service-restart           Restart one allowlisted systemd unit (containerd,
                             kubelet, cra) and run its post-checks.
+  module-load               Load one allowlisted kernel module (non-persistent).
 
 The image does not provide an unrestricted shell entrypoint. Use a runbook and
 pass an explicit target, evidence directory, and confirmation token.
@@ -45,6 +46,9 @@ case "$command_name" in
 		;;
 	service-restart)
 		exec /usr/local/libexec/node-maintenance/service-restart "$@"
+		;;
+	module-load)
+		exec /usr/local/libexec/node-maintenance/module-load "$@"
 		;;
 	-h|--help)
 		usage

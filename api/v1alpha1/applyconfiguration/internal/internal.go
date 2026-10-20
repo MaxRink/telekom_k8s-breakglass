@@ -3479,6 +3479,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: interface
       type:
         scalar: string
+    - name: module
+      type:
+        scalar: string
     - name: neighborAddress
       type:
         scalar: string

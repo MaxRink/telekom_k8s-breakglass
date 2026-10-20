@@ -38,6 +38,10 @@ RUN apk add --no-cache \
         ethtool=7.0-r0 \
         flock=2.42.3-r1 \
         iproute2=7.0.0-r0 \
+        kmod=34.2-r1 \
+        xz-libs=5.8.4-r0 \
+        zlib=1.3.2-r0 \
+        zstd-libs=1.5.7-r2 \
         libcrypto3=3.5.8-r0 \
         libssl3=3.5.8-r0 \
     && rm -f /sbin/apk /sbin/apk.static
@@ -51,6 +55,8 @@ COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
 COPY lib/kexec-recovery-validate.sh /usr/local/libexec/node-maintenance/kexec-recovery-validate
 COPY lib/service-restart.sh /usr/local/libexec/node-maintenance/service-restart
+COPY lib/module-load.sh /usr/local/libexec/node-maintenance/module-load
+COPY runbooks/module-load.md /usr/share/breakglass/runbooks/upstream/node-maintenance/module-load.md
 COPY lib/kexec-recovery-validate.sh /usr/local/libexec/node-maintenance/kexec-recovery
 COPY MOTD /etc/motd
 COPY README.md /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md
@@ -63,6 +69,7 @@ RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/local/sbin/network-action \
         /usr/local/sbin/service-action \
         /usr/local/libexec/node-maintenance/service-restart \
+        /usr/local/libexec/node-maintenance/module-load \
         /usr/local/sbin/kexec-action \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
@@ -74,7 +81,8 @@ RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/service-restart.md \
-    && mkdir -p /evidence /usr/share/breakglass/runbooks/internal \
+        /usr/share/breakglass/runbooks/upstream/node-maintenance/module-load.md \
+    && mkdir -p /evidence /usr/share/breakglass/runbooks/internal /usr/share/breakglass/modprobe.d \
     && chmod 0700 /evidence \
     && chmod 0755 /usr/share/breakglass/runbooks/internal
 
@@ -88,9 +96,9 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.base.name="alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
-      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery,service-restart" \
+      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery,service-restart,module-load" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
-      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT"
+      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT,SYS_MODULE"
 
 # The image is root only for the explicitly allowlisted host-network operation.
 # Controller-owned immutable templates must use a no-capabilities preflight
