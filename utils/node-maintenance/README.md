@@ -181,12 +181,9 @@ seccomp, and capabilities dropped. Add only `NET_ADMIN` for `network-repair`;
 adds `SYS_BOOT`, and it needs the host PID namespace (the kernel refuses a kexec
 reboot from a child PID namespace) and an unconfined seccomp profile (runtime
 default profiles deny `kexec_file_load`). Blanket privileged mode, host
-network for kexec, and host-root mounts are outside this contract.
-`node-recovery` and `kexec-recovery-validate` add none. Only `kexec-recovery`
-adds `SYS_BOOT`, and it needs the host PID namespace and an unconfined seccomp
-profile. Blanket privileged mode, host network for kexec, and host-root mounts
-are outside this contract, except for the separately approved host-namespace
-shape of `hotfix-action` described below.
+network for kexec, and host-root mounts are outside this contract, except for
+the separately approved host-namespace shape of `hotfix-action` described
+below.
 
 Kexec validation consumes only a distinct read-only `/recovery` mount with
 fixed files `kernel`, `initrd`, and `cmdline`. Exact provider profile and

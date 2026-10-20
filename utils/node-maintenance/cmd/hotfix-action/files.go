@@ -529,6 +529,13 @@ func (ex *executor) replaceFile(req *request, p string, old, updated []byte, inf
 // file still has the hotfix content.
 func (ex *executor) restoreFile(req *request, p, current string, info os.FileInfo, restart []string) (*result, error) {
 	if current == req.Expected.BeforeSHA256 {
+		// A backup means the hotfix was written here: an earlier rollback may
+		// have restored the file and failed before the restart.
+		if _, err := os.Stat(ex.host(ex.backupPath(req, p))); err == nil {
+			if err := ex.restart(restart); err != nil {
+				return nil, err
+			}
+		}
 		return &result{Result: "skipped", BeforeSHA256: current, AfterSHA256: current, Message: "already at the pre-hotfix content"}, nil
 	}
 	if current != req.Expected.AfterSHA256 {

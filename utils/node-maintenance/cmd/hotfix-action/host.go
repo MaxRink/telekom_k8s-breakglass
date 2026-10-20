@@ -223,7 +223,15 @@ func (ex *executor) debs(req *request) (*result, error) {
 		return &result{Result: "planned", Action: "apply", BeforeSHA256: before, AfterSHA256: target, Diff: diff.String(), NewPackages: fresh}, nil
 	case stageApply:
 		if before == req.Expected.AfterSHA256 {
-			return &result{Result: "skipped", BeforeSHA256: before, AfterSHA256: before}, nil
+			// An earlier attempt may have installed the packages and failed
+			// before the audit or the restart: finish those steps again.
+			if err := errors.Join(ex.recoverServiceStarts(), ex.dpkgAudit("after the install")); err != nil {
+				return nil, err
+			}
+			if err := ex.restart(req.Payload.Restart); err != nil {
+				return nil, err
+			}
+			return &result{Result: "skipped", BeforeSHA256: before, AfterSHA256: before, Message: "already at the planned versions"}, nil
 		}
 		if before != req.Expected.BeforeSHA256 || target != req.Expected.AfterSHA256 {
 			return nil, errors.New("installed package versions changed since the plan")
@@ -434,8 +442,9 @@ func patchImage(manifest []byte, image string) ([]byte, error) {
 
 type crictlContainers struct {
 	Containers []struct {
-		ID       string `json:"id"`
-		ImageRef string `json:"imageRef"`
+		ID           string `json:"id"`
+		PodSandboxID string `json:"podSandboxId"`
+		ImageRef     string `json:"imageRef"`
 	} `json:"containers"`
 }
 
@@ -480,6 +489,82 @@ func (ex *executor) waitStaticPod(pod, id, digest string, budget time.Duration) 
 		}
 		time.Sleep(ex.poll)
 	}
+}
+
+// staticPodRunsHotfix waits until the static Pod runs the pulled hotfix image
+// and, for etcd, until the cluster is healthy again.
+func (ex *executor) staticPodRunsHotfix(pod, image string) error {
+	id, err := ex.imageID(image)
+	if err != nil {
+		if _, pullErr := ex.hostStep(5*time.Minute, nil, "crictl", "pull", image); pullErr != nil {
+			return errors.Join(err, pullErr)
+		}
+		if id, err = ex.imageID(image); err != nil {
+			return err
+		}
+	}
+	if err := ex.waitStaticPod(pod, id, image[strings.LastIndex(image, "@"):], 5*time.Minute); err != nil {
+		return err
+	}
+	if pod == "etcd" {
+		return ex.waitEtcdHealthy(time.Minute)
+	}
+	return nil
+}
+
+// staticPodSandboxes returns the Pod sandbox IDs of the running containers
+// of a static Pod.
+func (ex *executor) staticPodSandboxes(pod string) ([]string, error) {
+	out, err := ex.hostStep(15*time.Second, nil, "crictl", "ps", "--name", "^"+pod+"$", "--label", staticPodLabel, "--state", "running", "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var running crictlContainers
+	if err := json.Unmarshal(out, &running); err != nil {
+		return nil, fmt.Errorf("crictl ps for %s: unexpected output", pod)
+	}
+	ids := make([]string, 0, len(running.Containers))
+	for _, c := range running.Containers {
+		ids = append(ids, c.PodSandboxID)
+	}
+	return ids, nil
+}
+
+// waitStaticPodRestarted waits until exactly one container of the static Pod
+// runs in a Pod sandbox that did not run before the manifest was restored.
+// kubelet replaces the sandbox when the manifest changes (the static Pod UID
+// is a hash of the manifest, as long as the manifest sets no
+// metadata.uid), but keeps it for a crash restart. The image cannot tell: a hotfix image may have the same
+// image ID as the original.
+func (ex *executor) waitStaticPodRestarted(pod string, before []string, budget time.Duration) error {
+	if err := ex.fits(budget); err != nil {
+		return err
+	}
+	end := ex.now().Add(budget)
+	for {
+		ids, err := ex.staticPodSandboxes(pod)
+		if err == nil && len(ids) == 1 && !slices.Contains(before, ids[0]) {
+			return nil
+		}
+		if ex.now().After(end) {
+			return fmt.Errorf("%s did not restart with the restored manifest within %s", pod, budget)
+		}
+		time.Sleep(ex.poll)
+	}
+}
+
+// etcdRestartSafe allows a restart of the local etcd member when its
+// container does not run, or when every member answers and agrees on one
+// leader.
+func (ex *executor) etcdRestartSafe() error {
+	out, err := ex.hostStep(15*time.Second, nil, "crictl", "ps", "--name", "^etcd$", "--label", staticPodLabel, "--state", "running", "-q")
+	if err != nil {
+		return fmt.Errorf("list the local etcd container: %w", err)
+	}
+	if len(strings.Fields(string(out))) == 0 {
+		return nil
+	}
+	return ex.etcdHealthy()
 }
 
 // staticPodLabel limits crictl to kube-system static Pod containers.
@@ -581,7 +666,12 @@ func (ex *executor) staticPod(req *request) (*result, error) {
 		return &result{Result: "planned", Action: action, BeforeSHA256: before, AfterSHA256: after, Diff: ex.reviewDiff(p, old, updated)}, nil
 	case stageApply:
 		if before == req.Expected.AfterSHA256 {
-			return &result{Result: "skipped", BeforeSHA256: before, AfterSHA256: before}, nil
+			// An earlier attempt may have written the manifest and failed
+			// before the Pod ran the image: wait for it again.
+			if err := ex.staticPodRunsHotfix(pod, req.Payload.Image.Image); err != nil {
+				return nil, err
+			}
+			return &result{Result: "skipped", BeforeSHA256: before, AfterSHA256: before, Message: "already at the planned manifest"}, nil
 		}
 		if before != req.Expected.BeforeSHA256 || after != req.Expected.AfterSHA256 {
 			return nil, fmt.Errorf("%s changed since the plan", p)
@@ -595,29 +685,62 @@ func (ex *executor) staticPod(req *request) (*result, error) {
 		if _, err := ex.hostStep(5*time.Minute, nil, "crictl", "pull", req.Payload.Image.Image); err != nil {
 			return nil, err
 		}
-		id, err := ex.imageID(req.Payload.Image.Image)
-		if err != nil {
+		if _, err := ex.imageID(req.Payload.Image.Image); err != nil {
 			return nil, err
 		}
-		if err := ex.fits(6 * time.Minute); err != nil {
+		if err := ex.fits(7 * time.Minute); err != nil {
 			return nil, err
 		}
 		if err := ex.replaceFile(req, p, old, updated, info); err != nil {
 			return nil, err
 		}
-		if err := ex.waitStaticPod(pod, id, req.Payload.Image.Image[strings.LastIndex(req.Payload.Image.Image, "@"):], 5*time.Minute); err != nil {
+		if err := ex.staticPodRunsHotfix(pod, req.Payload.Image.Image); err != nil {
 			return nil, err
-		}
-		if pod == "etcd" {
-			if err := ex.waitEtcdHealthy(time.Minute); err != nil {
-				return nil, err
-			}
 		}
 		return &result{Result: "applied", BeforeSHA256: before, AfterSHA256: after}, nil
 	case stageRollback:
+		// Restarting a running etcd member must not lose quorum. A member
+		// whose container does not run is already out of the quorum, so
+		// rolling it back cannot lower the quorum further.
+		if pod == "etcd" && before == req.Expected.AfterSHA256 {
+			if err := ex.etcdRestartSafe(); err != nil {
+				return nil, fmt.Errorf("refusing to restart a running etcd member without full quorum: %w", err)
+			}
+		}
+		// A backup means the hotfix reached this node; a retry after a
+		// restored manifest still waits for the Pod and etcd health.
+		_, statErr := os.Stat(ex.host(ex.backupPath(req, p)))
+		backedUp := statErr == nil
+		if before != req.Expected.AfterSHA256 && (!backedUp || before != req.Expected.BeforeSHA256) {
+			return ex.restoreFile(req, p, before, info, nil)
+		}
+		budget := 6 * time.Minute
+		if pod == "etcd" {
+			budget = 11 * time.Minute // plus the etcd health wait
+		}
+		if err := ex.fits(budget); err != nil {
+			return nil, err
+		}
+		// The sandboxes that ran before the restore are kept on the node, so
+		// a retry also refuses the old sandbox.
+		sandboxes := ex.host(ex.backupPath(req, p) + ".sandboxes")
+		var running []string
+		if before == req.Expected.AfterSHA256 {
+			if running, err = ex.staticPodSandboxes(pod); err != nil {
+				return nil, err
+			}
+			if err := writeSynced(sandboxes, []byte(strings.Join(running, "\n")), 0o600); err != nil {
+				return nil, err
+			}
+		} else if saved, err := os.ReadFile(sandboxes); err == nil {
+			running = strings.Fields(string(saved))
+		}
 		out, err := ex.restoreFile(req, p, before, info, nil)
-		if err != nil || out.Result == "skipped" {
+		if err != nil {
 			return out, err
+		}
+		if err := ex.waitStaticPodRestarted(pod, running, 5*time.Minute); err != nil {
+			return nil, err
 		}
 		if pod == "etcd" {
 			if err := ex.waitEtcdHealthy(5 * time.Minute); err != nil {
@@ -652,7 +775,14 @@ func (ex *executor) hostContainer(req *request) (*result, error) {
 		return &result{Result: "planned", Action: action, BeforeSHA256: before, AfterSHA256: after, Diff: ex.reviewDiff(c.ImageRefFile, old, updated)}, nil
 	case stageApply:
 		if before == req.Expected.AfterSHA256 {
-			return &result{Result: "skipped", BeforeSHA256: before, AfterSHA256: before}, nil
+			// An earlier attempt may have written the file and failed before
+			// the container ran the hotfix image: restart it again.
+			if got, err := ex.runningImage(c); err != nil || got != req.Payload.Image.Image {
+				if err := ex.restartHostContainer(c, req.Payload.Image.Image); err != nil {
+					return nil, err
+				}
+			}
+			return &result{Result: "skipped", BeforeSHA256: before, AfterSHA256: before, Message: "already at the planned image"}, nil
 		}
 		if before != req.Expected.BeforeSHA256 || after != req.Expected.AfterSHA256 {
 			return nil, fmt.Errorf("%s changed since the plan", c.ImageRefFile)
@@ -685,17 +815,33 @@ func (ex *executor) hostContainer(req *request) (*result, error) {
 		}
 		return &result{Result: "applied", BeforeSHA256: before, AfterSHA256: after}, nil
 	case stageRollback:
+		// Read the previous image before the file is restored, so a failed
+		// read cannot leave a restored file with the hotfix image running.
+		// Apply saves it before the file changes: without it and with the
+		// file at the pre-image, the hotfix never reached this node.
+		saved, readErr := os.ReadFile(ex.host(ex.runningImagePath(req, c)))
+		neverApplied := os.IsNotExist(readErr) && before == req.Expected.BeforeSHA256
+		if readErr != nil && !neverApplied {
+			return nil, fmt.Errorf("read the image %s ran before the hotfix: %w", c.Name, readErr)
+		}
 		out, err := ex.restoreFile(req, c.ImageRefFile, before, info, nil)
-		if err != nil || out.Result == "skipped" {
+		if err != nil {
 			return out, err
 		}
-		previous, err := os.ReadFile(ex.host(ex.runningImagePath(req, c)))
-		if err != nil {
-			return nil, fmt.Errorf("read the image %s ran before the hotfix: %w", c.Name, err)
+		if out.Result == "skipped" {
+			// An earlier attempt may have restored the file and failed before
+			// the restart. Restart only while the hotfix image still runs.
+			if neverApplied {
+				return out, nil
+			}
+			// A container that does not run at all is restarted too.
+			if got, err := ex.runningImage(c); err == nil && got != req.Payload.Image.Image {
+				return out, nil
+			}
 		}
 		// An empty reference means the container was not running before the
 		// hotfix; then rollback only requires it to run again.
-		if err := ex.restartHostContainer(c, strings.TrimSpace(string(previous))); err != nil {
+		if err := ex.restartHostContainer(c, strings.TrimSpace(string(saved))); err != nil {
 			return nil, err
 		}
 		return out, nil

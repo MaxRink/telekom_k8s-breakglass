@@ -75,9 +75,20 @@ next hotfix run on that node.
   - files and static Pod manifests: restored from the node backup, only while
     the file still has the hotfix content;
   - debs: `rollbackDebs` are installed and new packages purged; without
-    `rollbackDebs`, replace the node;
+    `rollbackDebs`, replace the node. The deb rollback runs once per node: if
+    it fails between the downgrade and the purge, the packages are in a mixed
+    state that neither rollback nor apply accepts. Finish it by hand
+    (emergency node debug session: `dpkg --purge` the remaining new packages,
+    `dpkg --audit`), or replace the node;
   - host containers: the previous image reference is restored and the unit
-    restarted.
+    restarted;
+  - etcd: a running member is restarted only while every member answers and
+    agrees on one leader; a member whose container does not run can always be
+    rolled back.
+
+A rollback or apply that stopped half-way can be repeated: a node that already
+has the target content gets the remaining restart and health checks again. The
+deb rollback is the exception (it runs once, see above).
 - **Controller unavailable:** no further batch starts. Running executors stop
   at their deadline. The record stays; continue with rollback once the
   controller is back, or replace affected nodes.
