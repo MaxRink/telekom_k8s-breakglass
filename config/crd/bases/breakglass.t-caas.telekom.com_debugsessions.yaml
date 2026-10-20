@@ -150,13 +150,15 @@ spec:
                   entryMAC:
                     description: |-
                       entryMAC is the canonical lowercase colon-delimited six-byte MAC. It is
-                      required for network repair and forbidden for kexec-recovery.
+                      required for neighbor-replace and bridge-fdb-replace, empty for
+                      link-cycle and restart-autonegotiation, and forbidden for kexec-recovery.
                     pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
                     type: string
                   interface:
                     description: |-
-                      interface is the neighbour interface or bridge FDB port. It is required
-                      for network repair and forbidden for kexec-recovery.
+                      interface is the neighbour interface, the bridge FDB port or the link of
+                      link-cycle and restart-autonegotiation. It is required for network repair
+                      and forbidden for kexec-recovery.
                     maxLength: 15
                     type: string
                   neighborAddress:
@@ -4663,11 +4665,14 @@ spec:
                       instead of a rendered Pod template.
                     properties:
                       action:
-                        description: action is the one executor operation enabled
-                          by this profile.
+                        description: |-
+                          action is the one executor operation enabled by this profile.
+                          link-cycle and restart-autonegotiation act on the exact interface only.
                         enum:
                         - neighbor-replace
                         - bridge-fdb-replace
+                        - link-cycle
+                        - restart-autonegotiation
                         - kexec-recovery
                         type: string
                       allowedTargets:
@@ -4685,13 +4690,15 @@ spec:
                             entryMAC:
                               description: |-
                                 entryMAC is the canonical lowercase colon-delimited six-byte MAC. It is
-                                required for network repair and forbidden for kexec-recovery.
+                                required for neighbor-replace and bridge-fdb-replace, empty for
+                                link-cycle and restart-autonegotiation, and forbidden for kexec-recovery.
                               pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
                               type: string
                             interface:
                               description: |-
-                                interface is the neighbour interface or bridge FDB port. It is required
-                                for network repair and forbidden for kexec-recovery.
+                                interface is the neighbour interface, the bridge FDB port or the link of
+                                link-cycle and restart-autonegotiation. It is required for network repair
+                                and forbidden for kexec-recovery.
                               maxLength: 15
                               type: string
                             neighborAddress:
@@ -4734,6 +4741,7 @@ spec:
                           dryRun makes every session of this profile a preview: the executor runs
                           the same exact tuple preflight and records the entry it would replace,
                           but has no NET_ADMIN capability and never mutates the kernel table.
+                          link-cycle and restart-autonegotiation have no preview and reject it.
                         type: boolean
                       image:
                         description: image must be an immutable node-maintenance helper

@@ -7,9 +7,24 @@ SPDX-License-Identifier: CC-BY-4.0
 
 `DebugSessionTemplate.spec.nodeMaintenance` opts a profile into the controller's
 fixed executor. It is absent by default. Only `neighbor-replace`,
-`bridge-fdb-replace` and `kexec-recovery` are supported, each optionally as a
-preview; this does **not** enable broad flushes, link cycling, a
-caller-selected kernel, arbitrary host commands, traffic mirroring or CRA.
+`bridge-fdb-replace`, `link-cycle`, `restart-autonegotiation` and
+`kexec-recovery` are supported. `neighbor-replace`, `bridge-fdb-replace` and
+`kexec-recovery` can run as a preview; the two link actions cannot (`dryRun`
+is rejected). This does **not** enable broad flushes, a caller-selected kernel,
+arbitrary host commands, traffic mirroring or CRA.
+
+`link-cycle` (down, then up) and `restart-autonegotiation` act on one exact
+Node and interface; `entryMAC`, neighbour, bridge, VLAN and VRF must be empty
+in the request and in every allowlist entry. The helper pins the interface by
+ifindex and refuses it when a default route of any routing table, including a
+multipath nexthop, uses the interface or a device stacked on it (bond, VLAN,
+bridge, VRF), because dropping that carrier cuts the node off. The routes are
+captured in the evidence bundle (`before-default-routes-ipv4.txt`,
+`before-default-routes-ipv6.txt`). Known limit: the default-route check and
+the autonegotiation reset address the interface by name after the ifindex is
+pinned, so a root actor that renames interfaces on the node at the same moment
+can make them see another device; the autonegotiation post-check reports the
+rename.
 
 ## Operator prerequisites
 
