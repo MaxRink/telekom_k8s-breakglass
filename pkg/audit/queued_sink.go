@@ -121,6 +121,9 @@ type QueuedSink struct {
 	droppedEvents   atomic.Int64
 	processedEvents atomic.Int64
 	failedEvents    atomic.Int64
+	// inFlight counts events that workers took from the queue and have not
+	// finished delivering or dropping (see idle).
+	inFlight atomic.Int64
 
 	// Circuit breaker state
 	consecutiveFails atomic.Int32
@@ -367,12 +370,14 @@ func (qs *QueuedSink) processQueue(workerID int) {
 	}()
 
 	for event := range qs.queue {
+		qs.inFlight.Add(1)
 		if qs.dropShutdownBacklog(1) {
 			return
 		}
 		qs.deliver(1, "write", func(ctx context.Context) error {
 			return qs.sink.Write(ctx, event)
 		})
+		qs.inFlight.Add(-1)
 	}
 }
 
@@ -582,6 +587,11 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 	}
 }
 
+// idle reports that the queue is empty and no worker holds an event.
+func (qs *QueuedSink) idle() bool {
+	return len(qs.queue) == 0 && qs.inFlight.Load() == 0
+}
+
 // Close shuts down the queued sink gracefully.
 func (qs *QueuedSink) Close() error {
 	qs.shutdownDeadline.CompareAndSwap(0, time.Now().Add(qs.config.WriteTimeout).UnixNano())
@@ -669,6 +679,38 @@ func (ims *IsolatedMultiSink) Health() []QueuedSinkHealth {
 	return healths
 }
 
+// drain waits until every queued sink is idle, or at most the longest retry
+// window of its sinks, so a replaced pipeline delivers the events it holds.
+// ponytail: polls, and treats two idle polls 200 ms apart as drained, which
+// covers the manager's 100 ms batch timeout; a pending-event handoff to the
+// new pipeline would avoid the wait.
+func (ims *IsolatedMultiSink) drain(manager *Manager) {
+	var window time.Duration
+	for _, qs := range ims.sinks {
+		window = max(window, qs.config.RetryTimeout)
+	}
+	deadline := time.Now().Add(window)
+	idle := func() bool {
+		if manager != nil && len(manager.asyncQueue) > 0 {
+			return false
+		}
+		for _, qs := range ims.sinks {
+			if !qs.idle() {
+				return false
+			}
+		}
+		return true
+	}
+	for quiet := 0; quiet < 2 && time.Now().Before(deadline); {
+		time.Sleep(200 * time.Millisecond)
+		if idle() {
+			quiet++
+		} else {
+			quiet = 0
+		}
+	}
+}
+
 // IsHealthy returns true if all sinks are healthy.
 func (ims *IsolatedMultiSink) IsHealthy() bool {
 	for _, qs := range ims.sinks {
@@ -702,12 +744,14 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 			return
 		}
 		if qs.dropShutdownBacklog(len(batch)) {
+			qs.inFlight.Add(-int64(len(batch)))
 			batch = batch[:0]
 			return
 		}
 		qs.deliver(len(batch), "batch_write", func(ctx context.Context) error {
 			return batchSink.WriteBatch(ctx, batch)
 		})
+		qs.inFlight.Add(-int64(len(batch)))
 		batch = batch[:0]
 	}
 
@@ -718,6 +762,7 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 				flushBatch()
 				return
 			}
+			qs.inFlight.Add(1)
 			batch = append(batch, event)
 			if len(batch) >= qs.config.BatchSize {
 				flushBatch()
