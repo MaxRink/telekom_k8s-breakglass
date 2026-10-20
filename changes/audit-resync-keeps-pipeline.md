@@ -8,8 +8,11 @@ section: Fixed
   was still retrying during a sink outage were dropped with reason
   `shutdown`. A real change still rebuilds the pipeline; the replaced pipeline
   now finishes the events it holds, bounded by its `queue.retryTimeoutSeconds`,
-  before it closes. New value
-  `breakglass_audit_config_reloads_total{status="unchanged"}`.
+  before it closes, so a removed sink can still receive events emitted before
+  the change. A resync no longer resets sink clients, circuit breakers or
+  queues. New value
+  `breakglass_audit_config_reloads_total{status="unchanged"}`; an unchanged
+  resync no longer counts as `success`.
 - `AuditConfig` `status.eventsDropped` now includes drops in the per-sink
   queues (for example `retry_exhausted`), not only in the shared ingress
   queue. The counters describe the current pipeline and restart at zero when

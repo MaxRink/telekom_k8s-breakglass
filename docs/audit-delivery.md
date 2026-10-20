@@ -75,7 +75,9 @@ The worker holds the batch while retrying, bounding memory to the configured
 queue plus worker batches. Network circuit-open errors are retried within the
 same bound. Per-sink and per-config filters run before enqueueing, so excluded
 events neither consume queue capacity nor count as failed or dropped delivery.
-Shutdown interrupts backoff and shares a five-second queue-drain
+A pipeline replaced by an AuditConfig change first finishes the events it
+holds, bounded by its retry window (see `docs/audit-config.md`, "Reload
+failures"). Shutdown interrupts backoff and shares a five-second queue-drain
 budget; failed shutdown writes are counted. The manager ingress drain has its
 own five-second budget; unprocessed ingress events are counted with reason
 `shutdown`. Sink queues then drain concurrently with a five-second budget each.

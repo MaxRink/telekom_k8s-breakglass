@@ -370,10 +370,10 @@ func (qs *QueuedSink) processQueue(workerID int) {
 	}()
 
 	for event := range qs.queue {
-		qs.inFlight.Add(1)
 		if qs.dropShutdownBacklog(1) {
 			return
 		}
+		qs.inFlight.Add(1)
 		qs.deliver(1, "write", func(ctx context.Context) error {
 			return qs.sink.Write(ctx, event)
 		})
@@ -681,10 +681,11 @@ func (ims *IsolatedMultiSink) Health() []QueuedSinkHealth {
 
 // drain waits until every queued sink is idle, or at most the longest retry
 // window of its sinks, so a replaced pipeline delivers the events it holds.
+// It returns early when stop is closed (the service is shutting down).
 // ponytail: polls, and treats two idle polls 200 ms apart as drained, which
 // covers the manager's 100 ms batch timeout; a pending-event handoff to the
 // new pipeline would avoid the wait.
-func (ims *IsolatedMultiSink) drain(manager *Manager) {
+func (ims *IsolatedMultiSink) drain(manager *Manager, stop <-chan struct{}) {
 	var window time.Duration
 	for _, qs := range ims.sinks {
 		window = max(window, qs.config.RetryTimeout)
@@ -702,7 +703,11 @@ func (ims *IsolatedMultiSink) drain(manager *Manager) {
 		return true
 	}
 	for quiet := 0; quiet < 2 && time.Now().Before(deadline); {
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-stop:
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
 		if idle() {
 			quiet++
 		} else {

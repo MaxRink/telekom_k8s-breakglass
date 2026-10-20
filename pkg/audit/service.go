@@ -79,6 +79,10 @@ type Service struct {
 	reloadMu sync.Mutex
 	// closing tracks previous pipelines that are still closing in the background.
 	closing sync.WaitGroup
+	// stopDrains ends the drains of replaced pipelines when the service closes,
+	// so their regular five-second shutdown drain fits Close's wait.
+	stopDrains chan struct{}
+	stopOnce   sync.Once
 	// running holds copies of the AuditConfigs the current pipeline was
 	// built from; a failed reload keeps the pipeline only while all of them
 	// are still enabled with the same spec.
@@ -115,6 +119,7 @@ const (
 // NewService creates a new audit Service.
 func NewService(kubeClient client.Client, recorder events.EventRecorder, logger *zap.Logger, controllerNamespace string) *Service {
 	return &Service{
+		stopDrains:         make(chan struct{}),
 		client:             kubeClient,
 		recorder:           recorder,
 		logger:             logger.Named("audit-service"),
@@ -541,6 +546,11 @@ func (s *Service) GetQueuedSinkHealth() []QueuedSinkHealth {
 func (s *Service) Close() error {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
+	s.stopOnce.Do(func() {
+		if s.stopDrains != nil {
+			close(s.stopDrains)
+		}
+	})
 	s.mu.Lock()
 	oldManager, oldSinks := s.manager, s.sinks
 	s.manager, s.sinks, s.isolatedMultiSink = nil, nil, nil
@@ -586,7 +596,7 @@ func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink,
 		// the events it still holds (bounded by its retry window) instead of
 		// dropping them with reason "shutdown".
 		if oldMulti != nil {
-			oldMulti.drain(oldManager)
+			oldMulti.drain(oldManager, s.stopDrains)
 		}
 		_ = s.closePipeline(oldManager, oldSinks)
 	}()
@@ -618,7 +628,10 @@ func (s *Service) readSecret(ctx context.Context, key types.NamespacedName, secr
 	if err := s.client.Get(ctx, key, secret); err != nil {
 		return err
 	}
-	s.buildSecrets = append(s.buildSecrets, secretVersion{key: key, resourceVersion: secret.ResourceVersion})
+	version := secretVersion{key: key, resourceVersion: secret.ResourceVersion}
+	if !slices.Contains(s.buildSecrets, version) {
+		s.buildSecrets = append(s.buildSecrets, version)
+	}
 	return nil
 }
 

@@ -440,8 +440,8 @@ Secret, a TLS setup error), the last working audit pipeline stays active only
 while every AuditConfig it was built from is still enabled with an unchanged
 spec: for example a new AuditConfig whose Secret cannot be read, or a resync
 while a broker is down. A removed, disabled or changed AuditConfig (for
-example a removed or changed sink) is never kept: the pipeline is closed, and
-auditing is configured but unavailable, so operations that require a durable
+example a removed or changed sink) is never kept: the pipeline stops taking
+new events, and auditing is configured but unavailable, so operations that require a durable
 audit event fail closed until a reload succeeds. Each AuditConfig of the
 failed reload reports `Ready=False` / `ReloadFailed` with a Warning event, the
 reconciler retries, and
@@ -450,11 +450,23 @@ kept pipeline. Without a previous pipeline (for example on startup), auditing
 is also configured but unavailable. Disabling or deleting all AuditConfigs
 stops auditing.
 
+The reconciler also reloads every 10 minutes. A reload whose enabled
+AuditConfigs (names, order and specs) and sink Secrets (resource versions)
+are unchanged does nothing and counts as
+`breakglass_audit_config_reloads_total{status="unchanged"}`, so it no longer
+resets sink clients, circuit breakers or queues. A rotated Secret is picked
+up by the next resync. When a reload replaces the pipeline (also when it is
+stopped), new events go to the new pipeline at once, and the old pipeline
+first finishes the events it still holds, including events in retry, for up
+to its longest `queue.retryTimeoutSeconds`, and then closes. A sink that was
+removed can therefore still receive events that were emitted before the
+change. Controller shutdown ends this wait.
+
 ## Metrics
 
 The audit system exposes Prometheus metrics:
 
-- `breakglass_audit_config_reloads_total{status="..."}` - Reloads by result (`success`, `disabled`, `error`, `kept_previous`, `reconciler_error`)
+- `breakglass_audit_config_reloads_total{status="..."}` - Reloads by result (`success`, `unchanged`, `disabled`, `error`, `kept_previous`, `reconciler_error`); an unchanged resync counts as `unchanged`, not `success`
 - `breakglass_audit_events_processed_total` - Events successfully written
 - `breakglass_audit_events_dropped_total{sink="...",reason="..."}` - Events lost to overflow, enqueue timeout, circuit rejection or retry exhaustion
 - `breakglass_audit_sink_errors_total{sink="..."}` - Errors by sink
