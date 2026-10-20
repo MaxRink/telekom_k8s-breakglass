@@ -1,5 +1,5 @@
 ---
-section: Fixed
+section: Fixes
 ---
 
 - A session request for a cluster pattern (for example `*`) or for a cluster
@@ -9,4 +9,4 @@ section: Fixed
   `clusterOptions` with the registered clusters that a pattern matches, and
   the UI shows a cluster picker for such escalations.
   Escalations scoped only by `spec.clusterConfigRefs` now also get one UI card
-  per referenced cluster instead of a card without a cluster.
+  per referenced cluster instead of a card without a cluster (#1539).
