@@ -1082,7 +1082,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			if errors.Is(err, errNodeMaintenanceBusy) || errors.Is(err, errNodeMaintenanceDraining) {
 				ds.Status.Message = "Waiting for exclusive node-maintenance Lease"
 				if errors.Is(err, errNodeMaintenanceDraining) {
-					ds.Status.Message = "Draining Node before kexec-recovery"
+					ds.Status.Message = "Draining Node before " + ds.Status.ResolvedTemplate.NodeMaintenance.Action
 				}
 				if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 					return ctrl.Result{}, err
