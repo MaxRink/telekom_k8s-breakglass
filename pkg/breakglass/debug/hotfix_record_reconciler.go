@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -131,10 +132,14 @@ func (r *HotfixRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	changed := !apiequality.Semantic.DeepEqual(base.Status.Conditions, record.Status.Conditions) ||
 		!apiequality.Semantic.DeepEqual(base.Status.Nodes, record.Status.Nodes)
-	stale := base.Status.ObservedAt == nil || now.Sub(base.Status.ObservedAt.Time) >= hotfixRecordResync
+	// observedAt is the last drift check: it moves only when the nodes were
+	// scanned, so a failing scan shows as an ageing observedAt.
+	stale := scanned && (base.Status.ObservedAt == nil || now.Sub(base.Status.ObservedAt.Time) >= hotfixRecordResync)
 	if changed || stale {
-		observed := metav1.NewTime(now)
-		record.Status.ObservedAt = &observed
+		if scanned {
+			observed := metav1.NewTime(now)
+			record.Status.ObservedAt = &observed
+		}
 		if err := r.client.Status().Patch(ctx, record, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
 			if apierrors.IsConflict(err) {
 				return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -265,6 +270,17 @@ func (r *HotfixRecordReconciler) observeNodes(ctx context.Context, record *break
 	marked := func(node *corev1.Node) bool {
 		return node.Annotations[key] == value
 	}
+	// A later apply of the same payload (a new plan for new nodes) writes
+	// its own record's mark; it covers the node for this record too.
+	payloadSuffix := "@" + hotfixPayloadSHA256(&record.Spec.Payload)
+	covered := func(node *corev1.Node) bool {
+		for k, v := range node.Annotations {
+			if strings.HasPrefix(k, hotfixNodeAnnotation) && strings.HasPrefix(v, record.Namespace+"/") && strings.HasSuffix(v, payloadSuffix) {
+				return true
+			}
+		}
+		return false
+	}
 	byName := map[string]*corev1.Node{}
 	for i := range selected {
 		byName[selected[i].Name] = &selected[i]
@@ -298,7 +314,7 @@ func (r *HotfixRecordReconciler) observeNodes(ctx context.Context, record *break
 				entry.State, entry.At, entry.Message = breakglassv1alpha1.HotfixNodeReverted, now, "the hotfix annotation is gone"
 			}
 		case breakglassv1alpha1.HotfixNodeUncovered:
-			if node == nil || marked(node) {
+			if node == nil || covered(node) {
 				continue // resolved: no longer selected, or it carries the hotfix now
 			}
 			known[entry.Name] = true
@@ -313,7 +329,7 @@ func (r *HotfixRecordReconciler) observeNodes(ctx context.Context, record *break
 	}
 	for i := range selected {
 		node := &selected[i]
-		if known[node.Name] || marked(node) {
+		if known[node.Name] || covered(node) {
 			continue
 		}
 		kept = append(kept, breakglassv1alpha1.HotfixRecordNode{Name: node.Name, UID: string(node.UID),

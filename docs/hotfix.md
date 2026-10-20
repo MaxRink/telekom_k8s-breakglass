@@ -233,12 +233,15 @@ node and the conditions below.
 | `skipped` | The node already had the result at plan or apply time. |
 | `failed` | The executor failed; the node may be partly changed. Roll back or replace it; a replaced node shows as `uncovered`. |
 | `rolledBack` | A rollback session reverted the node. |
-| `reverted` | The node (same UID) lost the hotfix annotation without a rollback session. |
-| `uncovered` | A node matches the selection but does not carry the hotfix, for example a node created or replaced (same name, new UID) after the apply. |
+| `reverted` | The node (same UID) lost the hotfix annotation without a rollback session, also after a close that did not finish (run the close again). |
+| `uncovered` | A node matches the selection but does not carry the hotfix, for example a node created or replaced (same name, new UID) after the apply. A later apply of the same payload (a new plan for these nodes) covers it; both records stay open and each tracks its own nodes. |
 
-A node removed from the cluster leaves the record. While an apply or rollback
-session of the record runs, its own results are authoritative and the drift
-check pauses. A closed record keeps its node states; only the annotations go.
+A node removed from the cluster leaves the record. While an apply, rollback or
+close session of the record runs, its own results are authoritative and the
+drift check pauses. `status.observedAt` is the last successful drift check; it
+does not move while the target cluster cannot be read. Reconfirm and close
+need the target cluster; for a decommissioned cluster, delete the HotfixRecord
+to stop its alerts. A closed record keeps its node states; only the annotations go.
 
 | Condition | True when |
 |---|---|

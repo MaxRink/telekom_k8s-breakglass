@@ -4,6 +4,8 @@
 package debug
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -285,4 +287,48 @@ func TestHotfixRecordActiveFollowsTheNodes(t *testing.T) {
 	require.NoError(t, f.hub.Get(t.Context(), client.ObjectKeyFromObject(record), record))
 	require.False(t, meta.IsStatusConditionTrue(record.Status.Conditions, string(breakglassv1alpha1.HotfixRecordConditionActive)),
 		"no node carries the hotfix any more")
+}
+
+func TestHotfixRecordFailedScanKeepsObservedAt(t *testing.T) {
+	f := newHotfixFixture(t, 2, 0)
+	record := appliedHotfix(t, f)
+	r := NewHotfixRecordReconciler(zap.NewNop().Sugar(), f.hub, f.c.ccProvider)
+	r.targetClientFactory = func(*rest.Config) (client.Client, error) { return f.spoke, nil }
+	t.Cleanup(func() { deleteHotfixRecordSeries(record.Namespace + "/" + record.Name) })
+	start := time.Now()
+	r.now = func() time.Time { return start }
+	_, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(record)})
+	require.NoError(t, err)
+	require.NoError(t, f.hub.Get(t.Context(), client.ObjectKeyFromObject(record), record))
+	require.NotNil(t, record.Status.ObservedAt)
+	observed := record.Status.ObservedAt.Time
+
+	// The target cluster becomes unreadable past the resync period.
+	r.targetClientFactory = func(*rest.Config) (client.Client, error) { return nil, errors.New("target unreachable") }
+	r.now = func() time.Time { return start.Add(hotfixRecordResync + time.Minute) }
+	_, err = r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(record)})
+	require.NoError(t, err)
+	require.NoError(t, f.hub.Get(t.Context(), client.ObjectKeyFromObject(record), record))
+	require.True(t, record.Status.ObservedAt.Time.Equal(observed), "a failed scan does not move observedAt")
+	require.True(t, meta.IsStatusConditionTrue(record.Status.Conditions, string(breakglassv1alpha1.HotfixRecordConditionActive)), "the last observation stays")
+}
+
+func TestHotfixRecordSamePayloadCoversNewNodes(t *testing.T) {
+	f := newHotfixFixture(t, 2, 0)
+	record := appliedHotfix(t, f)
+	r := NewHotfixRecordReconciler(zap.NewNop().Sugar(), f.hub, f.c.ccProvider)
+	r.targetClientFactory = func(*rest.Config) (client.Client, error) { return f.spoke, nil }
+	t.Cleanup(func() { deleteHotfixRecordSeries(record.Namespace + "/" + record.Name) })
+	hash := hotfixPayloadSHA256(&record.Spec.Payload)
+	// A later apply of the same payload marked the new node for its record;
+	// another node carries a different hotfix.
+	require.NoError(t, f.spoke.Create(t.Context(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-new", Labels: map[string]string{"pool": "w"},
+		Annotations: map[string]string{hotfixAnnotationKey("later"): record.Namespace + "/later@" + hash}}}))
+	require.NoError(t, f.spoke.Create(t.Context(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-other", Labels: map[string]string{"pool": "w"},
+		Annotations: map[string]string{hotfixAnnotationKey("other"): record.Namespace + "/other@" + strings.Repeat("0", 64)}}}))
+	_, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(record)})
+	require.NoError(t, err)
+	require.NoError(t, f.hub.Get(t.Context(), client.ObjectKeyFromObject(record), record))
+	require.Empty(t, recordNodeState(record, "worker-new"), "the same hotfix covers the node")
+	require.Equal(t, breakglassv1alpha1.HotfixNodeUncovered, recordNodeState(record, "worker-other"))
 }
