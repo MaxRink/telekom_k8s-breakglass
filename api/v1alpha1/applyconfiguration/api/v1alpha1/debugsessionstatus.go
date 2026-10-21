@@ -24,6 +24,8 @@ type DebugSessionStatusApplyConfiguration struct {
 	NodeMaintenance *NodeMaintenanceStatusApplyConfiguration `json:"nodeMaintenance,omitempty"`
 	// admissionRecipe tracks the applied admission changes until they are reverted.
 	AdmissionRecipe *AdmissionRecipeStatusApplyConfiguration `json:"admissionRecipe,omitempty"`
+	// hotfix records the plan and rollout of a hotfix session.
+	Hotfix *HotfixStatusApplyConfiguration `json:"hotfix,omitempty"`
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	ConnectionLease *DebugSessionConnectionLeaseApplyConfiguration `json:"connectionLease,omitempty"`
@@ -123,6 +125,14 @@ func (b *DebugSessionStatusApplyConfiguration) WithNodeMaintenance(value *NodeMa
 // If called multiple times, the AdmissionRecipe field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithAdmissionRecipe(value *AdmissionRecipeStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.AdmissionRecipe = value
+	return b
+}
+
+// WithHotfix sets the Hotfix field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Hotfix field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithHotfix(value *HotfixStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.Hotfix = value
 	return b
 }
 

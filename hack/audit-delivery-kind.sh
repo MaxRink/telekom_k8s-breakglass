@@ -31,7 +31,7 @@ created=true
 kind create cluster --name "$name" --image \
   kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5 \
   --kubeconfig "$KUBECONFIG" --wait 120s
-kubectl apply -f config/crd/bases/
+kubectl apply --server-side -f config/crd/bases/
 kubectl apply -f e2e/fixtures/audit-delivery-broker.yaml
 kubectl -n audit-delivery rollout status deployment/broker --timeout=180s
 AUDIT_DELIVERY_E2E=true go test -race -v ./e2e/auditdelivery -count=1 -timeout=8m

@@ -301,7 +301,7 @@ endif
 
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply --server-side --force-conflicts -f -
 
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
@@ -310,7 +310,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy # manifests
 deploy: kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/deployment && $(KUSTOMIZE) edit set image breakglass=${IMG}
-	$(KUSTOMIZE) build config/base | $(KUBECTL) apply -f -
+	$(KUSTOMIZE) build config/base | $(KUBECTL) apply --server-side --force-conflicts -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
@@ -319,7 +319,7 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 .PHONY: deploy_debug # deploy with debug logging enabled
 deploy_debug: kustomize ## Deploy controller with debug logging to the K8s cluster specified in ~/.kube/config.
 	cd config/deployment && $(KUSTOMIZE) edit set image breakglass=${IMG}
-	$(KUSTOMIZE) build config/debug | $(KUBECTL) apply -f -
+	$(KUSTOMIZE) build config/debug | $(KUBECTL) apply --server-side --force-conflicts -f -
 
 .PHONY: undeploy_debug
 undeploy_debug: kustomize ## Undeploy debug controller from the K8s cluster.
@@ -329,7 +329,7 @@ undeploy_debug: kustomize ## Undeploy debug controller from the K8s cluster.
 deploy_dev: kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/dev && ./generate-certs.sh && cd ../..
 	cd config/deployment && $(KUSTOMIZE) edit set image breakglass=${IMG}
-	$(KUSTOMIZE) build config/dev | $(KUBECTL) apply -f -
+	$(KUSTOMIZE) build config/dev | $(KUBECTL) apply --server-side --force-conflicts -f -
 
 .PHONY: undeploy_dev
 undeploy_dev: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.

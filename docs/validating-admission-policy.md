@@ -117,7 +117,7 @@ components:
 Build and apply:
 
 ```bash
-kustomize build config/test-overlays/vap/ | kubectl apply -f -
+kustomize build config/test-overlays/vap/ | kubectl apply --server-side --force-conflicts -f -
 ```
 
 ### Helm deployments

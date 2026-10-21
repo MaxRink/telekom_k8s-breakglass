@@ -115,7 +115,7 @@ docker network connect kind "$registry_id"
 docker exec "$node_id" mkdir -p "/etc/containerd/certs.d/$registry:5000"
 printf 'server = "http://%s:5000"\n[host."http://%s:5000"]\n  capabilities = ["pull", "resolve"]\n' "$registry" "$registry" \
 	| docker exec --interactive "$node_id" sh -c "cat > '/etc/containerd/certs.d/$registry:5000/hosts.toml'"
-kubectl --kubeconfig "$proof_dir/kubeconfig" apply \
+kubectl --kubeconfig "$proof_dir/kubeconfig" apply --server-side \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_clusterconfigs.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessions.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessiontemplates.yaml \

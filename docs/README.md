@@ -87,6 +87,7 @@ Every utility is published as an immutable,
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
 - **[Typed node maintenance](./node-maintenance-controller.md)** - Default-off exact repair, independent approval, per-node Lease and cleanup contract
 - **[Typed admission recipes](./admission-recipes.md)** - Allowlisted policy audit switch or webhook fail-open for one approved session, reverted automatically
+- **[Platform hotfix sessions](./hotfix.md)** - Default-off typed node hotfixes (files, debs, control-plane and host container images) with plan binding, four-eyes stages and drift records
 - **[Terminal recording](./terminal-recording.md)** - Controller-owned terminal-byte transport, durable retention, and replay validation
 - **[DebugSession cleanup recovery](./debug-session-cleanup.md)** - UID-fenced cleanup and legacy recovery behavior
 - **[OCI runbook bundles](./runbook-bundle-contract.md)** - Additive, digest-pinned documentation image volumes for debug templates

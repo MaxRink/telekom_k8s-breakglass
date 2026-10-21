@@ -90,6 +90,9 @@ type DebugSessionSpec struct {
 	// admissionRecipe is a typed target selection matched against the template allowlist.
 	// +optional
 	AdmissionRecipe *AdmissionRecipeRequest `json:"admissionRecipe,omitempty"`
+	// hotfix is a typed platform hotfix stage request matched against the template profile.
+	// +optional
+	Hotfix *DebugSessionHotfixRequest `json:"hotfix,omitempty"`
 	// cluster is the name of the target cluster.
 	// +required
 	Cluster string `json:"cluster"`
@@ -219,6 +222,9 @@ type DebugSessionStatus struct {
 	// admissionRecipe tracks the applied admission changes until they are reverted.
 	// +optional
 	AdmissionRecipe *AdmissionRecipeStatus `json:"admissionRecipe,omitempty"`
+	// hotfix records the plan and rollout of a hotfix session.
+	// +optional
+	Hotfix *HotfixStatus `json:"hotfix,omitempty"`
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	// +optional

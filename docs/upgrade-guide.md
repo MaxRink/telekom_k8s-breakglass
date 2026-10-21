@@ -58,16 +58,18 @@ kubectl get secrets -l app=breakglass -A -o yaml > breakglass-secrets-backup.yam
 ```bash
 TARGET_VERSION=v1.0.0
 
-# 1. Update CRDs first (always safe to apply newer CRDs)
+# 1. Update CRDs first (always safe to apply newer CRDs). Apply them
+#    server-side: the DebugSession CRD is larger than the 256 KiB annotation
+#    that a client-side `kubectl apply` stores.
 # Using the release manifest:
-kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-crds.yaml"
+kubectl apply --server-side --force-conflicts -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-crds.yaml"
 
 # Or from a checked-out source tree:
-kubectl apply -f config/crd/bases/
+kubectl apply --server-side --force-conflicts -f config/crd/bases/
 
 # 2. Update the controller deployment
 # Using the release manifest:
-kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
+kubectl apply --server-side --force-conflicts -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 
 # Or from a checked-out source tree:
 IMG="ghcr.io/telekom/k8s-breakglass:${TARGET_VERSION}" make deploy
@@ -240,7 +242,7 @@ spec:
 **Step 2: Apply CRDs**
 
 ```bash
-kubectl apply -f config/crd/bases/
+kubectl apply --server-side --force-conflicts -f config/crd/bases/
 ```
 
 **Step 3: Create IdentityProvider**
@@ -253,7 +255,7 @@ kubectl apply -f identityprovider.yaml
 
 ```bash
 TARGET_VERSION=v1.0.0
-kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
+kubectl apply --server-side --force-conflicts -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 ```
 
 **Step 5: Verify IdentityProvider Status**
@@ -286,16 +288,16 @@ After verifying everything works, remove the legacy `authorizationserver` fields
 **Step 1: Apply New CRDs**
 
 ```bash
-kubectl apply -f config/crd/bases/breakglass.t-caas.telekom.com_debugsessions.yaml
-kubectl apply -f config/crd/bases/breakglass.t-caas.telekom.com_debugsessiontemplates.yaml
-kubectl apply -f config/crd/bases/breakglass.t-caas.telekom.com_debugpodtemplates.yaml
+kubectl apply --server-side --force-conflicts -f config/crd/bases/breakglass.t-caas.telekom.com_debugsessions.yaml
+kubectl apply --server-side --force-conflicts -f config/crd/bases/breakglass.t-caas.telekom.com_debugsessiontemplates.yaml
+kubectl apply --server-side --force-conflicts -f config/crd/bases/breakglass.t-caas.telekom.com_debugpodtemplates.yaml
 ```
 
 **Step 2: Upgrade Controller**
 
 ```bash
 TARGET_VERSION=v0.9.0
-kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
+kubectl apply --server-side --force-conflicts -f "https://github.com/telekom/k8s-breakglass/releases/download/${TARGET_VERSION}/manifests-base.yaml"
 ```
 
 ---
@@ -329,7 +331,7 @@ If the upgrade fails, rollback to the previous version:
 helm rollback breakglass -n breakglass-system
 
 # Using kubectl (if you have the previous manifests)
-kubectl apply -k config/default-previous/
+kubectl apply --server-side --force-conflicts -k config/default-previous/
 ```
 
 ### Full Rollback with CRD Reversion
@@ -357,10 +359,10 @@ kubectl apply -f debugpodtemplates-backup.yaml
 kubectl apply -f breakglass-secrets-backup.yaml
 
 # 3. Apply previous CRD versions
-kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-crds.yaml"
+kubectl apply --server-side --force-conflicts -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-crds.yaml"
 
 # 4. Deploy previous controller version
-kubectl apply -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-base.yaml"
+kubectl apply --server-side --force-conflicts -f "https://github.com/telekom/k8s-breakglass/releases/download/${PREVIOUS_VERSION}/manifests-base.yaml"
 
 # 5. Scale up
 kubectl scale deployment/breakglass-manager -n breakglass-system --replicas=2
@@ -471,7 +473,7 @@ For production environments requiring zero-downtime upgrades:
 
 ```bash
 # 1. Apply CRD updates (non-disruptive)
-kubectl apply -f config/crd/bases/
+kubectl apply --server-side --force-conflicts -f config/crd/bases/
 
 # 2. Perform rolling update
 kubectl set image deployment/breakglass-manager \
