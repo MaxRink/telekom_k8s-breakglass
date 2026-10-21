@@ -21,9 +21,12 @@ image:
     service-restart: []
     module-load: [SYS_MODULE]
     sriov-reprovision: []
+    hotfix-action-file: [CHOWN, FOWNER, DAC_OVERRIDE]
+    # The host-namespace shape is privileged with host PID instead of capabilities.
+    hotfix-action-host: []
   controllerDeadline:
     environment: BREAKGLASS_ACTION_DEADLINE_UNIX
-    operation: [network-repair, kexec-recovery, service-restart, module-load, sriov-reprovision]
+    operation: [network-repair, kexec-recovery, service-restart, module-load, sriov-reprovision, hotfix-action-file, hotfix-action-host]
     checks: [before-preflight, before-mutation]
   runbooks: /usr/share/breakglass/runbooks/upstream/node-maintenance
   internalRunbookMount: /usr/share/breakglass/runbooks/internal
