@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -181,7 +182,8 @@ func (c *DebugSessionController) markHotfixNode(ctx context.Context, ds *breakgl
 	}
 	current := &corev1.Node{}
 	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: node.Name}, current); err != nil {
-		return err
+		// A removed node carries no annotation any more.
+		return ctrlclient.IgnoreNotFound(err)
 	}
 	if string(current.UID) != node.UID {
 		return nil // a replaced node never carries the hotfix
@@ -235,4 +237,62 @@ func (c *DebugSessionController) closeHotfixRecordAfterRollback(ctx context.Cont
 	meta.SetStatusCondition(&record.Status.Conditions, metav1.Condition{Type: string(breakglassv1alpha1.HotfixRecordConditionClosed),
 		Status: metav1.ConditionTrue, Reason: "RolledBack", Message: "rolled back by " + ds.Name, ObservedGeneration: record.Generation})
 	return c.client.Status().Patch(ctx, record, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{}))
+}
+
+// updateHotfixRecordLifecycle applies a reconfirm or close session to its
+// record. The session UID in the record is the idempotency key, so a retry
+// after a partial write completes the stage instead of failing on a closed
+// record. Close order: session entry, node annotations, then Closed.
+func (c *DebugSessionController) updateHotfixRecordLifecycle(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	record := &breakglassv1alpha1.HotfixRecord{}
+	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Namespace: ds.Namespace, Name: ds.Spec.Hotfix.RecordName}, record); err != nil {
+		return err
+	}
+	if record.Spec.Cluster != ds.Spec.Cluster || record.Spec.TemplateRef != ds.Spec.TemplateRef {
+		return errHotfixStop{fmt.Sprintf("HotfixRecord %s belongs to another cluster or template", record.Name)}
+	}
+	listed := slices.ContainsFunc(record.Spec.Sessions, func(s breakglassv1alpha1.HotfixRecordSession) bool { return s.UID == string(ds.UID) })
+	closed := meta.IsStatusConditionTrue(record.Status.Conditions, string(breakglassv1alpha1.HotfixRecordConditionClosed))
+	stage := ds.Spec.Hotfix.Stage
+	if !listed && closed {
+		return errHotfixStop{fmt.Sprintf("HotfixRecord %s is closed", record.Name)}
+	}
+	now := metav1.Now()
+	if !listed {
+		specBase := record.DeepCopy()
+		if stage == breakglassv1alpha1.HotfixStageReconfirm {
+			lifetime, err := breakglassv1alpha1.HotfixLifetime(ds.Status.ResolvedTemplate.Hotfix, ds.Spec.Hotfix.Lifetime)
+			if err != nil {
+				return errHotfixStop{err.Error()}
+			}
+			record.Spec.ExpiresAt = metav1.NewTime(now.Add(lifetime))
+		}
+		record.Spec.Sessions = append(record.Spec.Sessions, breakglassv1alpha1.HotfixRecordSession{Stage: stage,
+			Name: ds.Name, UID: string(ds.UID), RequestedBy: ds.Spec.RequestedBy, ApprovedBy: c.sessionApprover(ds), At: now})
+		if err := c.client.Patch(ctx, record, ctrlclient.MergeFromWithOptions(specBase, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+	}
+	if stage != breakglassv1alpha1.HotfixStageClose || closed {
+		return nil
+	}
+	// The close is listed before the annotations go, so the record
+	// reconciler pauses its drift scan for the whole close. Removing an
+	// annotation is idempotent, so a retry repeats it until Closed is set.
+	for i := range record.Status.Nodes {
+		node := record.Status.Nodes[i]
+		if node.State != breakglassv1alpha1.HotfixNodeApplied {
+			continue // reverted nodes carry no annotation any more
+		}
+		status := &breakglassv1alpha1.HotfixNodeStatus{Name: node.Name, UID: node.UID}
+		if err := c.markHotfixNode(ctx, ds, status, breakglassv1alpha1.HotfixNodeRolledBack); err != nil {
+			return err
+		}
+	}
+	statusBase := record.DeepCopy()
+	meta.SetStatusCondition(&record.Status.Conditions, metav1.Condition{Type: string(breakglassv1alpha1.HotfixRecordConditionClosed),
+		Status: metav1.ConditionTrue, Reason: "Closed", Message: "closed by " + ds.Name + "; the regular release carries the fix", ObservedGeneration: record.Generation})
+	meta.SetStatusCondition(&record.Status.Conditions, metav1.Condition{Type: string(breakglassv1alpha1.HotfixRecordConditionActive),
+		Status: metav1.ConditionFalse, Reason: "Closed", Message: "closed by " + ds.Name, ObservedGeneration: record.Generation})
+	return c.client.Status().Patch(ctx, record, ctrlclient.MergeFromWithOptions(statusBase, ctrlclient.MergeFromWithOptimisticLock{}))
 }

@@ -11,9 +11,7 @@ regular release or a node image rebuild is too slow. A hotfix is a bridge: the
 regular release must still ship the fix, and the hotfix is tracked as drift
 until it is closed.
 
-The field is absent by default. This controller version serves the `plan`,
-`apply` and `rollback` stages; `reconfirm` and `close` are refused at request
-time until the record lifecycle is served.
+The field is absent by default.
 
 ## Scope
 
@@ -225,13 +223,76 @@ Everything a hotfix does can be revoked at any time:
 
 `HotfixRecord` (short name `hfr`) is the durable drift record on the hub,
 written only by the controller. Its spec holds the payload with sources and
-digests, the plan hash, the node selection, `fixedIn`, `expiresAt` and the
-four-eyes sessions. Its status holds the state of each node (`applied`,
-`skipped`, `failed`, `rolledBack`, `uncovered`, `reverted`) and the conditions
-`Active`, `Reverted`, `Uncovered`, `Expiring`, `Expired` and `Closed`.
+digests, the plan hash, the rollout, the node selection, `fixedIn`,
+`expiresAt` and the four-eyes sessions. Its status holds the state of each
+node and the conditions below.
 
-Expiry raises a critical alert only; it never rolls back on its own. It ends
-with a four-eyes `reconfirm`, `rollback` or `close`.
+| Node state | Meaning |
+|---|---|
+| `applied` | The node carries the hotfix (annotation present, same Node UID). |
+| `skipped` | The node already had the result at plan or apply time. |
+| `failed` | The executor failed; the node may be partly changed. Roll back or replace it; a replaced node shows as `uncovered`. |
+| `rolledBack` | A rollback session reverted the node. |
+| `reverted` | The node (same UID) lost the hotfix annotation without a rollback session, also after a close that did not finish (run the close again). |
+| `uncovered` | A node matches the selection but does not carry the hotfix, for example a node created or replaced (same name, new UID) after the apply. A later apply of the same payload (a new plan for these nodes) covers it; both records stay open and each tracks its own nodes. |
+
+A node removed from the cluster leaves the record. While an apply, rollback or
+close session of the record runs, its own results are authoritative and the
+drift check pauses. `status.observedAt` is the last successful drift check; it
+does not move while the target cluster cannot be read. Reconfirm and close
+need the target cluster; for a decommissioned cluster, delete the HotfixRecord
+to stop its alerts. A closed record keeps its node states; only the annotations go.
+
+| Condition | True when |
+|---|---|
+| `Active` | At least one node is `applied`. |
+| `Expiring` | Less than 3 days remain until `expiresAt`. |
+| `Expired` | `expiresAt` has passed. It stays until a `reconfirm`, a complete `rollback` or a `close`. |
+| `Reverted` | At least one node is `reverted`. |
+| `Uncovered` | At least one node is `uncovered`. |
+| `Closed` | A `close` session ended tracking, or a rollback reverted every node. |
+
+The HotfixRecord reconciler re-checks open records every 5 minutes and at the
+expiry boundaries. It only reports: expiry raises an alert and never rolls
+back, and it never changes a node.
+
+- **reconfirm** sets `expiresAt` to now plus the requested lifetime (at most
+  the template `maxLifetime`).
+- **close** removes the node annotations and sets `Closed`; use it after the
+  regular release that carries the fix is rolled out. Closed records refuse
+  further stages.
+
+### Metrics and alerts
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `breakglass_hotfix_active` | `cluster`, `type`, `record` | 1 while an open record is applied on a node |
+| `breakglass_hotfix_expires_timestamp_seconds` | `cluster`, `type`, `record` | `expiresAt` of an open record |
+| `breakglass_hotfix_uncovered_nodes` | `cluster`, `type`, `record` | Uncovered nodes |
+| `breakglass_hotfix_reverted_nodes` | `cluster`, `type`, `record` | Reverted nodes |
+
+Series of closed and deleted records are removed within the resync period. Example rules
+(`config/samples/prometheusrule-hotfix.yaml`):
+
+```yaml
+- alert: BreakglassHotfixActive
+  expr: breakglass_hotfix_active == 1
+  labels: {severity: warning}
+- alert: BreakglassHotfixExpiring
+  expr: breakglass_hotfix_expires_timestamp_seconds - time() < 3 * 86400 and breakglass_hotfix_expires_timestamp_seconds - time() > 0
+  labels: {severity: warning}
+- alert: BreakglassHotfixExpired
+  expr: breakglass_hotfix_expires_timestamp_seconds - time() <= 0
+  labels: {severity: critical}
+- alert: BreakglassHotfixReverted
+  expr: breakglass_hotfix_reverted_nodes > 0
+  for: 10m
+  labels: {severity: critical}
+- alert: BreakglassHotfixUncovered
+  expr: breakglass_hotfix_uncovered_nodes > 0
+  for: 10m
+  labels: {severity: critical}
+```
 
 ## Safety notes
 
@@ -256,3 +317,13 @@ with a four-eyes `reconfirm`, `rollback` or `close`.
   `payload`, `planHash`, `rollout`, `nodeSelection` are immutable), and a
   rollback checks the recorded payload against the approved template again
   before any executor starts.
+
+## Kind proof
+
+`bash hack/hotfix-controller-kind.sh` creates an owned disposable Kind cluster,
+builds the node-maintenance image, serves it from a local registry by digest
+and runs `TestHotfixKind`: plan, apply and rollback of a `node-file` sed patch
+and of a `static-pod-image` swap of kube-scheduler, through the HTTP request
+and approval handlers and the controller, on the real node. The workflow
+`.github/workflows/hotfix-controller.yml` runs it for changes to the hotfix
+code.

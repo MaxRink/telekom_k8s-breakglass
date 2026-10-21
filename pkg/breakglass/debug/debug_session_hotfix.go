@@ -222,16 +222,15 @@ func validateHotfixReferences(ctx context.Context, reader ctrlclient.Reader, tem
 			return fmt.Errorf("planRef %s: %w", request.PlanRef, err)
 		}
 		return breakglassv1alpha1.ValidateHotfixPlanBinding(template.Spec.Hotfix, session, plan, time.Now().UTC())
-	case breakglassv1alpha1.HotfixStageRollback:
+	case breakglassv1alpha1.HotfixStageRollback, breakglassv1alpha1.HotfixStageReconfirm, breakglassv1alpha1.HotfixStageClose:
 		record := &breakglassv1alpha1.HotfixRecord{}
 		if err := reader.Get(ctx, ctrlclient.ObjectKey{Namespace: session.Namespace, Name: request.RecordName}, record); err != nil {
 			return fmt.Errorf("recordName %s: %w", request.RecordName, err)
 		}
-		if record.Spec.Cluster != session.Spec.Cluster || record.Spec.TemplateRef != session.Spec.TemplateRef {
-			return fmt.Errorf("HotfixRecord %s belongs to another cluster or template", record.Name)
+		if err := hotfixRecordUsable(record, session); err != nil {
+			return err
 		}
-	case breakglassv1alpha1.HotfixStageReconfirm, breakglassv1alpha1.HotfixStageClose:
-		return fmt.Errorf("hotfix stage %s is not served by this controller version", request.Stage)
+		return hotfixRecordMutationInFlight(ctx, reader, record, request.Stage)
 	}
 	return nil
 }
