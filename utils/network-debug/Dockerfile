@@ -20,6 +20,10 @@ ARG PWRU_VERSION=v1.0.12
 ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
 ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
 ARG X_NET_VERSION=v0.60.0
+ARG CLANG_VERSION=1:19.0-63
+ARG LLVM_VERSION=1:19.0-63
+ARG FLEX_VERSION=2.6.4-8.2+b4
+ARG BISON_VERSION=2:3.8.2+dfsg-1+b2
 
 WORKDIR /src/pwru
 
@@ -27,7 +31,8 @@ RUN set -eux; \
 	export DEBIAN_FRONTEND=noninteractive; \
 	apt-get update; \
 	apt-get install --no-install-recommends --yes \
-		clang=1:19.0-63 llvm=1:19.0-63 flex=2.6.4-8.2+b4 bison=2:3.8.2+dfsg-1+b2; \
+		"clang=${CLANG_VERSION}" "llvm=${LLVM_VERSION}" \
+		"flex=${FLEX_VERSION}" "bison=${BISON_VERSION}"; \
 	rm -rf /var/lib/apt/lists/*; \
 	module_json="$(go mod download -json "github.com/cilium/pwru@${PWRU_VERSION}")"; \
 	case "${module_json}" in *'"Sum": "'"${PWRU_MODULE_SUM}"'"'*) ;; *) exit 1 ;; esac; \
@@ -50,7 +55,7 @@ ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG PWRU_VERSION=v1.0.12
-ARG NETSHOOT_ALPINE_VERSION=3.24.2
+ARG NETSHOOT_ALPINE_VERSION=3.24
 
 # The pinned netshoot image owns the runtime package set. Refresh it from the
 # matching Alpine 3.24 repositories to consume security fixes, then prove the
@@ -64,7 +69,7 @@ RUN set -eux; \
 	apk update; \
 	apk upgrade; \
 		rm -rf /var/cache/apk/*; \
-		test "$(cat /etc/alpine-release)" = "${NETSHOOT_ALPINE_VERSION}"; \
+		case "$(cat /etc/alpine-release)" in "${NETSHOOT_ALPINE_VERSION}".*) ;; *) exit 1 ;; esac; \
 	test -x /usr/bin/tcpdump; \
 	rm -f /usr/local/bin/calicoctl /usr/local/bin/ctop /usr/local/bin/fortio \
 	/usr/local/bin/grpcurl /usr/local/bin/termshark

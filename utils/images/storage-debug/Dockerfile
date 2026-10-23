@@ -11,6 +11,8 @@ ARG KUBESTR_COMMIT=01940ed37be9a0c7a70d80cd26c648eaa11e5174
 ARG X_NET_VERSION=v0.60.0
 ARG X_CRYPTO_VERSION=v0.57.0
 ARG X_TEXT_VERSION=v0.42.0
+ARG SPDYSTREAM_VERSION=v0.5.1
+ARG OAUTH2_VERSION=v0.27.0
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
 # x/crypto is patched in the module graph; only require its version if linked.
@@ -22,10 +24,10 @@ RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenh
     && test "$(git -C /src/kubestr rev-parse HEAD)" = "${KUBESTR_COMMIT}" \
     && git -C /src/kubestr apply /src/patches/kubestr-fio-breakglass-pod-contract.patch \
     && go -C /src/kubestr get \
-        github.com/moby/spdystream@v0.5.1 \
+        "github.com/moby/spdystream@${SPDYSTREAM_VERSION}" \
         "golang.org/x/crypto@${X_CRYPTO_VERSION}" \
         "golang.org/x/net@${X_NET_VERSION}" \
-        golang.org/x/oauth2@v0.27.0 \
+        "golang.org/x/oauth2@${OAUTH2_VERSION}" \
         "golang.org/x/text@${X_TEXT_VERSION}" \
     && go -C /src/kubestr mod tidy \
     && GOARCH="$(go env GOHOSTARCH)" go -C /src/kubestr test -mod=mod ./pkg/fio/ \
@@ -44,6 +46,8 @@ ARG BUILD_DATE=unknown
 ARG FIO_VERSION=3.41-r0
 ARG IOPING_VERSION=1.3-r0
 ARG KUBESTR_VERSION=v0.4.49
+ARG LIBCRYPTO3_VERSION=3.5.8-r0
+ARG LIBSSL3_VERSION=3.5.8-r0
 
 LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
       org.opencontainers.image.description="Bounded mounted-volume, performance, CSI snapshot/restore, and block-volume diagnostics" \
@@ -64,8 +68,8 @@ LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
 RUN apk add --no-cache \
       "fio=${FIO_VERSION}" \
       "ioping=${IOPING_VERSION}" \
-      "libcrypto3=3.5.8-r0" \
-      "libssl3=3.5.8-r0" \
+      "libcrypto3=${LIBCRYPTO3_VERSION}" \
+      "libssl3=${LIBSSL3_VERSION}" \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && install -d -o debug -g debug /scratch /reports /usr/share/storage-debug \
