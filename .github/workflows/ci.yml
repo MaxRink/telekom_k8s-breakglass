@@ -827,10 +827,7 @@ jobs:
         run: |
           set -e
           echo "Preparing to push image to Artifactory"
-          if ! echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}; then
-            echo "::warning::Artifactory login failed; optional mirror publication is unavailable, continuing with GHCR result"
-            exit 0
-          fi
+          echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
           REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
           echo "::add-mask::${REPO_KEY}"
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
@@ -846,10 +843,7 @@ jobs:
           docker tag breakglass:e2e "${ART_IMG}"
 
           set -x
-          if ! docker push "${ART_IMG}"; then
-            echo "::warning::Artifactory push failed; optional mirror publication is unavailable, continuing with GHCR result"
-            exit 0
-          fi
+          docker push "${ART_IMG}"
           set +x
 
           sleep 3
